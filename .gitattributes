@@ -1,0 +1,10 @@
+# 统一 LF 行尾：这些文件会直接通过 SSH 传给路由器上的 POSIX shell，
+# CRLF 会导致 "\r: command not found" 类故障
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.dae text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ps1 text eol=lf
+*.txt text eol=lf

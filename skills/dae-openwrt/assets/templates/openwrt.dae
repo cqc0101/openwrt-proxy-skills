@@ -1,0 +1,120 @@
+# ==============================================================================
+# OpenWrt / ImmortalWrt dae (eBPF Transparent Proxy) 生产级基准配置模板
+# 遵循 5 条语义与拓扑铁律：单引号词法、must_direct防环、取反合并、6层路由短路、DNS防污染闭环
+# ==============================================================================
+
+global {
+    ##### 基础网络接口设置 #####
+    # 软路由绑定局域网网桥（通常为 br-lan）与外网物理出口（auto 自动识别）
+    lan_interface: br-lan
+    wan_interface: auto
+
+    # 自动调优内核转发与重定向参数 (net.ipv4.ip_forward=1, send_redirects=0 等)
+    auto_config_kernel_parameter: true
+
+    # eBPF 连接追踪哈希表大小（1GB以上内存推荐 262144，512MB小内存路由建议 65536 或 131072）
+    # 注意：该选项为较新版本 dae 引入，老版本可能不识别；部署前务必先跑 `dae validate` 校验
+    bpf_conn_state_map_size: 131072
+
+    # 日志输出等级: error, warn, info, debug, trace
+    log_level: info
+
+    ##### 拨号与域名嗅探 #####
+    # dial_mode 推荐 'domain'：通过嗅探域名交由远端代理节点解析，根除 DNS 污染且速度最快
+    dial_mode: domain
+    sniffing_timeout: 30ms
+    auto_sniff_punt: true
+
+    # TLS 实现：tls = Go 标准库（省 CPU，推荐软路由）；utls = 可伪装浏览器指纹
+    tls_implementation: tls
+    # utls_imitate 仅在 tls_implementation: utls 时生效，当前配置下无需设置
+    # utls_imitate: chrome_auto
+
+    ##### 节点健康与连通性探测 #####
+    tcp_check_url: 'http://cp.cloudflare.com,1.1.1.1,2606:4700:4700::1111'
+    tcp_check_http_method: HEAD
+    udp_check_dns: 'dns.google:53,8.8.8.8,2001:4860:4860::8888'
+    check_interval: 30s
+    check_tolerance: 50ms
+
+    # dae 内部引导解析器（仅用于启动阶段解析订阅与 upstream 域名，不经过代理）
+    bootstrap_resolver: '223.5.5.5:53'
+}
+
+# 订阅池（所有含冒号/斜杠的链接必须使用单引号包裹）
+subscription {
+    # my_sub: 'https://example.com/api/v1/client/subscribe?token=xxx'
+}
+
+# 独立节点定义
+node {
+    # 支持 hysteria2, vless, vmess, ss, trojan, tuic 等
+    # US_HY2: 'hysteria2://password@example.com:34589/?sni=example.com&insecure=0'
+    # US_Reality: 'vless://uuid@example.com:443?security=reality&sni=www.microsoft.com&pbk=xxx&sid=mock_sid&type=tcp&flow=xtls-rprx-vision#US-Reality'
+}
+
+# 出站策略组
+group {
+    proxy {
+        # 负载策略: min_moving_avg (滑动平均延迟最低), min (瞬时最低), random, fixed(0)
+        policy: min_moving_avg
+    }
+}
+
+# DNS 模块配置
+dns {
+    ipversion_prefer: 4
+    optimistic_cache: true
+    optimistic_cache_ttl: 60
+
+    upstream {
+        alidns: 'udp://223.5.5.5:53'
+        googledns: 'tcp+udp://dns.google:53'
+    }
+
+    routing {
+        request {
+            # 广告域名拦截
+            qname(geosite:category-ads-all) -> reject
+            # 国内域名解析走阿里 DNS 直连
+            qname(geosite:cn) -> alidns
+            # 默认兜底上游
+            fallback: googledns
+        }
+
+        response {
+            # [铁律 5: DNS 防污染闭环] 第一行必须为白名单放行，防止重查死循环！
+            upstream(googledns) -> accept
+            # 若非国内域名返回了私网保留地址，判定为被投毒，强制由可信上游重查
+            ip(geoip:private) && !qname(geosite:cn) -> googledns
+            fallback: accept
+        }
+    }
+}
+
+# 路由分流规则 (按短路 First-Match 自上而下执行)
+routing {
+    ### [第 1 层] 宿主机核心网络组件 DNS 防环 (must_direct) ###
+    # 只放行 DNS 流量（官方推荐粒度）：dnsmasq 等组件的 53 端口查询若被 dae 拦截并交回，
+    # 会形成 DNS 回环死锁导致全屋断网。其余流量交给下方私网直连规则处理。
+    pname(dnsmasq, odhcpd, netifd, uhttpd) && l4proto(udp) && dport(53) -> must_direct
+    dip(224.0.0.0/3, 'ff00::/8') -> direct
+    dip(geoip:private) -> direct
+
+    ### [第 2 层] 下载与 P2P 流量直连 (避免跑满节点流量) ###
+    pname(aria2c, qbittorrent-nox, transmission-daemon) -> must_direct
+    dscp(0x4) -> direct
+
+    ### [第 3 层] 境外 QUIC/UDP 443 抑制 (规避运营商 UDP QoS 丢包，促使降级回稳定 TCP) ###
+    l4proto(udp) && dport(443) && !domain(geosite:cn) -> block
+
+    ### [第 4 层] 重点海外服务专属分流 ###
+    domain(geosite:google, geosite:github, geosite:telegram, geosite:openai) -> proxy
+
+    ### [第 5 层] 大陆大盘流量双向白名单直连 ###
+    domain(geosite:cn) -> direct
+    dip(geoip:cn) -> direct
+
+    ### [第 6 层] 终态回落兜底 ###
+    fallback: proxy
+}
