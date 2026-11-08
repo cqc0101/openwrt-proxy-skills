@@ -14,7 +14,7 @@
 | RealIP domain recovery | Use `dns.reverse_mapping: true` when domain rules need IP-to-domain recovery; use DNS rules for pollution-resistant overseas DNS | Same |
 | FakeIP template | Optional `config-1.13-tun-fakeip.json`; use only for routing determinism or legacy FakeIP behavior | Optional `config-1.14-tun-fakeip.json`; not for DNS latency alone |
 | Hosts fallback | `ip_accept_any` response filter | Prefer `preferred_by: "hosts"` DNS rule item |
-| Remote rule-set download | `download_detour` allowed | Use `http_client` and explicit `http_clients` / `route.default_http_client` |
+| Remote rule-set download | `download_detour` allowed | Use `http_client` and explicit `http_clients` / `route.default_http_client`（**detour 勿指向 `direct`**，直连=不设 detour） |
 | DNS response matching | Legacy address filter fields are still usable | Use `evaluate` / `match_response`; legacy address filter behavior is deprecated |
 
 v1.14 deprecated fields may still run today, but new v1.14 templates avoid them to prevent warnings and future migration work.
@@ -355,10 +355,12 @@ v1.13 remote rule-set:
   "tag": "geosite-cn",
   "format": "binary",
   "url": "https://testingcf.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/geosite-cn.srs",
-  "download_detour": "direct",
   "update_interval": "1d"
 }
 ```
+
+> 注意：不要写 `"download_detour": "direct"`——启动期下载规则集时 sing-box 会报
+> `detour to an empty direct outbound makes no sense` 并直接退出。直连下载是**默认行为**，无需任何 detour。
 
 v1.14 remote rule-set:
 

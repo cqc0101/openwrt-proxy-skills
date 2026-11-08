@@ -148,6 +148,17 @@ def check_config_obj(cfg):
     if has_legacy and has_modern:
         warnings.append("[版本混用] 配置同时包含 1.13 专属字段 (independent_cache/store_rdrc/download_detour) 与 1.14+ 字段 (optimistic/store_dns/default_http_client)！请确认目标 sing-box 版本后只保留一套。")
 
+    # 6.5 规则集下载 detour 指向 direct 的致命模式（启动期崩溃，真机验证）
+    for idx, client in enumerate(cfg.get("http_clients") or []):
+        if client.get("detour") == "direct":
+            errors.append(f"[致命模式] http_clients[{idx}]({client.get('tag')}) 的 detour 指向 'direct'。"
+                          "sing-box 启动期下载规则集时会报 'detour to an empty direct outbound makes no sense' 并退出。"
+                          "直连下载请删除 detour 字段（不设即直连）。")
+    for idx, rs in enumerate(cfg.get("route", {}).get("rule_set") or []):
+        if rs.get("download_detour") == "direct":
+            errors.append(f"[致命模式] route.rule_set[{idx}]({rs.get('tag')}) 的 download_detour 指向 'direct'，"
+                          "启动期同样会触发 'empty direct outbound' 崩溃；直连下载请删除该字段。")
+
     return errors, warnings
 
 

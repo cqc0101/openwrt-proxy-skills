@@ -15,6 +15,7 @@ ROUTER_IP="${1:-}"
 CONFIG_FILE="${2:-}"
 SSH_USER="${3:-root}"
 SSH_PORT="${4:-22}"
+SSH_KEY="${5:-}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,8 +29,8 @@ log_error() { printf '%b\n' "${RED}[ERROR]${NC} $1"; }
 log_ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
 
 if [ -z "$ROUTER_IP" ] || [ -z "$CONFIG_FILE" ]; then
-    echo "用法: $0 <路由器IP> <配置文件路径> [SSH用户,默认root] [SSH端口,默认22]"
-    echo "示例: $0 192.168.1.1 assets/templates/openwrt-1.14-tun-fakeip.json"
+    echo "用法: $0 <路由器IP> <配置文件路径> [SSH用户,默认root] [SSH端口,默认22] [SSH密钥路径,可选]"
+    echo "示例: $0 192.168.1.1 assets/templates/openwrt-1.14-tun-fakeip.json root 22 ~/.ssh/id_ed25519"
     exit 1
 fi
 
@@ -46,8 +47,15 @@ if command -v jq >/dev/null 2>&1; then
     fi
 fi
 
-SSH_CMD="ssh -p ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${SSH_USER}@${ROUTER_IP}"
-SCP_CMD="scp -P ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no"
+KEY_OPTS=""
+if [ -n "$SSH_KEY" ]; then
+    if [ ! -f "$SSH_KEY" ]; then
+        log_error "指定的 SSH 密钥文件不存在: $SSH_KEY"
+        exit 1
+    fi
+    KEY_OPTS="-i ${SSH_KEY}"
+fi
+SSH_CMD="ssh ${KEY_OPTS} -p ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${SSH_USER}@${ROUTER_IP}"
 
 log_info "目标软路由: ${SSH_USER}@${ROUTER_IP}:${SSH_PORT}"
 log_info "待部署文件: ${CONFIG_FILE}"
@@ -125,8 +133,13 @@ if [ "$HAS_BACKUP" -eq 1 ]; then
 fi
 
 # 6. 上传新配置至软路由内存临时区 (/tmp)
+# 用 ssh + stdin 重定向上传：scp 依赖远端 openssh-sftp-server，很多精简固件（dropbear）没有，
+# 会直接 Connection closed；cat 重定向在任何 SSH 服务端都能工作。
 log_info "上传新配置至路由器沙盒临时目录: ${REMOTE_TMP}"
-$SCP_CMD "$CONFIG_FILE" "${SSH_USER}@${ROUTER_IP}:${REMOTE_TMP}"
+if ! $SSH_CMD "cat > ${REMOTE_TMP}" < "$CONFIG_FILE"; then
+    log_error "上传配置失败（SSH 连接或远端写入异常）！"
+    exit 1
+fi
 
 # 7. 远端带安全优先级的 sing-box check 内核级深度校验 (防 CPU 锁死)
 log_info "调用远端 sing-box check 进行沙盒语法与依赖校验 (nice 调度)..."
@@ -154,6 +167,10 @@ elif [ -n "$MEM_TOTAL" ] && [ "$MEM_TOTAL" -le 550 ]; then
     $SSH_CMD "if [ -f /etc/init.d/sing-box ] && ! grep -q 'GOMEMLIMIT' /etc/init.d/sing-box; then sed -i '2i export GOGC=70' /etc/init.d/sing-box; sed -i '2i export GOMEMLIMIT=220MiB' /etc/init.d/sing-box; fi"
 fi
 
+# 7.5 确保 OpenWrt procd 服务已启用（apk/opkg 安装后默认 enabled=0，不启用则 restart 静默无效，
+#     后续健康巡检会把“从未启动”误判为崩溃）
+$SSH_CMD "if uci -q get sing-box.main >/dev/null 2>&1; then uci set sing-box.main.enabled='1'; uci set sing-box.main.workdir='/etc/sing-box'; uci commit sing-box; echo 'SERVICE_ENABLED'; else echo 'NO_UCI_SECTION'; fi" | grep -qE "SERVICE_ENABLED|NO_UCI_SECTION" || log_warn "未检测到 /etc/config/sing-box 的 UCI 配置，服务启用状态未知，请人工确认！"
+
 # 8. 覆盖生产配置并平滑重启
 log_info "正在应用配置并平滑重载 sing-box 服务..."
 $SSH_CMD "mv ${REMOTE_TMP} ${REMOTE_CONF}"
@@ -172,7 +189,8 @@ HEALTH_CHECK=$($SSH_CMD "
 ")
 
 if [ "$HEALTH_CHECK" != "PROCESS_RUNNING" ]; then
-    log_error "sing-box 启动后异常退出 (Crash)！"
+    log_error "sing-box 进程未运行（可能是配置崩溃，也可能是服务未启用）！"
+    log_warn "排查提示：logread 查看报错；uci get sing-box.main.enabled 应为 1（部署脚本已尝试自动启用）。"
     if [ "$HAS_BACKUP" -eq 1 ]; then
         log_warn "触发紧急避险机制：正在秒级自动回滚至历史快照..."
         $SSH_CMD "cp ${BACKUP_CONF} ${REMOTE_CONF} && (/etc/init.d/sing-box restart || true)"
@@ -197,25 +215,35 @@ chmod +x /etc/hotplug.d/iface/99-singbox
 EOF
 log_ok "已注册 OpenWrt WAN 重拨号自动重载 Hook (/etc/hotplug.d/iface/99-singbox)。"
 
-# 11. 连通性测试 (自适应兼容 curl, wget 与 ping)
+# 11. 连通性测试（国内直连 + 出海双探针，区分“全断”与“直连被 TUN 自捕获”）
 log_info "正在检验软路由外部网络解析与连通状态..."
-CONN_CHECK=$($SSH_CMD "sh -s" << 'EOF'
+NET_CHECK=$($SSH_CMD "sh -s" << 'EOF'
+CN='NO'; OVERSEA='NO'
 if command -v curl >/dev/null 2>&1; then
-    curl -s --connect-timeout 4 -I https://www.baidu.com >/dev/null && echo 'ONLINE' || echo 'OFFLINE'
+    curl -s --connect-timeout 4 -I https://www.baidu.com >/dev/null && CN='YES'
+    curl -s --connect-timeout 6 -I http://cp.cloudflare.com/generate_204 >/dev/null && OVERSEA='YES'
 elif command -v wget >/dev/null 2>&1; then
-    wget -q -T 4 --spider https://www.baidu.com >/dev/null && echo 'ONLINE' || echo 'OFFLINE'
+    wget -q -T 4 --spider https://www.baidu.com >/dev/null && CN='YES'
+    wget -q -T 6 --spider http://cp.cloudflare.com/generate_204 >/dev/null && OVERSEA='YES'
 else
-    ping -c 1 -W 3 223.5.5.5 >/dev/null 2>&1 && echo 'ONLINE' || echo 'OFFLINE'
+    ping -c 1 -W 3 223.5.5.5 >/dev/null 2>&1 && CN='YES'
 fi
+echo "CN=$CN OVERSEA=$OVERSEA WAN_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')"
 EOF
 )
+CN_OK=$(echo "$NET_CHECK" | grep -o 'CN=YES')
+OVERSEA_OK=$(echo "$NET_CHECK" | grep -o 'OVERSEA=YES')
+WAN_IF_NAME=$(echo "$NET_CHECK" | sed -n 's/.*WAN_IF=\([^ ]*\).*/\1/p')
 
-if [ "$CONN_CHECK" != "ONLINE" ]; then
-    log_warn "服务虽已拉起，但路由器外网访问超时！"
+if [ -n "$CN_OK" ] && [ -n "$OVERSEA_OK" ]; then
+    log_ok "国内直连与出海连通性验证全部通过！"
+elif [ -z "$CN_OK" ] && [ -z "$OVERSEA_OK" ]; then
+    log_warn "服务虽已拉起，但内外网访问均超时！"
     log_warn "注意：若为首次使用 TUN 模式，很可能是 OpenWrt fw4 防火墙拦截了 tun0 虚拟网卡。"
     log_warn "请立即执行: sh scripts/setup_openwrt_firewall.sh ${ROUTER_IP} 放行 tun0！"
-else
-    log_ok "外部网络解析与连通性验证通过！"
+elif [ -z "$CN_OK" ]; then
+    log_warn "【分流异常】出海正常但国内直连失败：该内核可能缺少 nfqueue 模块，auto_detect_interface 的自保失效，直连流量被 TUN 自捕获。"
+    log_warn "修复：重新生成配置并追加 --wan-iface ${WAN_IF_NAME:-eth0}（或手工将 route.default_interface 设为 WAN 接口名）。"
 fi
 
 log_ok "sing-box 客户端配置发布成功，全系统运行平稳！"

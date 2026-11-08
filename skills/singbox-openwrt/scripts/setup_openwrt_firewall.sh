@@ -10,6 +10,7 @@ set -e
 ROUTER_IP="${1:-}"
 SSH_USER="${2:-root}"
 SSH_PORT="${3:-22}"
+SSH_KEY="${4:-}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -18,12 +19,17 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 if [ -z "$ROUTER_IP" ]; then
-    echo "使用方式: $0 <路由器IP> [SSH用户,默认root] [SSH端口,默认22]"
-    echo "示例: $0 192.168.1.1"
+    echo "使用方式: $0 <路由器IP> [SSH用户,默认root] [SSH端口,默认22] [SSH密钥路径,可选]"
+    echo "示例: $0 192.168.1.1 root 22 ~/.ssh/id_ed25519"
     exit 1
 fi
 
-SSH_CMD="ssh -p ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${SSH_USER}@${ROUTER_IP}"
+KEY_OPTS=""
+if [ -n "$SSH_KEY" ]; then
+    [ -f "$SSH_KEY" ] || { echo "指定的 SSH 密钥文件不存在: $SSH_KEY"; exit 1; }
+    KEY_OPTS="-i ${SSH_KEY}"
+fi
+SSH_CMD="ssh ${KEY_OPTS} -p ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${SSH_USER}@${ROUTER_IP}"
 
 printf '%b\n' "${BLUE}[INFO]${NC} 正在连接路由器 ${SSH_USER}@${ROUTER_IP}:${SSH_PORT} 检查防火墙架构..."
 

@@ -87,12 +87,13 @@ log_info "CPU 架构: $CPU_ARCH"
 log_info "内核版本: $KERNEL"
 log_info "系统运行时间: $UPTIME | 负载: $LOAD"
 
-# 内存与缓存检查
-TOTAL_MEM=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}')
-FREE_MEM=$(free -m 2>/dev/null | awk '/Mem:/ {print $4}')
-AVAIL_MEM=$(free -m 2>/dev/null | awk '/Mem:/ {print $7}')
-[ -z "$AVAIL_MEM" ] && AVAIL_MEM=$FREE_MEM
-[ -z "$AVAIL_MEM" ] && AVAIL_MEM=0
+# 内存与缓存检查（MB）。注意：部分 BusyBox 的 free 不支持 -m（输出仍是 KB），
+# 改读 /proc/meminfo 避免数值放大 1000 倍。
+TOTAL_MEM=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+FREE_MEM=$(( $(awk '/^MemFree:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+AVAIL_MEM=$(( $(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+[ "$AVAIL_MEM" -eq 0 ] && AVAIL_MEM=$FREE_MEM
+[ "$AVAIL_MEM" -eq 0 ] && AVAIL_MEM=0
 
 if [ "$AVAIL_MEM" -lt 30 ]; then
     log_fail "可用物理内存仅剩 ${AVAIL_MEM}MB (总计 ${TOTAL_MEM}MB)，存在极高 OOM 风险！"

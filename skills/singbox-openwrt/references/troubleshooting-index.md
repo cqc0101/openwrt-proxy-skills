@@ -55,6 +55,9 @@
 | E3 | `network: ws` 之类报错 | 部署失败日志 | 节点解析器旧 bug（已修复）→ 用当前仓库的 `parse_node.py` 重新生成 | 生成配置过 check |
 | E4 | Clash 面板打不开 | `curl http://路由器IP:9090` | 面板没开 / 被防火墙挡 → 确认模板 `0.0.0.0:9090` 且放行端口 | 面板可访问 |
 | E5 | 改了配置没生效 | `pidof sing-box` 之后看进程启动时间 | 改了 `/etc` 下的旧文件而非实际加载路径 → 走 deploy 脚本，勿手改 | 生效 |
+| E6 | 启动即崩，日志 `detour to an empty direct outbound makes no sense` | `sing-box run -c <配置>` 前台复现 | 规则集/HTTP client 的下载 detour 指向了 `direct`（`download_detour: "direct"` 或 `http_client.detour: "direct"`）→ **删除 detour 字段**，直连下载是默认行为 | 前台启动无 FATAL |
+| E7 | check 通过但部署后进程不在（被误报 Crash） | `uci get sing-box.main.enabled` | apk/opkg 安装后服务默认 `enabled=0`，`/etc/init.d/sing-box restart` 静默无效 → 部署脚本已自动启用；手改时记得 `uci set sing-box.main.enabled='1' && uci commit sing-box` | 返回 1 且进程在 |
+| E8 | 出海正常、国内直连全挂（baidu 000/Connection reset） | 路由器上双探针：`curl -I baidu.com` 与 `curl -I cp.cloudflare.com/generate_204` | 内核缺 `nfnetlink_queue`/`nft_queue` 模块（日志见 `nfqueue start failed`）时，`auto_detect_interface` 的自保失效，直连流量被 TUN 自捕获 → **重新生成配置并追加 `--wan-iface <WAN接口>`**（或手工设 `route.default_interface`）；probe 报告里的“默认路由接口”即该值 | 双探针均 2xx |
 
 ## F. dae 专属
 

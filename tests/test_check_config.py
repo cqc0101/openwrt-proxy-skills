@@ -72,6 +72,20 @@ class TestFieldGates(unittest.TestCase):
         })
         self.assertTrue(any("stack" in w for w in warns))
 
+    def test_http_client_detour_direct_blocked(self):
+        errs, _ = run({
+            "http_clients": [{"tag": "c", "detour": "direct"}],
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("empty direct" in e for e in errs))
+
+    def test_download_detour_direct_blocked(self):
+        errs, _ = run({
+            "route": {"rule_set": [{"tag": "r", "download_detour": "direct"}]},
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("empty direct" in e for e in errs))
+
     def test_cache_path_warning(self):
         _, warns = run({
             "experimental": {"cache_file": {"enabled": True, "path": "/etc/foo.db"}},

@@ -78,7 +78,8 @@ class TestVersionGating(unittest.TestCase):
                 self.assertIn("store_rdrc", cfg["experimental"]["cache_file"])
                 self.assertNotIn("store_dns", cfg["experimental"]["cache_file"])
                 for rs in cfg["route"]["rule_set"]:
-                    self.assertEqual(rs.get("download_detour"), "direct")
+                    self.assertNotIn("download_detour", rs,
+                                     "直连下载无需 download_detour；显式 direct 会在启动期触发 empty direct outbound 崩溃")
                 self.assertNotIn("http_clients", cfg)
                 self.assertNotIn("default_http_client", cfg["route"])
 
@@ -94,9 +95,12 @@ class TestVersionGating(unittest.TestCase):
                     self.assertNotIn("download_detour", rs)
                 self.assertIn("http_clients", cfg)
                 self.assertEqual(cfg["route"]["default_http_client"], "direct-client")
-                # 规则集必须经由显式 http_client 下载
+                # 规则集必须经由显式 http_client 下载；但 detour 不得指向 direct（启动期崩溃）
                 tags = {c["tag"] for c in cfg["http_clients"]}
                 self.assertIn("direct-client", tags)
+                for client in cfg["http_clients"]:
+                    self.assertNotIn("detour", client,
+                                     "http_client 的 detour 指向 direct 会在启动期触发 empty direct outbound 崩溃")
 
 
 class TestFakeIPVsRealIP(unittest.TestCase):

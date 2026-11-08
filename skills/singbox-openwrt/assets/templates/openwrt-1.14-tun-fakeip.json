@@ -309,8 +309,7 @@
   },
   "http_clients": [
     {
-      "tag": "direct-client",
-      "detour": "direct"
+      "tag": "direct-client"
     }
   ]
 }

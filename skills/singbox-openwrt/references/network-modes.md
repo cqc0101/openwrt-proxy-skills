@@ -57,6 +57,7 @@ system proxy 配置使用 mixed inbound，不包含 TUN inbound、DNS hijack 或
 ```
 
 v1.13 remote rule-set 可使用 `download_detour`。v1.14 system proxy 配置应使用 `http_clients` + `route.default_http_client` 或 per-rule-set `http_client`。
+注意：detour 指向 `direct` 会在启动期触发 `empty direct outbound` 崩溃，直连下载不要设置 detour。
 
 ## 可选 `platform.http_proxy`
 

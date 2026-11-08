@@ -94,7 +94,7 @@ def apply_cdn_mirror(config, mirror_type="jsdelivr"):
                     rs["url"] = f"https://fastly.jsdelivr.net/gh/{user}/{repo}@{branch}/{path}"
     return config
 
-def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15):
+def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15, wan_iface=None):
     template_file = f"openwrt-{version}-tun-{dns_mode}.json"
     template_path = os.path.join(TEMPLATES_DIR, template_file)
 
@@ -109,16 +109,16 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
 
     with open(template_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
-    
+
     # 1. 强制注入 OpenWrt 防护字段（杜绝漏配）
     if "experimental" not in config:
         config["experimental"] = {}
     if "cache_file" not in config["experimental"]:
         config["experimental"]["cache_file"] = {"enabled": True}
-    
+
     # 闪存写保护锁定在 /tmp
     config["experimental"]["cache_file"]["path"] = "/tmp/sing-box-cache.db"
-    
+
     # Clash API 监听全网段，允许局域网设备控制与面板接入
     if "clash_api" not in config["experimental"]:
         config["experimental"]["clash_api"] = {}
@@ -127,7 +127,13 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     # 路由防环与防死锁
     if "route" not in config:
         config["route"] = {}
-    config["route"]["auto_detect_interface"] = True
+    if wan_iface:
+        # 显式 WAN 接口模式：缺 nfqueue 模块的内核（真机验证：Oray X1 Pro / ImmortalWrt SNAPSHOT）
+        # auto_detect_interface 的自保会失效，直连流量被 TUN 自捕获（国内全 RST）
+        config["route"].pop("auto_detect_interface", None)
+        config["route"]["default_interface"] = wan_iface
+    else:
+        config["route"]["auto_detect_interface"] = True
     config["route"]["default_domain_resolver"] = "alidns"
 
     # 2. 注入规则集国内镜像源（防冷启动死锁）
@@ -213,6 +219,7 @@ def main():
     parser.add_argument("--sub", help="机场订阅 (支持 HTTP/HTTPS URL、本地文件路径或 Base64 订阅文本)")
     parser.add_argument("--mirror", choices=["jsdelivr", "ghproxy", "fastly", "direct"], default="jsdelivr", help="规则集国内镜像加速 (默认 jsdelivr，彻底避免国内首启下载死锁)")
     parser.add_argument("--max-nodes", type=int, default=15, help="最多注入的节点数 (默认 15，保护弱路由内存)")
+    parser.add_argument("--wan-iface", help="显式指定 WAN 接口 (如 eth0/pppoe-wan)；部分内核缺 nfqueue 模块时 auto_detect_interface 会使国内直连被 TUN 自捕获，此时必须显式指定")
     parser.add_argument("--out", help="输出配置文件路径 (不指定则输出到标准输出)")
 
     args = parser.parse_args()
@@ -231,7 +238,8 @@ def main():
         node_uris=args.node,
         sub_source=args.sub,
         mirror=args.mirror,
-        max_nodes=args.max_nodes
+        max_nodes=args.max_nodes,
+        wan_iface=args.wan_iface
     )
 
     # 生成后自动静态审计：存在任何阻断错误绝不输出（“一次成功”保障）

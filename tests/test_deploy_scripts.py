@@ -69,6 +69,15 @@ class TestDeployShellScripts(unittest.TestCase):
                 self.assertNotIn("echo -e", _read(path),
                                  "dash/busybox 下 echo -e 会打印字面 -e，请用 printf '%b\\n'")
 
+    def test_singbox_deploy_enables_service(self):
+        """apk/opkg 安装后 sing-box 服务默认 enabled=0，部署脚本必须自动启用，否则 restart 静默无效。"""
+        for rel in ("skills/singbox-openwrt/scripts/deploy_singbox.sh",
+                    "skills/singbox-openwrt/scripts/deploy_singbox.ps1"):
+            with self.subTest(script=rel):
+                text = _read(os.path.join(REPO, rel))
+                self.assertIn("sing-box.main.enabled", text,
+                              "部署脚本必须处理 procd 服务的启用状态")
+
 
 class TestSharedScriptsConsistency(unittest.TestCase):
     """每个技能需自包含，因此共享脚本存两份；此测试防止两份内容漂移。

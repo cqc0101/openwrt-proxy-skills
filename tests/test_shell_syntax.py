@@ -60,7 +60,9 @@ class TestShellSyntax(unittest.TestCase):
 class TestLineEndings(unittest.TestCase):
     def test_no_crlf_no_bom(self):
         for root, _dirs, files in os.walk(REPO):
-            if ".git" in root:
+            # 跳过隐藏目录（.git、.tmp 等临时/元数据目录）
+            rel_root = os.path.relpath(root, REPO)
+            if any(part.startswith(".") for part in rel_root.split(os.sep)):
                 continue
             for name in files:
                 path = os.path.join(root, name)

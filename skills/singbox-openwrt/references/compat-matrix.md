@@ -40,6 +40,10 @@
 | `http_clients` + `route.default_http_client` | ❌（用隐式默认 client） | ✅（隐式默认已废弃，必须显式） | ✅ |
 | TUN `stack` 选项 | ✅ | ✅ | ❌ **1.15 起废弃**（用默认栈） |
 
+> ⚠️ **规则集下载 detour 不得指向 `direct`**（1.13 的 `download_detour` 与 1.14 的 `http_client.detour` 同理）：
+> 启动期下载规则集时 sing-box 会报 `detour to an empty direct outbound makes no sense` 并退出。
+> **直连下载 = 不设置任何 detour**（默认行为即是直连）。已在真机（ImmortalWrt SNAPSHOT + sing-box 1.14.3）复现并修复模板。
+
 其他历史边界（生成/排障时的快速判断）：
 - `geoip`/`geosite` 原生路由字段：1.8 起移除 → 必须用 rule-set。
 - 路由规则动作 `sniff` / `hijack-dns`：1.11 起的新写法（旧 inbound 内 `sniff: true` 已废弃）。
@@ -68,6 +72,11 @@
 | fw4 | nftables 后端，22.03+ 默认；**未声明进 zone 的虚拟网卡（tun0）转发会被 DROP** |
 | DSA | 21.02 起新交换机框架（`/sys/class/net` 单口模型，`br-lan` 聚合） |
 | 放行 tun0 | 必须按 `name=lan` 定位 zone（禁止写死 `@zone[0]`），见 `setup_openwrt_firewall.sh` |
+
+> ⚠️ **nfqueue 与 `auto_detect_interface`**：内核缺 `nfnetlink_queue` / `nft_queue` 模块时
+> （真机验证：Oray X1 Pro / ImmortalWrt SNAPSHOT），`auto_detect_interface: true` 的自保失效，
+> 国内直连流量会被 TUN 自捕获（表现为出海正常、国内全 RST）。此类设备生成配置时加
+> `--wan-iface <WAN接口>`（等价于 `route.default_interface`）。probe 报告的“默认路由接口”即该值。
 
 ## 7. 包管理器命令对照（探针实测后选用）
 

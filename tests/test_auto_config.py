@@ -72,6 +72,17 @@ class TestNodeInjection(unittest.TestCase):
         self.assertIn("DUP-1", tags)
 
 
+    def test_wan_iface_replaces_auto_detect(self):
+        cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct", wan_iface="pppoe-wan")
+        self.assertNotIn("auto_detect_interface", cfg["route"])
+        self.assertEqual(cfg["route"]["default_interface"], "pppoe-wan")
+
+    def test_no_wan_iface_keeps_auto_detect(self):
+        cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct")
+        self.assertIs(cfg["route"]["auto_detect_interface"], True)
+        self.assertNotIn("default_interface", cfg["route"])
+
+
 class TestCdnMirror(unittest.TestCase):
     def test_jsdelivr_rewrite(self):
         cfg = {"route": {"rule_set": [

@@ -14,6 +14,7 @@ ROUTER_IP="${1:-}"
 CONFIG_FILE="${2:-}"
 SSH_USER="${3:-root}"
 SSH_PORT="${4:-22}"
+SSH_KEY="${5:-}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -27,8 +28,8 @@ log_error() { printf '%b\n' "${RED}[ERROR]${NC} $1"; }
 log_ok()    { printf '%b\n' "${GREEN}[OK]${NC} $1"; }
 
 if [ -z "$ROUTER_IP" ] || [ -z "$CONFIG_FILE" ]; then
-    echo "用法: $0 <路由器IP> <配置文件路径> [SSH用户,默认root] [SSH端口,默认22]"
-    echo "示例: $0 192.168.1.1 assets/templates/openwrt.dae"
+    echo "用法: $0 <路由器IP> <配置文件路径> [SSH用户,默认root] [SSH端口,默认22] [SSH密钥路径,可选]"
+    echo "示例: $0 192.168.1.1 assets/templates/openwrt.dae root 22 ~/.ssh/id_ed25519"
     exit 1
 fi
 
@@ -37,8 +38,15 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-SSH_CMD="ssh -p ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${SSH_USER}@${ROUTER_IP}"
-SCP_CMD="scp -P ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no"
+KEY_OPTS=""
+if [ -n "$SSH_KEY" ]; then
+    if [ ! -f "$SSH_KEY" ]; then
+        log_error "指定的 SSH 密钥文件不存在: $SSH_KEY"
+        exit 1
+    fi
+    KEY_OPTS="-i ${SSH_KEY}"
+fi
+SSH_CMD="ssh ${KEY_OPTS} -p ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${SSH_USER}@${ROUTER_IP}"
 
 log_info "目标软路由: ${SSH_USER}@${ROUTER_IP}:${SSH_PORT}"
 log_info "待部署 dae 文件: ${CONFIG_FILE}"
@@ -162,8 +170,12 @@ if [ "$HAS_BACKUP" -eq 1 ]; then
 fi
 
 # 4. 上传新配置至软路由内存临时区 (/tmp)
+# 用 ssh + stdin 重定向上传：scp 依赖远端 openssh-sftp-server，精简固件（dropbear）常缺失
 log_info "上传配置文件至路由器临时目录: ${REMOTE_TMP}"
-$SCP_CMD "$CONFIG_FILE" "${SSH_USER}@${ROUTER_IP}:${REMOTE_TMP}"
+if ! $SSH_CMD "cat > ${REMOTE_TMP}" < "$CONFIG_FILE"; then
+    log_error "上传配置失败（SSH 连接或远端写入异常）！"
+    exit 1
+fi
 
 # 5. 远端 dae validate 严格语法校验 (带 nice 优先级调度)
 log_info "调用远端 dae validate 严格语法校验..."

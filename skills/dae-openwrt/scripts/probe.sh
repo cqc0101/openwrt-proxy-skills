@@ -4,7 +4,7 @@
 # 纯 POSIX /bin/sh 编写，无第三方依赖，兼容 opkg/apk 及全版本架构
 # 支持标准输出或 JSON 输出 (-j / --json)
 # ==============================================================================
-# [共享脚本] 本文件与 singbox-openwrt/scripts/probe.sh 完全一致，修改需双份同步！
+# [共享脚本] 本文件与 dae-openwrt/scripts/probe.sh 完全一致，修改需双份同步！
 
 OUTPUT_JSON=0
 if [ "$1" = "-j" ] || [ "$1" = "--json" ]; then
@@ -102,12 +102,12 @@ case "$RAW_ARCH" in
         ;;
 esac
 
-# 内存评估 (MB)
-TOTAL_RAM=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}')
-AVAIL_RAM=$(free -m 2>/dev/null | awk '/Mem:/ {print $7}')
-[ -z "$AVAIL_RAM" ] && AVAIL_RAM=$(free -m 2>/dev/null | awk '/Mem:/ {print $4}')
-TOTAL_SWAP=$(free -m 2>/dev/null | awk '/Swap:/ {print $2}')
-[ -z "$TOTAL_SWAP" ] && TOTAL_SWAP=0
+# 内存评估 (MB)。注意：部分 BusyBox 的 free 不支持 -m（静默忽略、仍输出 KB），
+# 统一改读 /proc/meminfo 的 kB 值再除以 1024，避免单位错乱放大 1000 倍。
+TOTAL_RAM=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+AVAIL_RAM=$(( $(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+[ "$AVAIL_RAM" -eq 0 ] && AVAIL_RAM=$(( $(awk '/^MemFree:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+TOTAL_SWAP=$(( $(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
 
 # 闪存/存储评估 (MB)
 FREE_ROM=0
@@ -230,6 +230,10 @@ elif lsmod 2>/dev/null | grep -qw "tcp_bbr"; then
 fi
 
 IP_FORWARD=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
+# 默认路由接口（WAN）：缺 nfqueue 模块的内核上 auto_detect_interface 自保会失效，
+# 生成配置时可用 --wan-iface 显式指定该接口
+WAN_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+[ -z "$WAN_IF" ] && WAN_IF="unknown"
 
 # ------------------------------------------------------------------------------
 # 输出渲染
@@ -281,7 +285,8 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
   "tuning": {
     "ip_forward": $IP_FORWARD,
     "tcp_congestion_control": "$(je "$CURRENT_CC")",
-    "bbr_available": $BBR_AVAILABLE
+    "bbr_available": $BBR_AVAILABLE,
+    "wan_iface": "$(je "$WAN_IF")"
   }
 }
 EOF
@@ -337,6 +342,7 @@ else
     fi
 
     echo "${CYAN}[6. 网络性能与 BBR 评估]${NC}"
+    echo "  - 默认路由接口: ${GREEN}${WAN_IF}${NC} (生成配置时可作 --wan-iface 参数)"
     echo "  - 内核转发开关: $([ "$IP_FORWARD" = "1" ] && echo "${GREEN}开启 (1)${NC}" || echo "${RED}关闭 (0)${NC}")"
     echo "  - TCP 拥塞算法: 当前为 ${GREEN}${CURRENT_CC}${NC} $([ "$BBR_AVAILABLE" -eq 1 ] && echo "(内核支持 BBR)" || echo "(内核不支持 BBR)")"
     echo "${BOLD}================================================================${NC}"

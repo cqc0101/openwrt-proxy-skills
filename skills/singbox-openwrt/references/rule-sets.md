@@ -12,6 +12,7 @@ https://testingcf.jsdelivr.net/gh/SagerNet/sing-geoip@rule-set/geoip-{code}.srs
 `@cn` 变体标签的 URL 文件名使用 `@`，例如 `geosite-apple@cn.srs`。备用 CDN 可用 `fastly.jsdelivr.net`。
 
 v1.13 remote rule-set 可使用 `download_detour`。v1.14 模板使用 `http_clients` + `route.default_http_client` 或 per-rule-set `http_client`。
+**两者的 detour 都不要指向 `direct`**（启动期会报 `empty direct outbound` 崩溃）；直连下载不设置 detour 即可。
 
 ## 常用标签
 
