@@ -9,6 +9,8 @@
     SSH 端口 (默认 22)
 .PARAMETER Json
     输出 JSON 格式
+.PARAMETER KeyPath
+    SSH 私钥路径 (可选，默认使用系统默认密钥)
 #>
 # [共享脚本] 本文件与 dae-openwrt/scripts/probe.ps1 完全一致，修改需双份同步！
 param(
@@ -17,8 +19,11 @@ param(
 
     [string]$User = "root",
     [int]$Port = 22,
-    [switch]$Json
+    [switch]$Json,
+    [string]$KeyPath = ""
 )
+
+$keyArg = if ($KeyPath) { @("-i", $KeyPath) } else { @() }
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ShPath = Join-Path $ScriptDir "probe.sh"
@@ -32,4 +37,4 @@ $Arg = if ($Json) { "-j" } else { "" }
 $Content = Get-Content -Raw -Path $ShPath
 # 关键防护：Windows CRLF 转 Linux LF，防止 BusyBox 报 '\r': command not found
 $Content = $Content -replace "`r`n", "`n"
-$Content | ssh -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=5 -p $Port "$User@$Router" "sh -s -- $Arg"
+$Content | ssh @keyArg -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=5 -p $Port "$User@$Router" "sh -s -- $Arg"

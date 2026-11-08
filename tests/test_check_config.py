@@ -86,6 +86,13 @@ class TestFieldGates(unittest.TestCase):
         })
         self.assertTrue(any("empty direct" in e for e in errs))
 
+    def test_auto_detect_default_interface_conflict_warned(self):
+        _, warns = run({
+            "route": {"auto_detect_interface": True, "default_interface": "eth0"},
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("配置冲突" in w for w in warns))
+
     def test_cache_path_warning(self):
         _, warns = run({
             "experimental": {"cache_file": {"enabled": True, "path": "/etc/foo.db"}},

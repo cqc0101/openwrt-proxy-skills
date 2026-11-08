@@ -78,6 +78,21 @@ class TestDeployShellScripts(unittest.TestCase):
                 self.assertIn("sing-box.main.enabled", text,
                               "部署脚本必须处理 procd 服务的启用状态")
 
+    def test_probe_reports_hardening_facts(self):
+        """真机验证沉淀：probe 必须报告 nfqueue 缺失与 sing-box-tiny 安装建议。"""
+        text = _read(os.path.join(SINGBOX, "probe.sh"))
+        self.assertIn("nfqueue", text)
+        self.assertIn("sing-box-tiny", text)
+
+    def test_ps1_supports_keypath(self):
+        """Windows 远程脚本必须支持 -KeyPath（BatchMode 需要非默认密钥）。"""
+        for rel in ("skills/singbox-openwrt/scripts/probe.ps1",
+                    "skills/singbox-openwrt/scripts/diagnose_openwrt.ps1",
+                    "skills/singbox-openwrt/scripts/deploy_singbox.ps1",
+                    "skills/dae-openwrt/scripts/deploy_dae.ps1"):
+            with self.subTest(script=rel):
+                self.assertIn("KeyPath", _read(os.path.join(REPO, rel)))
+
 
 class TestSharedScriptsConsistency(unittest.TestCase):
     """每个技能需自包含，因此共享脚本存两份；此测试防止两份内容漂移。

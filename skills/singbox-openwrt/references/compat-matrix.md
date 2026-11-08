@@ -55,6 +55,7 @@
 - **官方 OpenWrt packages feed 有 `sing-box` 包**（`openwrt/packages` 仓库 `net/sing-box`，官方源可 opkg/apk 安装）。
 - 但官方包版本**明显落后于上游**（尤其新系列切换期）；追求 1.14+ 新字段时优先用官方二进制或新系列源，并以 `sing-box version` 实测结果选模板。
 - 模板选择一律以 `sing-box version` 实测为准，**绝不按固件版本推断**。
+- **安装体积（ImmortalWrt SNAPSHOT 真机实测）**：`sing-box` 完整包 ≈62MiB（含 libcronet 依赖），`sing-box-tiny` ≈39MiB。overlay 不足 70MB 的小闪存设备（如 43.7M 的 Oray X1 Pro）**装不下完整版，只能选 tiny**；安装前 `df -h /overlay` 评估剩余空间。
 
 ## 5. dae 运行前提
 

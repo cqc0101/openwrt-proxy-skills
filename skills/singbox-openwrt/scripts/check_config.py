@@ -159,6 +159,11 @@ def check_config_obj(cfg):
             errors.append(f"[致命模式] route.rule_set[{idx}]({rs.get('tag')}) 的 download_detour 指向 'direct'，"
                           "启动期同样会触发 'empty direct outbound' 崩溃；直连下载请删除该字段。")
 
+    # 6.6 auto_detect_interface 与 default_interface 冲突检测
+    if route.get("auto_detect_interface") and route.get("default_interface"):
+        warnings.append("[配置冲突] route 同时启用 auto_detect_interface 与 default_interface，运行时会互相覆盖；"
+                        "请只保留其一（缺 nfqueue 模块的设备推荐显式 default_interface）。")
+
     return errors, warnings
 
 

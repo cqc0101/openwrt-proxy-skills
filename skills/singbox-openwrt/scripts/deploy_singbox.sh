@@ -174,7 +174,8 @@ $SSH_CMD "if uci -q get sing-box.main >/dev/null 2>&1; then uci set sing-box.mai
 # 8. 覆盖生产配置并平滑重启
 log_info "正在应用配置并平滑重载 sing-box 服务..."
 $SSH_CMD "mv ${REMOTE_TMP} ${REMOTE_CONF}"
-$SSH_CMD "nice -n 5 /etc/init.d/sing-box restart || service sing-box restart || killall -HUP sing-box || true"
+# 2>/dev/null：抑制首次注册前 rc.common 的 "ubus call service delete ... Not found" 无害噪音
+$SSH_CMD "nice -n 5 /etc/init.d/sing-box restart 2>/dev/null || service sing-box restart 2>/dev/null || killall -HUP sing-box || true"
 
 # 9. 存活监控与健康巡检（关键避险）
 log_info "等待 3 秒后进行服务存活与网络健康巡检..."

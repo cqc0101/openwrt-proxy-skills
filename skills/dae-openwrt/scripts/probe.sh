@@ -156,6 +156,13 @@ if [ -c /dev/net/tun ] || lsmod 2>/dev/null | grep -q "^tun "; then
     HAS_TUN=1
 fi
 
+# 检查 nfqueue 内核模块（sing-box auto_redirect / auto_detect_interface 的自保依赖；
+# 缺失时生成配置应使用 --wan-iface 显式指定 WAN 接口，见 validation-report）
+NFQUEUE_OK=0
+if [ -d /sys/module/nfnetlink_queue ] || lsmod 2>/dev/null | grep -q "nfnetlink_queue"; then
+    NFQUEUE_OK=1
+fi
+
 # 引擎适配结论
 DAE_CAPABLE=0
 [ "$KERNEL_GE_515" -eq 1 ] && [ "$HAS_BTF" -eq 1 ] && DAE_CAPABLE=1
@@ -267,6 +274,7 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
     "kernel_ge_515": $KERNEL_GE_515,
     "has_btf": $HAS_BTF,
     "btf_path": "$(je "$BTF_PATH")",
+    "nfqueue_ok": $NFQUEUE_OK,
     "has_bpftool": $HAS_BPFTOOL,
     "has_tun": $HAS_TUN
   },
@@ -305,6 +313,8 @@ else
     echo "  - 物理内存: 可用 ${AVAIL_RAM}MB / 总计 ${TOTAL_RAM}MB (Swap: ${TOTAL_SWAP}MB)"
     if [ "$FREE_ROM" -lt 15 ]; then
         echo "  - 闪存空间: ${RED}剩余仅 ${FREE_ROM}MB！已触发闪存写保护锁定 (/tmp 缓存)${NC}"
+    elif [ "$FREE_ROM" -lt 70 ]; then
+        echo "  - 闪存空间: 剩余 ${FREE_ROM}MB (偏小；安装 sing-box 请用 ${GREEN}sing-box-tiny${NC} ≈39MiB，完整版 ≈62MiB 装不下)"
     else
         echo "  - 闪存空间: 剩余 ${FREE_ROM}MB (充裕)"
     fi
@@ -317,6 +327,11 @@ else
         echo "  - BTF 符号: ${YELLOW}缺失${NC} (若运行 dae 需安装 vmlinux-btf 补丁包)"
     fi
     echo "  - TUN 网卡: $([ "$HAS_TUN" -eq 1 ] && echo "${GREEN}可用 (/dev/net/tun)${NC}" || echo "${RED}未就绪${NC}")"
+    if [ "$NFQUEUE_OK" -eq 1 ]; then
+        echo "  - nfqueue 模块: ${GREEN}可用${NC} (auto_detect_interface 自保正常)"
+    else
+        echo "  - nfqueue 模块: ${YELLOW}缺失${NC} (sing-box 生成配置时建议加 --wan-iface ${WAN_IF:-eth0} 防直连被 TUN 自捕获)"
+    fi
 
     echo "${CYAN}[4. 科学上网引擎适配能力]${NC}"
     if [ "$DAE_CAPABLE" -eq 1 ]; then

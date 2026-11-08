@@ -110,6 +110,7 @@ python scripts/auto_config.py --version 1.14 --dns-mode fakeip --sub ./airport_c
 4. **国内首启动冷启动死锁消除 (`--mirror jsdelivr`)**：自动将 GitHub 原始链接替换为国内直接秒拉的 jsDelivr CDN 镜像，根除“未翻墙无法下载规则，无规则无法翻墙”的死锁问题。
 5. **机场广告过滤与节点上限保护 (`--max-nodes 15`)**：自动剔除“剩余流量/到期时间/官网公告”等干扰垃圾节点，去重并限制节点数，彻底杜绝上百个节点冲垮低配路由器 256MB/512MB 内存。
 6. **强制注入 OpenWrt 物理网关防御**：不论哪个版本，一律强制注入 `/tmp/sing-box-cache.db` 闪存保护、`auto_detect_interface: true` 防环、`default_domain_resolver: "alidns"` 防规则集死锁及 `0.0.0.0:9090` Clash API 局域网控制。
+7. **缺 nfqueue 内核的直连自捕获防护（`--wan-iface`）**：探针若显示「nfqueue 模块缺失」（真机验证：Oray X1 Pro / ImmortalWrt SNAPSHOT），生成配置**必须**追加 `--wan-iface <WAN接口>`（probe 报告已给出该值），否则 `auto_detect_interface` 的自保失效，国内直连会被 TUN 自捕获（出海正常、国内全 RST）。
 
 ---
 
@@ -228,8 +229,10 @@ OpenWrt SPI 闪存擦写寿命极为脆弱，`experimental.cache_file.path` **�
 bash scripts/deploy_singbox.sh <路由器IP> <配置文件路径> [SSH用户,默认root] [SSH端口,默认22]
 
 # Windows PowerShell 终端
-pwsh scripts/deploy_singbox.ps1 -RouterIP <路由器IP> -ConfigFile <配置文件路径>
+pwsh scripts/deploy_singbox.ps1 -RouterIP <路由器IP> -ConfigFile <配置文件路径> [-KeyPath <SSH私钥路径>]
 ```
+
+> 部署脚本第 5 个参数（ps1 为 `-KeyPath`）可指定 SSH 私钥；BatchMode 场景需要。设备只开密码登录时，请先参照 README 安装公钥。若设备剩余闪存 <70MB，安装 sing-box 用 `apk add sing-box-tiny`（≈39MiB），完整版（≈62MiB）装不下。
 
 **发布流水线安全机制：**
 1. **沙盒校验**：文件先送至 `/tmp`，远端调用 `nice -n 10 sing-box check` 深度语法与依赖校验；失败直接退出，不触碰生产配置。

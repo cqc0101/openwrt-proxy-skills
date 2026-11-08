@@ -58,6 +58,8 @@
 | E6 | 启动即崩，日志 `detour to an empty direct outbound makes no sense` | `sing-box run -c <配置>` 前台复现 | 规则集/HTTP client 的下载 detour 指向了 `direct`（`download_detour: "direct"` 或 `http_client.detour: "direct"`）→ **删除 detour 字段**，直连下载是默认行为 | 前台启动无 FATAL |
 | E7 | check 通过但部署后进程不在（被误报 Crash） | `uci get sing-box.main.enabled` | apk/opkg 安装后服务默认 `enabled=0`，`/etc/init.d/sing-box restart` 静默无效 → 部署脚本已自动启用；手改时记得 `uci set sing-box.main.enabled='1' && uci commit sing-box` | 返回 1 且进程在 |
 | E8 | 出海正常、国内直连全挂（baidu 000/Connection reset） | 路由器上双探针：`curl -I baidu.com` 与 `curl -I cp.cloudflare.com/generate_204` | 内核缺 `nfnetlink_queue`/`nft_queue` 模块（日志见 `nfqueue start failed`）时，`auto_detect_interface` 的自保失效，直连流量被 TUN 自捕获 → **重新生成配置并追加 `--wan-iface <WAN接口>`**（或手工设 `route.default_interface`）；probe 报告里的“默认路由接口”即该值 | 双探针均 2xx |
+| E9 | 多层代理叠加（本机 TUN 之上游还有 daed/其它透明代理），国内直连间歇 RST | 先停本机 sing-box 做基线对照 | 多层透明代理 + 缺 nfqueue/流量分载的交互；若基线同样异常则与本机配置无关 → 只保留一层代理，首层（主路由）优先 | 单层环境复核通过 |
+| E10 | 国内站点 curl 返回 501/403/reset 但浏览器正常 | 带浏览器 UA 重试 | 站点反爬（curl UA 被拒）；诊断用 `curl -A "Mozilla/5.0..."` 或浏览器验证 | 浏览器打开正常 |
 
 ## F. dae 专属
 
