@@ -11,8 +11,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SINGBOX = os.path.join(REPO, "skills", "singbox-openwrt", "scripts")
 DAE = os.path.join(REPO, "skills", "dae-openwrt", "scripts")
 
-# 两个技能各存一份、内容必须一致的通用运维脚本
-SHARED_SCRIPTS = ["probe.sh", "probe.ps1", "doctor.sh", "optimize_network.sh"]
+# 两个技能各存一份、内容必须一致的通用脚本（含自包含的 Python 解析副本）
+SHARED_SCRIPTS = ["probe.sh", "probe.ps1", "doctor.sh", "optimize_network.sh",
+                  "parse_node.py", "sub_parser.py"]
 
 
 def _read(path):

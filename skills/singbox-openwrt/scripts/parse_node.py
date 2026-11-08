@@ -6,6 +6,7 @@
 注意：sing-box 的 vless/vmess/trojan outbound 中 `network` 字段只接受 "tcp"/"udp"；
       ws / grpc / h2 等传输层必须写入 `transport` 块。
 """
+# [共享脚本] 本文件与 dae-openwrt/scripts/parse_node.py 完全一致，修改需双份同步！
 
 import sys
 import json
