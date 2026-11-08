@@ -55,14 +55,15 @@
 
 ### DeepSeek Harness (DSH)
 
-技能按 `<agentsHome>/skills/<技能名>/SKILL.md` 发现，因此指向仓库的 `skills/` 子目录：
+技能按 `<agentsHome>/skills/<技能名>/SKILL.md` 发现，因此指向仓库内的 `skills/` 子目录：
 
 ```powershell
 # Windows（junction 方式，修改仓库内容后即时生效）
+# 注意：把 <仓库路径> 换成你 clone 本仓库的实际位置，例如 D:\openwrt-proxy-skills
 cmd /c rmdir "$env:USERPROFILE\.agents\skills"           # 仅移除链接本身，不影响目标目录
 New-Item -ItemType Junction `
   -Path   "$env:USERPROFILE\.agents\skills" `
-  -Target "F:\skills\skills"
+  -Target "<仓库路径>\skills"
 ```
 
 `~/.agents` 同时是 DSH 的 agents home。如果其它工具（例如 Antigravity）也在使用该目录，请先确认。

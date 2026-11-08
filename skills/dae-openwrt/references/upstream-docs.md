@@ -44,3 +44,5 @@ include {
 
 > 与本技能的关系：以上文档版权归 daeuniverse 所有；本仓库不再附带其完整镜像，仅保留摘要与链接，
 > 以减小分发体积并避免文档版本漂移。
+> 需要离线原文时，可自行浅克隆上游仓库到本机备用：
+> `git clone --depth 1 https://github.com/daeuniverse/dae.git`（文档位于 `docs/zh/`）。
