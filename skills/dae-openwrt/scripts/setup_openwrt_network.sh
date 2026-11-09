@@ -5,9 +5,14 @@
 # 1. 内核转发限制：激活 net.ipv4.ip_forward=1 并持久化
 # 2. 流量分载关闭：关闭 flow_offloading，防止报文绕过 eBPF 挂载点
 # 3. MSS 钳制 (MSS Clamping)：激活 mtu_fix=1
-# 4. Dnsmasq 纯净过滤：激活 filter_aaaa='1' 根治国内手机 App 打开转圈假死
-# 5. 系统性能调优：激活 BBR + fq_codel 算法与扩充连接池
-# 6. 安全回滚支持：支持 --revert 一键无损还原原始网络基线
+# 4. 旁路由支持：支持 --bypass 开启 LAN 伪装 (masquerade=1)，消除非对称路由丢包
+# 5. Dnsmasq 纯净过滤：激活 filter_aaaa='1' 根治国内手机 App 打开转圈假死
+# 6. 系统性能调优：激活 BBR + fq_codel 算法与扩充连接池
+# 7. 安全回滚支持：支持 --revert 一键无损还原原始网络基线
+#
+# 运行方式：
+# - 路由器本地执行: sh setup_openwrt_network.sh [--bypass|--revert]
+# - 宿主机远程执行: sh setup_openwrt_network.sh <路由器IP> [用户] [端口] [私钥] [--bypass|--revert]
 # ==============================================================================
 
 set -e
@@ -24,8 +29,26 @@ say() { printf '%b\n' "$1"; }
 run_dae_hardening() {
     ACTION_FLAG="${1:-}"
 
+    # 定位 LAN zone 索引
+    LAN_INDEX=""
+    ZONE_IDX=0
+    while true; do
+        zone_name=$(uci get "firewall.@zone[${ZONE_IDX}].name" 2>/dev/null) || break
+        if [ "$zone_name" = "lan" ] || [ "$zone_name" = "LAN" ]; then
+            LAN_INDEX="$ZONE_IDX"
+            break
+        fi
+        ZONE_IDX=$((ZONE_IDX + 1))
+    done
+
     if [ "$ACTION_FLAG" = "--revert" ]; then
         say "${YELLOW}[REVERT] 正在撤销 dae 网络加固并还原基线...${NC}"
+        if [ -n "$LAN_INDEX" ]; then
+            uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+            uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
+            uci commit firewall 2>/dev/null || true
+            /etc/init.d/firewall reload 2>/dev/null || true
+        fi
         rm -f /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
         uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         uci commit dhcp 2>/dev/null || true
@@ -34,7 +57,7 @@ run_dae_hardening() {
         return 0
     fi
 
-    say "${BLUE}[1/4] 激活系统 IPv4 路由转发与连接池参数...${NC}"
+    say "${BLUE}[1/5] 激活系统 IPv4 路由转发与连接池参数...${NC}"
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
     sysctl -w net.ipv4.conf.all.forwarding=1 >/dev/null 2>&1
     sysctl -w net.netfilter.nf_conntrack_max=65536 >/dev/null 2>&1 || true
@@ -58,7 +81,7 @@ SYSCTL_EOF
         echo "net.core.default_qdisc=fq_codel" >> /etc/sysctl.d/99-dae.conf
     fi
 
-    say "${BLUE}[2/4] 关闭流量分载 (Flow Offloading，防止报文跳过 eBPF 探针)...${NC}"
+    say "${BLUE}[2/5] 关闭流量分载 (Flow Offloading，防止报文跳过 eBPF 探针)...${NC}"
     if command -v uci >/dev/null 2>&1; then
         uci set firewall.@defaults[0].flow_offloading='0' 2>/dev/null || true
         uci set firewall.@defaults[0].flow_offloading_hw='0' 2>/dev/null || true
@@ -66,24 +89,24 @@ SYSCTL_EOF
         /etc/init.d/firewall reload 2>/dev/null || true
     fi
 
-    say "${BLUE}[3/4] 开启 LAN 区域 MSS 钳制 (mtu_fix=1)...${NC}"
-    LAN_INDEX=""
-    ZONE_IDX=0
-    while true; do
-        zone_name=$(uci get "firewall.@zone[${ZONE_IDX}].name" 2>/dev/null) || break
-        if [ "$zone_name" = "lan" ] || [ "$zone_name" = "LAN" ]; then
-            LAN_INDEX="$ZONE_IDX"
-            break
-        fi
-        ZONE_IDX=$((ZONE_IDX + 1))
-    done
+    say "${BLUE}[3/5] 开启 LAN 区域 MSS 钳制 (mtu_fix=1)...${NC}"
     if [ -n "$LAN_INDEX" ]; then
         uci set firewall.@zone[${LAN_INDEX}].mtu_fix='1' 2>/dev/null || true
         uci commit firewall 2>/dev/null || true
         /etc/init.d/firewall reload 2>/dev/null || true
     fi
 
-    say "${BLUE}[4/4] 配置 Dnsmasq AAAA 过滤 (filter_aaaa=1，纯净 IPv4 模式)...${NC}"
+    if [ "$ACTION_FLAG" = "--bypass" ]; then
+        say "${YELLOW}[旁路由] 检测到 --bypass 参数，激活 LAN 区域动态伪装 (masq/masquerade=1，消除非对称丢包)...${NC}"
+        if [ -n "$LAN_INDEX" ]; then
+            uci set firewall.@zone[${LAN_INDEX}].masq='1' 2>/dev/null || true
+            uci set firewall.@zone[${LAN_INDEX}].masquerade='1' 2>/dev/null || true
+            uci commit firewall 2>/dev/null || true
+            /etc/init.d/firewall reload 2>/dev/null || true
+        fi
+    fi
+
+    say "${BLUE}[4/5] 配置 Dnsmasq AAAA 过滤 (filter_aaaa=1，纯净 IPv4 模式)...${NC}"
     if uci get dhcp.@dnsmasq[0] >/dev/null 2>&1; then
         uci set dhcp.@dnsmasq[0].filter_aaaa='1' 2>/dev/null || true
         uci commit dhcp 2>/dev/null || true
@@ -94,7 +117,7 @@ SYSCTL_EOF
 }
 
 FIRST_ARG="${1:-}"
-if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--revert" ]; then
+if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--bypass" ] || [ "$FIRST_ARG" = "--revert" ]; then
     run_dae_hardening "$FIRST_ARG"
 else
     ROUTER_IP="$FIRST_ARG"
@@ -109,7 +132,7 @@ else
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --revert)
+            --bypass|--revert)
                 EXTRA_FLAG="$1"
                 ;;
             -u|--user)

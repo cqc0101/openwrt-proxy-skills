@@ -231,6 +231,8 @@ if [ "$RESOLVE_TOOL" = "nslookup" ]; then
             }
         }
     ')
+elif [ "$RESOLVE_TOOL" = "dig" ]; then
+    AAAA_RESP=$(dig +short AAAA google.com @127.0.0.1 2>/dev/null || dig +short AAAA google.com 2>/dev/null || true)
 fi
 
 if [ -z "$AAAA_RESP" ]; then

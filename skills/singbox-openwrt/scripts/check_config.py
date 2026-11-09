@@ -69,6 +69,15 @@ def check_config_obj(cfg):
             warnings.append("[解析死锁风险] route 块未指定 'default_domain_resolver'。启动阶段拉取规则集可能陷入 DNS 递归死锁！")
         elif resolver not in dns_servers:
             errors.append(f"[悬空引用] route.default_domain_resolver 指向 '{resolver}'，但在 dns.servers 中未找到此 tag！")
+        else:
+            # 校验引导 DNS 自身地址不能是域名（否则启动初期解析该域名必陷入递归死锁）
+            resolver_entry = next((s for s in (dns.get("servers") or []) if isinstance(s, dict) and s.get("tag") == resolver), None)
+            if resolver_entry:
+                r_server = str(resolver_entry.get("server", "")).strip()
+                r_type = resolver_entry.get("type", "")
+                if r_server and r_type not in ("local", "hosts"):
+                    if not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", r_server) and ":" not in r_server and not r_server.startswith("["):
+                        errors.append(f"[致命递归死锁] route.default_domain_resolver 指向的 '{resolver}' 服务器地址为域名 '{r_server}'！引导解析器自身地址必须为纯 IP，否则启动即陷入 DNS 递归死锁！")
 
         http_client = route.get("default_http_client")
         if http_client and http_client not in all_http_clients:

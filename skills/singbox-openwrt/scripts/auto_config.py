@@ -256,6 +256,7 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
             dns_rules = config.get("dns", {}).get("rules", [])
             dns_insert_idx = 1 if dns_rules and dns_rules[0].get("server") == "hosts" else 0
             dns_rules.insert(dns_insert_idx, {
+                "action": "route",
                 "domain": node_domains,
                 "server": "alidns"
             })
@@ -267,6 +268,7 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
                 if rr.get("action") in ["sniff", "hijack-dns"]:
                     route_insert_idx = idx + 1
             route_rules.insert(route_insert_idx, {
+                "action": "route",
                 "domain": node_domains,
                 "outbound": "direct"
             })

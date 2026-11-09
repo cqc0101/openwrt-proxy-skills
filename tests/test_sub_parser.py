@@ -215,6 +215,20 @@ class TestToDaeNodes(unittest.TestCase):
         uri = self._lines(nodes)[0].split("'")[3]
         self.assertIn("insecure=1", uri)
 
+    def test_single_quote_in_password_escaped(self):
+        nodes = [{"type": "hysteria2", "tag": "HK", "server": "9.9.9.9", "server_port": 3456,
+                  "password": "pass'word", "tls": {"enabled": True, "server_name": "c.com"}}]
+        line = self._lines(nodes)[0]
+        self.assertEqual(line.count("'"), 4, f"内部单引号未正确转义打断语法: {line}")
+        self.assertIn("pass%27word", line)
+
+    def test_vless_plaintext_no_tls(self):
+        nodes = [{"type": "vless", "tag": "PLAIN", "server": "1.2.3.4", "server_port": 80,
+                  "uuid": "u-plain"}]
+        uri = self._lines(nodes)[0].split("'")[3]
+        self.assertIn("security=none", uri)
+        self.assertNotIn("security=tls", uri)
+
     def test_vless_and_trojan_ws_grpc_preserved_in_dae(self):
         nodes = [
             {

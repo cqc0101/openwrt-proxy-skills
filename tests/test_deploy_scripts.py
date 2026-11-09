@@ -52,6 +52,7 @@ class TestNetworkSetupScripts(unittest.TestCase):
         self.assertIn("StrictHostKeyChecking=accept-new", text, "SSH 模式必须使用 accept-new")
         self.assertIn("flow_offloading='0'", text, "dae 必须关闭流量分载 Flow Offloading")
         self.assertIn("filter_aaaa='1'", text, "必须开启 Dnsmasq filter_aaaa 过滤")
+        self.assertIn("--bypass", text, "dae 网络脚本必须支持旁路由 --bypass 参数开启 LAN 伪装")
         self.assertNotIn("echo -e", text, "POSIX /bin/sh 严禁使用 echo -e")
 
     def test_probe_reports_hardening_facts(self):
@@ -73,6 +74,7 @@ class TestNetworkSetupScripts(unittest.TestCase):
         self.assertIn("bind: address already in use", text)
         self.assertIn('"fw_tun_ok":', text)
         self.assertIn('"outbound_ok":', text)
+        self.assertNotIn("指定 download_detour: direct", text, "doctor.sh 严禁建议显式配置导致启动即崩的 download_detour: direct")
 
     def test_doctor_ruleset_regex_does_not_catch_bare_context_deadline(self):
         """防止普通的 Go 链接超时 (context deadline exceeded) 误报为规则集阻断。"""

@@ -196,7 +196,7 @@ if [ -n "$RAW_LOGS" ]; then
 
     # 特征 3: 规则集下载被阻断 (冷启动死锁)
     if echo "$RAW_LOGS" | grep -qiE "download rule-set|rule.?set.*(download|fetch|error|timeout|deadline|failed|context deadline exceeded)|raw\.githubusercontent\.com|githubusercontent\.com"; then
-        add_issue "ruleset_download_blocked" "error" "规则集下载被 GFW 阻断 (冷启动死锁)" "sing-box 启动时拉取 remote .srs 超时导致服务卡死" "在 rule-set 中指定 download_detour: direct，或使用国内 CDN 镜像加速"
+        add_issue "ruleset_download_blocked" "error" "规则集下载被 GFW 阻断 (冷启动死锁)" "sing-box 启动时拉取 remote .srs 超时导致服务卡死" "重新生成配置并指定国内 CDN 镜像加速 (--mirror jsdelivr)，切勿显式配置 download_detour: direct (启动必崩)"
     fi
 
     # 特征 4: 端口冲突

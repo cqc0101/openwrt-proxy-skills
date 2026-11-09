@@ -441,16 +441,17 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
         host = _uri_host(server)   # authority 部分：IPv6 必须 [v6]
         trans_part = _dae_transport_query(n)
 
+        raw_uri = ""
         if ntype == "hysteria2":
             pw = n.get("password", "")
             tls = n.get("tls", {})
-            sni = _bare_host(tls.get("server_name", server))
+            sni = _bare_host(tls.get("server_name") or server)
             insecure = "&insecure=1" if tls.get("insecure") else ""
             obfs = n.get("obfs", {})
             obfs_part = ""
             if obfs and obfs.get("type"):
                 obfs_part = f"&obfs={obfs.get('type')}&obfs-password={urllib.parse.quote(str(obfs.get('password', '')))}"
-            lines.append(f"  '{tag}': 'hysteria2://{pw}@{host}:{port}?sni={sni}{insecure}{obfs_part}#{frag}'")
+            raw_uri = f"hysteria2://{pw}@{host}:{port}?sni={sni}{insecure}{obfs_part}#{frag}"
         elif ntype == "vless":
             uuid = n.get("uuid", "")
             flow = n.get("flow", "")
@@ -459,25 +460,27 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             if tls.get("reality", {}).get("enabled"):
                 pbk = tls["reality"].get("public_key", "")
                 sid = tls["reality"].get("short_id", "")
-                sni = _bare_host(tls.get("server_name", server))
+                sni = _bare_host(tls.get("server_name") or server)
                 fp = tls.get("utls", {}).get("fingerprint", "chrome")
-                lines.append(f"  '{tag}': 'vless://{uuid}@{host}:{port}?security=reality&sni={sni}&pbk={pbk}&sid={sid}&fp={fp}{flow_part}{trans_part}#{frag}'")
-            else:
-                sni = _bare_host(tls.get("server_name", server))
+                raw_uri = f"vless://{uuid}@{host}:{port}?security=reality&sni={sni}&pbk={pbk}&sid={sid}&fp={fp}{flow_part}{trans_part}#{frag}"
+            elif tls.get("enabled"):
+                sni = _bare_host(tls.get("server_name") or server)
                 fp = tls.get("utls", {}).get("fingerprint", "chrome")
                 insecure = "&allowInsecure=1" if tls.get("insecure") else ""
-                lines.append(f"  '{tag}': 'vless://{uuid}@{host}:{port}?security=tls&sni={sni}&fp={fp}{insecure}{flow_part}{trans_part}#{frag}'")
+                raw_uri = f"vless://{uuid}@{host}:{port}?security=tls&sni={sni}&fp={fp}{insecure}{flow_part}{trans_part}#{frag}"
+            else:
+                raw_uri = f"vless://{uuid}@{host}:{port}?security=none{flow_part}{trans_part}#{frag}"
         elif ntype == "trojan":
             pw = n.get("password", "")
             tls = n.get("tls", {})
-            sni = _bare_host(tls.get("server_name", server))
+            sni = _bare_host(tls.get("server_name") or server)
             insecure = "&allowInsecure=1" if tls.get("insecure") else ""
-            lines.append(f"  '{tag}': 'trojan://{pw}@{host}:{port}?sni={sni}{insecure}{trans_part}#{frag}'")
+            raw_uri = f"trojan://{pw}@{host}:{port}?sni={sni}{insecure}{trans_part}#{frag}"
         elif ntype == "shadowsocks":
             method = n.get("method", "")
             pw = n.get("password", "")
             userpass = base64.b64encode(f"{method}:{pw}".encode()).decode()
-            lines.append(f"  '{tag}': 'ss://{userpass}@{host}:{port}#{frag}'")
+            raw_uri = f"ss://{userpass}@{host}:{port}#{frag}"
         elif ntype == "vmess":
             uuid = n.get("uuid", "")
             security = n.get("security", "auto")
@@ -506,10 +509,15 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
                 "host": host,
                 "path": path,
                 "tls": "tls" if tls.get("enabled") else "",
-                "sni": tls.get("server_name", server) if tls.get("enabled") else ""
+                "sni": (tls.get("server_name") or server) if tls.get("enabled") else ""
             }
             b64 = base64.b64encode(json.dumps(vm, ensure_ascii=False).encode()).decode()
-            lines.append(f"  '{tag}': 'vmess://{b64}'")
+            raw_uri = f"vmess://{b64}"
+
+        if raw_uri:
+            # 严格防止 URI 中的单引号破坏 .dae 的 '...' 语法定界符（转为合法 RFC 3986 %27）
+            safe_uri = raw_uri.replace("'", "%27")
+            lines.append(f"  '{tag}': '{safe_uri}'")
 
     lines.append("}")
     return "\n".join(lines)

@@ -2,6 +2,28 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.4.2] - 2026-11-09
+
+### 深度漏洞修复与健壮性加固 (Deep Hardening & Bug Fixes)
+
+- **[高危] `doctor.sh` 排除致命反向建议**：
+  - 修复 `doctor.sh` 规则集下载超时特征中建议用户显式配置 `download_detour: direct` 的严重自相矛盾漏洞（该配置会导致 sing-box 启动期触发 `empty direct outbound` 致命崩溃）；修正为引导用户重新生成时指定 `--mirror jsdelivr` CDN 加速镜像。
+- **[高危] `dae/setup_openwrt_network.sh` 补充旁路由 `--bypass` 支持**：
+  - 修复 `dae-openwrt` 脚本中未处理 `--bypass` 参数导致误把参数作为目标 IP 执行 SSH 崩溃的缺陷；完整实现 LAN 区域 IP 伪装 (`masq='1'` / `masquerade='1'`) 及 `--revert` 回滚清理。
+- **[高危] `check_config.py` 拦截引导 DNS 域名型自环死锁**：
+  - 新增静态审计门禁：校验 `route.default_domain_resolver` 所指向的 DNS 服务器其自身地址必须为纯 IP，杜绝因配置域名型引导解析器引发的不可逆无限递归 DNS 死锁。
+- **[中危] `auto_config.py` 动态规则补全 `"action": "route"` 规范**：
+  - 节点域名防死锁直连注入时，为 `dns.rules` 和 `route.rules` 项显式补充 `"action": "route"`，消除现代严格 schema 检验下的潜在不兼容。
+- **[中危] `sub_parser.py` 转 dae 词法单引号转义与明文 VLESS 支持**：
+  - 在生成 dae 节点时，对 URI 内部的单引号 `'` 强制进行 RFC 3986 `%27` 安全转义，彻底杜绝包含单引号密码打断 dae 语法的事故；
+  - 修复非 TLS / 明文 VLESS 节点被强制注入 `security=tls` 导致握手失败的问题，精确输出 `security=none`。
+- **[低危] `diagnose_dns.sh` IPv6 AAAA 检测兼容 dig**：
+  - 在无 `nslookup` 仅有 `dig` 的最小化环境中补充 AAAA 过滤探测分支，杜绝假阳性 PASS 误报。
+- **[低危] 文档笔误校正**：
+  - 修正 `troubleshooting.md` 中“节点缺少双引号”的自相矛盾笔误为“节点未用单引号包裹”。
+
+---
+
 ## [0.4.1] - 2026-11-09
 
 ### 错误修复 (Bug Fixes)

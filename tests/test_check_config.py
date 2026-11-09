@@ -147,6 +147,14 @@ class TestFuzzAndEdgeCases(unittest.TestCase):
                 self.assertIsInstance(errs, list)
                 self.assertIsInstance(warns, list)
 
+    def test_domain_resolver_with_domain_server_blocked(self):
+        cfg = {
+            "dns": {"servers": [{"tag": "my-resolver", "type": "udp", "server": "dns.alidns.com"}]},
+            "route": {"default_domain_resolver": "my-resolver"}
+        }
+        errs, _ = check_config_obj(cfg)
+        self.assertTrue(any("致命递归死锁" in e for e in errs), "引导 DNS 自身地址为域名必须被阻断")
+
 
 if __name__ == "__main__":
     unittest.main()

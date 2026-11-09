@@ -50,12 +50,12 @@ class TestSingboxDefaults(unittest.TestCase):
         self.assertIn("1.13 TUN FakeIP", text)
         self.assertIn("--dns-mode fakeip", text)
 
-    def test_compat_matrix_keeps_2410_apk_fact(self):
-        """24.10+ 迁移至 apk 为默认包管理器，旧版使用 opkg。"""
+    def test_compat_matrix_keeps_2410_opkg_fact(self):
+        """24.10 使用 opkg（apk 仅 main 分支）——这条曾被写错，必须留证。"""
         text = read(os.path.join(SB, "references", "architecture-and-schema.md"))
         self.assertIn("24.10", text)
         self.assertIn("opkg", text)
-        self.assertIn("apk", text)
+        self.assertIn("APK packages are *not* supported", text)
 
 
 class TestDaeMustDirectGranularity(unittest.TestCase):

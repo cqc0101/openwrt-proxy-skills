@@ -47,9 +47,8 @@
 ## 三、 软路由平台兼容矩阵速查
 
 * **OpenWrt 发行版与包管理器**：
-  - **OpenWrt < 24.10（21.02 / 22.03 / 23.05）**：使用经典 `opkg` 包管理器。
-  - **OpenWrt 24.10+ (正式 Release)**：`apk` 已成为**默认包管理器**（取代 opkg），这是重大迁移，注意区分发行版本。
-  - **ImmortalWrt / iStoreOS**：官方源通常提供带 LuCI 界面的专用包或预编译二进制，包管理器随基础发行版版本而定（多数仍为 opkg，但新版本 ImmortalWrt 开始跟随 24.10 迁移至 apk）。
+  - **OpenWrt 21.02 / 22.03 / 23.05 / 24.10**：一律使用 `opkg`（注意：APK packages are *not* supported on OpenWrt 24.10 release，`apk` 仅在 snapshot / main 开发分支实验性支持）。
+  - **ImmortalWrt / iStoreOS**：官方源通常提供带 LuCI 界面的专用包或预编译二进制。
 * **x86_64 / aarch64 (ARMv8)**：完整版 `sing-box` 性能最佳。
 * **低内存 / 小闪存 (RAM <= 256MB 或 ROM <= 70MB)**：
   - 安装精简版：`apk add sing-box-tiny` 或 `opkg install sing-box`（约 39MiB）；
