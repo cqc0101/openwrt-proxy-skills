@@ -24,25 +24,54 @@ for _s in (sys.stdout, sys.stderr):
 def _b64_decode(s: str) -> str:
     """Base64 解码：自动补 padding，同时接受标准与 urlsafe 字母表。
 
-    注意不能先 b64decode(validate=False)：它会静默丢弃 '-'/'_' 而不是报错，
-    导致 urlsafe 字符串被解出错误字节。
+    支持 UTF-8 与 GB18030 中文字符集；若两者均非法则抛出 UnicodeDecodeError。
     """
     s = s.strip()
     s += '=' * (-len(s) % 4)
     raw = base64.urlsafe_b64decode(s)
-    return raw.decode('utf-8')
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('gb18030')
 
 
-def _split_host_port(host_port: str):
-    """拆分 'host:port'（IPv6 形如 '[v6]:port'），返回 (server, port)。
+def _split_host_port(host_port: str, default_port: int = 443):
+    """拆分 'host:port'（IPv6 形如 '[v6]:port' 或裸 '[v6]'），返回 (server, port)。
 
-    必须从右侧切分：IPv6 地址含多个冒号，从左切会把地址切碎。
+    容错处理缺端口、非数字端口、裸 IPv6 与 URI 片段。
     """
-    server, port_str = host_port.rsplit(":", 1)
-    server = urllib.parse.unquote(server).strip("[]")
+    if "#" in host_port:
+        host_port = host_port.split("#", 1)[0]
+    if "?" in host_port:
+        host_port = host_port.split("?", 1)[0]
+    if "/" in host_port:
+        host_port = host_port.split("/", 1)[0]
+    host_port = host_port.strip()
+    if not host_port:
+        raise ValueError("主机地址为空")
+
+    if host_port.startswith("["):
+        if "]:" in host_port:
+            server_part, port_str = host_port.split("]:", 1)
+            server = server_part.lstrip("[").strip()
+            port = int(port_str) if port_str.isdigit() else default_port
+        else:
+            server = host_port.strip("[]").strip()
+            port = default_port
+    elif ":" in host_port:
+        if host_port.count(":") > 1:
+            server = host_port.strip()
+            port = default_port
+        else:
+            server_str, port_str = host_port.rsplit(":", 1)
+            server = urllib.parse.unquote(server_str).strip("[]").strip()
+            port = int(port_str) if port_str.isdigit() else default_port
+    else:
+        server = urllib.parse.unquote(host_port).strip("[]").strip()
+        port = default_port
+
     if not server:
         raise ValueError(f"无法解析主机地址: {host_port!r}")
-    port = int(port_str)
     return server, port
 
 
@@ -72,6 +101,8 @@ def parse_vless(uri_str):
     parsed = urllib.parse.urlparse(uri_str)
     uuid = urllib.parse.unquote(parsed.username or "")
     server = parsed.hostname
+    if not server or not uuid:
+        raise ValueError(f"无法解析 VLESS 节点地址 (缺少有效主机或 UUID): {uri_str[:40]}...")
     port = parsed.port or 443
     params = urllib.parse.parse_qs(parsed.query)
     tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"vless-{server}"
@@ -138,8 +169,10 @@ def parse_vless(uri_str):
 
 def parse_hysteria2(uri_str):
     parsed = urllib.parse.urlparse(uri_str)
-    password = urllib.parse.unquote(parsed.username or parsed.password or "")
+    password = urllib.parse.unquote(parsed.password or parsed.username or "")
     server = parsed.hostname
+    if not server:
+        raise ValueError(f"无法解析 Hysteria2 节点地址 (缺少有效主机): {uri_str[:40]}...")
     port = parsed.port or 443
     params = urllib.parse.parse_qs(parsed.query)
     tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"hy2-{server}"
@@ -171,8 +204,10 @@ def parse_hysteria2(uri_str):
 
 def parse_trojan(uri_str):
     parsed = urllib.parse.urlparse(uri_str)
-    password = urllib.parse.unquote(parsed.username or "")
+    password = urllib.parse.unquote(parsed.password or parsed.username or "")
     server = parsed.hostname
+    if not server:
+        raise ValueError(f"无法解析 Trojan 节点地址 (缺少有效主机): {uri_str[:40]}...")
     port = parsed.port or 443
     params = urllib.parse.parse_qs(parsed.query)
     tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"trojan-{server}"
@@ -221,6 +256,14 @@ def parse_shadowsocks(uri_str):
         server, port = _split_host_port(host_port)
     else:
         decoded = _b64_decode(parsed.netloc)
+        if "#" in decoded:
+            decoded, inner_tag = decoded.split("#", 1)
+            if not parsed.fragment and inner_tag:
+                tag = urllib.parse.unquote(inner_tag)
+        if "?" in decoded:
+            decoded = decoded.split("?", 1)[0]
+        if "/" in decoded:
+            decoded = decoded.split("/", 1)[0]
         cred, host_part = decoded.rsplit("@", 1)
         method, password = cred.split(":", 1)
         server, port = _split_host_port(host_part)
@@ -240,19 +283,39 @@ def parse_shadowsocks(uri_str):
 
 
 def parse_vmess(uri_str):
-    raw_b64 = uri_str[len("vmess://"):].strip()
+    # 部分订阅会在 base64 后追加原生 #节点名 片段；必须先剥离，否则会污染 base64 解码
+    raw_b64 = uri_str[len("vmess://"):].strip().split("#")[0].strip()
     missing_padding = len(raw_b64) % 4
     if missing_padding:
         raw_b64 += '=' * (4 - missing_padding)
-    # urlsafe_b64decode 同时接受标准与 urlsafe 字母表
-    decoded_bytes = base64.urlsafe_b64decode(raw_b64)
-    data = json.loads(decoded_bytes.decode('utf-8', errors='ignore'))
+    try:
+        decoded_bytes = base64.urlsafe_b64decode(raw_b64)
+    except Exception as e:
+        raise ValueError(f"VMess Base64 解码失败: {e}")
 
-    tag = data.get("ps", f"vmess-{data.get('add')}")
+    try:
+        data = json.loads(decoded_bytes.decode('utf-8', errors='ignore'))
+    except Exception as e:
+        raise ValueError(f"VMess JSON 解码失败: {e}")
+
+    if not isinstance(data, dict):
+        raise ValueError(f"VMess 数据格式非法 (非 JSON 对象): {data!r}")
+
     server = data.get("add")
-    port = int(data.get("port", 443))
     uuid = data.get("id")
-    alter_id = int(data.get("aid", 0))
+    if not server or not uuid:
+        raise ValueError(f"VMess 缺少必要字段 (add/id): {data!r}")
+
+    tag = data.get("ps", f"vmess-{server}")
+    try:
+        port = int(data.get("port", 443))
+    except (ValueError, TypeError):
+        port = 443
+
+    try:
+        alter_id = int(data.get("aid", 0))
+    except (ValueError, TypeError):
+        alter_id = 0
     security = data.get("scy", "auto") or "auto"
     net_type = data.get("net", "tcp")
     host = data.get("host", "")

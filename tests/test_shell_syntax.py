@@ -57,6 +57,33 @@ class TestShellSyntax(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, f"bash -n 失败:\n{r.stderr}")
 
 
+class TestNoBashisms(unittest.TestCase):
+    """纯 POSIX /bin/sh 规范守护：杜绝任何非标准 bashism 语法。"""
+    PATTERNS = {
+        "double_bracket": (r"(?<!\w)\[\[\s", "严禁使用 [[，必须使用 POSIX ["),
+        "echo_flags": (r"(?<!\w)echo\s+-[enE]+\s", "严禁使用 echo -n 或 -e，必须使用 printf"),
+        "function_kw": (r"^\s*function\s+\w+", "严禁使用 function 关键字，必须使用 name()"),
+        "source_cmd": (r"^\s*source\s+", "严禁使用 source，必须使用 . "),
+        "amp_redirect": (r"&>", "严禁使用 &>，必须使用 >... 2>&1"),
+        "herestring": (r"<<<", "严禁使用 <<< herestring"),
+        "bash_substr": (r"\$\{\w+:[0-9]+(:[0-9]+)?\}", "严禁使用 ${var:0:1} 切片"),
+    }
+
+    def test_skills_scripts_have_zero_bashisms(self):
+        import re
+        skills_dir = os.path.join(REPO, "skills")
+        for root, _, files in os.walk(skills_dir):
+            for name in files:
+                if name.endswith(".sh"):
+                    path = os.path.join(root, name)
+                    rel = os.path.relpath(path, REPO)
+                    with open(path, "r", encoding="utf-8") as f:
+                        text = f.read()
+                    for bname, (pat, msg) in self.PATTERNS.items():
+                        m = re.search(pat, text, flags=re.MULTILINE)
+                        self.assertIsNone(m, f"{rel} 发现 bashism '{bname}' ({m.group(0) if m else ''}): {msg}")
+
+
 class TestLineEndings(unittest.TestCase):
     def test_no_crlf_no_bom(self):
         for root, _dirs, files in os.walk(REPO):

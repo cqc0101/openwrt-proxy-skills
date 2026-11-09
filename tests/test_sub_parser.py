@@ -2,18 +2,40 @@
 """sub_parser 单元测试：订阅清洗、Clash 转换、dae 导出语法的正确性。"""
 
 import base64
+import gzip
 import json
 import os
 import sys
 import unittest
+import zlib
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "skills", "singbox-openwrt", "scripts"))
 
 from sub_parser import (  # noqa: E402
     parse_source, parse_subscription_text, parse_clash_proxy,
-    filter_nodes, to_dae_nodes, safe_b64decode,
+    filter_nodes, to_dae_nodes, safe_b64decode, _decompress,
+    extract_node_domains,
 )
+
+
+class TestDecompress(unittest.TestCase):
+    """订阅响应可能是 gzip/deflate 压缩（urllib 不会自动解压）。"""
+
+    def test_gzip_by_magic(self):
+        raw = b"trojan://pw@1.1.1.1:443#A"
+        gz = gzip.compress(raw)
+        self.assertEqual(_decompress(gz, ""), raw)
+        self.assertEqual(_decompress(gz, "gzip"), raw)
+
+    def test_deflate(self):
+        raw = b"vless://uuid@2.2.2.2:443#B"
+        z = zlib.compress(raw)
+        self.assertEqual(_decompress(z, "deflate"), raw)
+
+    def test_plain_passthrough(self):
+        raw = b"plain subscription text"
+        self.assertEqual(_decompress(raw, ""), raw)
 
 
 class TestSafeB64(unittest.TestCase):
@@ -89,6 +111,59 @@ class TestClashProxy(unittest.TestCase):
         self.assertIs(ob["tls"]["reality"]["enabled"], True)
         self.assertEqual(ob["tls"]["reality"]["public_key"], "PK")
         self.assertEqual(ob["flow"], "xtls-rprx-vision")
+
+    def test_vless_reality_sni_from_top_level_servername(self):
+        """Reality 的 SNI 在顶层 servername，reality-opts 里只有 key/short-id 时不能回退成 IP。"""
+        ob = parse_clash_proxy({
+            "name": "US-R", "type": "vless", "server": "1.2.3.4", "port": 443,
+            "uuid": "u", "tls": True, "servername": "www.microsoft.com",
+            "reality-opts": {"public-key": "PK", "short-id": "12"},
+            "client-fingerprint": "chrome",
+        })
+        self.assertEqual(ob["tls"]["server_name"], "www.microsoft.com")
+        self.assertIs(ob["tls"]["reality"]["enabled"], True)
+
+    def test_trojan_sni_servername_fallback(self):
+        ob = parse_clash_proxy({
+            "name": "T", "type": "trojan", "server": "1.2.3.4", "port": 443,
+            "password": "p", "servername": "a.com",
+        })
+        self.assertEqual(ob["tls"]["server_name"], "a.com")
+
+    def test_trojan_ws_and_grpc(self):
+        ob_ws = parse_clash_proxy({
+            "name": "T-WS", "type": "trojan", "server": "1.2.3.4", "port": 443,
+            "password": "p", "network": "ws", "ws-opts": {"path": "/tws"},
+        })
+        self.assertEqual(ob_ws["transport"]["type"], "ws")
+        self.assertEqual(ob_ws["transport"]["path"], "/tws")
+
+        ob_grpc = parse_clash_proxy({
+            "name": "T-G", "type": "trojan", "server": "1.2.3.4", "port": 443,
+            "password": "p", "network": "grpc", "grpc-opts": {"grpc-service-name": "tsvc"},
+        })
+        self.assertEqual(ob_grpc["transport"]["type"], "grpc")
+        self.assertEqual(ob_grpc["transport"]["service_name"], "tsvc")
+
+    def test_hysteria2_auth_and_obfs(self):
+        ob = parse_clash_proxy({
+            "name": "H2", "type": "hysteria2", "server": "1.2.3.4", "port": 443,
+            "auth": "myauth", "obfs": "salamander", "obfs-password": "opw",
+        })
+        self.assertEqual(ob["password"], "myauth")
+        self.assertEqual(ob["obfs"]["type"], "salamander")
+        self.assertEqual(ob["obfs"]["password"], "opw")
+
+    def test_vmess_grpc_keeps_service_name(self):
+        nodes = [{"type": "vmess", "tag": "G", "server": "1.1.1.1", "server_port": 443,
+                  "uuid": "u", "security": "auto", "alter_id": 0,
+                  "transport": {"type": "grpc", "service_name": "svc"},
+                  "tls": {"enabled": True, "server_name": "s.com"}}]
+        line = [l for l in to_dae_nodes(nodes).splitlines() if l.strip().startswith("'")][0]
+        payload = line.split("'")[3].replace("vmess://", "")
+        d = json.loads(base64.b64decode(payload + "=" * (-len(payload) % 4)).decode())
+        self.assertEqual(d["net"], "grpc")
+        self.assertEqual(d["path"], "svc")
 
     def test_vmess_grpc(self):
         ob = parse_clash_proxy({
@@ -193,6 +268,65 @@ class TestParseSource(unittest.TestCase):
             self.assertEqual(nodes[0]["type"], "trojan")
         finally:
             os.unlink(path)
+
+
+class TestExtractNodeDomains(unittest.TestCase):
+    def test_extract_node_domains(self):
+        nodes = [
+            {"tag": "N1", "server": "1.2.3.4", "server_port": 443},
+            {"tag": "N2", "server": "hk.example.com", "server_port": 443},
+            {"tag": "N3", "server": "240e:123:456::1", "server_port": 443},
+            {"tag": "N4", "server": "jp.example.org", "server_port": 443},
+            {"tag": "N5", "server": "hk.example.com", "server_port": 8443},
+        ]
+        domains = extract_node_domains(nodes)
+        self.assertEqual(domains, ["hk.example.com", "jp.example.org"])
+
+
+class TestSubParserFuzzAndEdgeCases(unittest.TestCase):
+    def test_clash_proxy_edge_cases_do_not_crash(self):
+        cases = [
+            {},
+            None,
+            "not_a_dict",
+            {"type": "unknown"},
+            {"type": "vless", "server": ""},
+            {"type": "vless", "server": "1.2.3.4", "port": "not_an_int"},
+            {"type": "trojan", "server": "1.2.3.4", "port": None},
+            {"type": "ss", "server": "1.2.3.4", "port": "9999"},
+        ]
+        for c in cases:
+            with self.subTest(case=repr(c)[:30]):
+                res = parse_clash_proxy(c)
+                self.assertIsInstance(res, dict)
+
+    def test_subscription_text_fuzz_do_not_crash(self):
+        fuzz_samples = [
+            "",
+            "   \n\t  \r\n",
+            "# comment line only\n# second comment",
+            "just random garbage text\nwith non-uri strings\n12345",
+            "vmess://e30=",  # empty dict {}
+            "vmess://bm90X2pzb24=",  # 'not_json'
+            "vless://",
+            "trojan://",
+            "ss://",
+        ]
+        for s in fuzz_samples:
+            with self.subTest(sample=repr(s)[:30]):
+                res = parse_subscription_text(s)
+                self.assertIsInstance(res, list)
+
+    def test_to_dae_nodes_skips_broken_nodes(self):
+        broken_nodes = [
+            {"type": "vless", "tag": "bad1", "server": None, "server_port": 443},
+            {"type": "trojan", "tag": "bad2", "server": "1.2.3.4", "server_port": None},
+            {"type": "hysteria2", "tag": "good", "server": "5.6.7.8", "server_port": 34589, "password": "pw"},
+        ]
+        out = to_dae_nodes(broken_nodes)
+        self.assertIn("'good'", out)
+        self.assertNotIn("'bad1'", out)
+        self.assertNotIn("'bad2'", out)
 
 
 if __name__ == "__main__":

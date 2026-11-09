@@ -50,6 +50,8 @@ class TestAllTemplates(unittest.TestCase):
                     self.assertNotIn("inet6_address", tun)
                     # 1.15 起废弃，模板必须不携带
                     self.assertNotIn("stack", tun)
+                    # 纯净 TUN 必须禁用 auto_redirect 杜绝 nfqueue 崩溃自环
+                    self.assertFalse(tun.get("auto_redirect", False))
 
     def test_dns_ipv4_only(self):
         for v in VERSIONS:
@@ -66,6 +68,26 @@ class TestAllTemplates(unittest.TestCase):
                     sub = rules[1].get("rules", [])
                     self.assertTrue(any(r.get("protocol") == "dns" for r in sub))
                     self.assertTrue(any(r.get("port") == 53 for r in sub))
+
+    def test_canary_domains_rejected(self):
+        canary = ["use-application-dns.net", "mask.icloud.com", "mask-h2.icloud.com"]
+        for v in VERSIONS:
+            for m in MODES:
+                cfg = load(v, m)
+                with self.subTest(version=v, mode=m):
+                    dns_rules = cfg["dns"]["rules"]
+                    found_dns = any(
+                        r.get("action") == "reject" and any(d in r.get("domain", []) for d in canary)
+                        for r in dns_rules
+                    )
+                    self.assertTrue(found_dns, f"{v}/{m} dns.rules 必须包含 Canary 域名阻断规则")
+
+                    route_rules = cfg["route"]["rules"]
+                    found_route = any(
+                        r.get("action") == "reject" and any(d in r.get("domain", []) for d in canary)
+                        for r in route_rules
+                    )
+                    self.assertTrue(found_route, f"{v}/{m} route.rules 必须包含 Canary 域名阻断规则")
 
 
 class TestVersionGating(unittest.TestCase):

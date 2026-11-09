@@ -42,6 +42,20 @@ class TestDanglingRefs(unittest.TestCase):
         })
         self.assertTrue(any("DNS server" in e for e in errs))
 
+    def test_dangling_dns_detour(self):
+        errs, _ = run({
+            "dns": {"servers": [{"tag": "g", "type": "https", "server": "8.8.8.8", "detour": "ghost"}]},
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("dns.servers[0]" in e and "detour" in e for e in errs))
+
+    def test_dangling_outbound_detour(self):
+        errs, _ = run({
+            "outbounds": [{"type": "shadowsocks", "tag": "s", "server": "1.1.1.1", "server_port": 8388,
+                           "method": "aes-128-gcm", "password": "p", "detour": "ghost"}],
+        })
+        self.assertTrue(any("outbound[0]" in e and "detour" in e for e in errs))
+
 
 class TestFieldGates(unittest.TestCase):
     def test_network_ws_blocked(self):
@@ -109,6 +123,29 @@ class TestTemplatesPass(unittest.TestCase):
                     errs, _ = check_singbox_config(
                         os.path.join(TEMPLATES, f"openwrt-{v}-tun-{m}.json"))
                     self.assertEqual(errs, [], f"{v}/{m} 不应有阻断错误: {errs}")
+
+
+class TestFuzzAndEdgeCases(unittest.TestCase):
+    def test_malformed_and_none_blocks_do_not_crash(self):
+        cases = [
+            {},
+            None,
+            "not_a_dict",
+            {"dns": None},
+            {"route": None},
+            {"outbounds": None},
+            {"inbounds": None},
+            {"dns": {"servers": [None, "invalid_item"]}},
+            {"outbounds": [None, {"tag": "t", "type": "selector", "outbounds": None}]},
+            {"route": {"rules": [None, {"outbound": None, "rule_set": None}]}},
+            {"http_clients": [None, {"tag": "hc", "detour": "direct"}]},
+            {"route": {"rule_set": [None, {"tag": "rs", "download_detour": "direct"}]}},
+        ]
+        for c in cases:
+            with self.subTest(case=repr(c)[:30]):
+                errs, warns = check_config_obj(c)
+                self.assertIsInstance(errs, list)
+                self.assertIsInstance(warns, list)
 
 
 if __name__ == "__main__":

@@ -2,9 +2,7 @@
 """跨文档事实一致性守护。
 
 背景：同一批版本事实（1.13/1.14 字段门控、24.10 包管理器、dae 的 must_direct 粒度）
-会同时出现在 SKILL.md、compat-matrix、config-schema、workflow 等多处。每处都需要“就地可读”，
-因此不能简单删重复；但 drifted 的描述会直接误导 Agent。
-
+会同时出现在 SKILL.md、architecture-and-schema.md 等处。
 本测试锁定“关键事实在应当出现的地方都出现了”，改动文档时若丢掉事实会立刻失败。
 """
 
@@ -22,14 +20,13 @@ def read(path):
 
 
 class TestSingboxVersionGatingDocs(unittest.TestCase):
-    """1.13 专属字段 / 1.14 专属字段必须在三处同时可见。"""
+    """1.13 专属字段 / 1.14 专属字段必须在精简架构文档与 SKILL 中同时可见。"""
 
     LEGACY = ["independent_cache", "store_rdrc", "download_detour"]
     MODERN = ["optimistic", "store_dns", "default_http_client"]
     DOCS = [
         os.path.join(SB, "SKILL.md"),
-        os.path.join(SB, "references", "compat-matrix.md"),
-        os.path.join(SB, "references", "config-schema.md"),
+        os.path.join(SB, "references", "architecture-and-schema.md"),
     ]
 
     def test_legacy_fields_documented(self):
@@ -49,13 +46,13 @@ class TestSingboxVersionGatingDocs(unittest.TestCase):
 
 class TestSingboxDefaults(unittest.TestCase):
     def test_workflow_default_is_fakeip(self):
-        text = read(os.path.join(SB, "references", "workflow.md"))
+        text = read(os.path.join(SB, "references", "architecture-and-schema.md"))
         self.assertIn("1.13 TUN FakeIP", text)
         self.assertIn("--dns-mode fakeip", text)
 
     def test_compat_matrix_keeps_2410_opkg_fact(self):
         """24.10 使用 opkg（apk 仅 main 分支）——这条曾被写错，必须留证。"""
-        text = read(os.path.join(SB, "references", "compat-matrix.md"))
+        text = read(os.path.join(SB, "references", "architecture-and-schema.md"))
         self.assertIn("24.10", text)
         self.assertIn("opkg", text)
         self.assertIn("APK packages are *not* supported", text)
@@ -66,7 +63,7 @@ class TestDaeMustDirectGranularity(unittest.TestCase):
 
     def test_scoped_rule_in_skill_and_guidelines(self):
         for path in (os.path.join(DAE, "SKILL.md"),
-                     os.path.join(DAE, "references", "dae_guidelines.md")):
+                     os.path.join(DAE, "references", "dae-rules-and-syntax.md")):
             text = read(path)
             with self.subTest(doc=os.path.basename(path)):
                 self.assertIn("dport(53)", text, "应限定 DNS 端口，而非整进程 must_direct")
@@ -78,10 +75,12 @@ class TestDaeDocsFlattened(unittest.TestCase):
 
     def test_reference_depth(self):
         refs = os.path.join(DAE, "references")
-        for name in os.listdir(refs):
-            with self.subTest(entry=name):
-                self.assertFalse(os.path.isdir(os.path.join(refs, name)),
-                                 "references 下不应再有子目录（保证 Agent 检索深度为 1）")
+        self.assertTrue(os.path.isdir(refs))
+        for root, dirs, files in os.walk(refs):
+            rel = os.path.relpath(root, refs)
+            if rel == ".":
+                continue
+            self.fail(f"发现多级文档目录: references/{rel}，必须扁平收拢为一级")
 
 
 if __name__ == "__main__":

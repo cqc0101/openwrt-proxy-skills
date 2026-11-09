@@ -84,6 +84,14 @@
         "action": "reject"
       },
       {
+        "domain": [
+          "use-application-dns.net",
+          "mask.icloud.com",
+          "mask-h2.icloud.com"
+        ],
+        "action": "reject"
+      },
+      {
         "rule_set": [
           "geosite-cn"
         ],
@@ -111,7 +119,7 @@
       "address": "172.19.0.1/30",
       "auto_route": true,
       "strict_route": false,
-      "auto_redirect": true
+      "auto_redirect": false
     }
   ],
   "outbounds": [
@@ -225,6 +233,14 @@
       },
       {
         "rule_set": "geosite-ads",
+        "action": "reject"
+      },
+      {
+        "domain": [
+          "use-application-dns.net",
+          "mask.icloud.com",
+          "mask-h2.icloud.com"
+        ],
         "action": "reject"
       },
       {

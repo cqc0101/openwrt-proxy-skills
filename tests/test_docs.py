@@ -39,6 +39,31 @@ class TestDocLinks(unittest.TestCase):
                             broken.append(f"{os.path.relpath(path, REPO)}:{lineno} -> {target}")
         self.assertEqual(broken, [], "存在断链:\n" + "\n".join(broken))
 
+    def test_no_deprecated_script_names_or_typos(self):
+        """防呆测试：确保所有 .md / .py / .sh 中绝不残留废弃脚本名或命令行拼写笔误。"""
+        forbidden_rules = [
+            (re.compile(r"setup_openwrt_firewall\.sh"), "已更名为 setup_openwrt_network.sh"),
+            (re.compile(r"diagnose\s+dns\.sh"), "下划线被误写为空格：应为 diagnose_dns.sh"),
+            (re.compile(r"sub_parser\.py\s+--format\s+dae"), "dae 格式订阅清洗应直接调用 sub_to_dae.py"),
+        ]
+        violations = []
+        skip_dirs = {".git", ".deploy_key", "__pycache__"}
+        for root, dirs, files in os.walk(REPO):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for file in files:
+                if file.endswith((".md", ".py", ".sh")):
+                    full = os.path.join(root, file)
+                    rel = os.path.relpath(full, REPO).replace("\\", "/")
+                    # 排除本测试文件自身
+                    if rel == "tests/test_docs.py":
+                        continue
+                    with open(full, "r", encoding="utf-8", errors="replace") as f:
+                        for lineno, line in enumerate(f, 1):
+                            for pat, reason in forbidden_rules:
+                                if pat.search(line):
+                                    violations.append(f"{rel}:{lineno} 发现禁词 [{pat.pattern}] -> {reason}")
+        self.assertEqual(violations, [], "发现废弃脚本名或拼写错误:\n" + "\n".join(violations))
+
 
 if __name__ == "__main__":
     unittest.main()

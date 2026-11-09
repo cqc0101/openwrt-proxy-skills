@@ -1,0 +1,16 @@
+services:
+  openwrt-test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.openwrt
+    image: openwrt-test-node:latest
+    container_name: openwrt-test
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "2222:22"
+      - "9090:9090"
+    restart: "no"

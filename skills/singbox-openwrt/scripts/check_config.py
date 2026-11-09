@@ -17,6 +17,7 @@ OpenWrt sing-box 静态合规与防坑深度审计工具 (v3.0)
 import sys
 import os
 import json
+import re
 
 # 中文 Windows 控制台 (cp936) 无法编码 emoji/部分字符，统一重配为 UTF-8 输出
 for _s in (sys.stdout, sys.stderr):
@@ -31,14 +32,32 @@ def check_config_obj(cfg):
     errors = []
     warnings = []
 
-    # 收集全部已定义的各类 Tag，用于全链路引用完整性校验
-    dns_servers = {s.get("tag") for s in cfg.get("dns", {}).get("servers", []) if s.get("tag")}
-    all_outbounds = {o.get("tag") for o in cfg.get("outbounds", []) if o.get("tag")}
-    all_rulesets = {r.get("tag") for r in cfg.get("route", {}).get("rule_set", []) if r.get("tag")}
-    all_http_clients = {c.get("tag") for c in cfg.get("http_clients", []) if c.get("tag")}
+    if not isinstance(cfg, dict):
+        return ["[数据结构错误] 顶层配置必须是 JSON 对象 (dict)"], []
+
+    # 规范化顶层对象，防止 None 穿透崩溃
+    dns = cfg.get("dns") if isinstance(cfg.get("dns"), dict) else {}
+    route = cfg.get("route") if isinstance(cfg.get("route"), dict) else {}
+    outbounds = [o for o in (cfg.get("outbounds") or []) if isinstance(o, dict)]
+    inbounds = [i for i in (cfg.get("inbounds") or []) if isinstance(i, dict)]
+    http_clients = [c for c in (cfg.get("http_clients") or []) if isinstance(c, dict)]
+
+    if cfg.get("dns") is not None and not isinstance(cfg.get("dns"), dict):
+        errors.append("[数据结构错误] dns 模块必须是对象 (dict)")
+    if cfg.get("route") is not None and not isinstance(cfg.get("route"), dict):
+        errors.append("[数据结构错误] route 模块必须是对象 (dict)")
+    if cfg.get("outbounds") is not None and not isinstance(cfg.get("outbounds"), list):
+        errors.append("[数据结构错误] outbounds 模块必须是列表 (list)")
+    if cfg.get("inbounds") is not None and not isinstance(cfg.get("inbounds"), list):
+        errors.append("[数据结构错误] inbounds 模块必须是列表 (list)")
+
+    # 收集全部已定义的各类 Tag，安全过滤非 dict 项与空 tag
+    dns_servers = {s.get("tag") for s in (dns.get("servers") or []) if isinstance(s, dict) and s.get("tag")}
+    all_outbounds = {o.get("tag") for o in outbounds if o.get("tag")}
+    all_rulesets = {r.get("tag") for r in (route.get("rule_set") or []) if isinstance(r, dict) and r.get("tag")}
+    all_http_clients = {c.get("tag") for c in http_clients if c.get("tag")}
 
     # 1. 检查 route 模块
-    route = cfg.get("route", {})
     if not route:
         warnings.append("未配置 route 块，路由行为将全部依赖默认设置。")
     else:
@@ -55,7 +74,7 @@ def check_config_obj(cfg):
         if http_client and http_client not in all_http_clients:
             errors.append(f"[悬空引用] route.default_http_client 声明为 '{http_client}'，但顶级 http_clients 中未找到该 client！")
 
-        rules = route.get("rules", [])
+        rules = [r for r in (route.get("rules") or []) if isinstance(r, dict)]
         has_sniff = any(r.get("action") == "sniff" for r in rules)
         has_hijack_dns = any(r.get("action") == "hijack-dns" for r in rules)
 
@@ -73,13 +92,14 @@ def check_config_obj(cfg):
             rs_field = r.get("rule_set", [])
             if isinstance(rs_field, str):
                 rs_field = [rs_field]
+            elif not isinstance(rs_field, list):
+                rs_field = []
             for rs in rs_field:
                 if rs not in all_rulesets:
                     errors.append(f"[悬空引用] route.rules[{idx}] 引用了未在 route.rule_set 中定义的规则集: '{rs}'！")
 
     # 2. 检查 dns 模块的引用完整性
-    dns = cfg.get("dns", {})
-    dns_rules = dns.get("rules", [])
+    dns_rules = [dr for dr in (dns.get("rules") or []) if isinstance(dr, dict)]
     for idx, dr in enumerate(dns_rules):
         target_server = dr.get("server")
         if target_server and target_server not in dns_servers and target_server != "hosts":
@@ -88,6 +108,8 @@ def check_config_obj(cfg):
         rs_field = dr.get("rule_set", [])
         if isinstance(rs_field, str):
             rs_field = [rs_field]
+        elif not isinstance(rs_field, list):
+            rs_field = []
         for rs in rs_field:
             if rs not in all_rulesets:
                 errors.append(f"[悬空引用] dns.rules[{idx}] 引用了未定义的规则集: '{rs}'！")
@@ -96,15 +118,27 @@ def check_config_obj(cfg):
     if final_dns and final_dns not in dns_servers:
         errors.append(f"[悬空引用] dns.final 指向不存在的 DNS server: '{final_dns}'！")
 
+    for idx, s in enumerate(dns.get("servers") or []):
+        if not isinstance(s, dict):
+            continue
+        s_detour = s.get("detour")
+        if s_detour and s_detour not in all_outbounds:
+            errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 detour 指向未定义的 outbound: '{s_detour}'！")
+
     # 3. 检查 outbounds 模块及内部引用
-    outbounds = cfg.get("outbounds", [])
     for idx, ob in enumerate(outbounds):
         ob_type = ob.get("type", "")
         if ob_type in ["selector", "urltest"]:
-            sub_obs = ob.get("outbounds", [])
-            for so in sub_obs:
-                if so not in all_outbounds:
-                    errors.append(f"[悬空引用] outbound[{idx}]({ob.get('tag')}) 列表中引用了未定义的 outbound: '{so}'！")
+            sub_obs = ob.get("outbounds") or []
+            if isinstance(sub_obs, list):
+                for so in sub_obs:
+                    if so not in all_outbounds:
+                        errors.append(f"[悬空引用] outbound[{idx}]({ob.get('tag')}) 列表中引用了未定义的 outbound: '{so}'！")
+
+        # 检查代理链与 detour 引用完整性
+        ob_detour = ob.get("detour")
+        if ob_detour and ob_detour not in all_outbounds:
+            errors.append(f"[悬空引用] outbound[{idx}]({ob.get('tag')}) 的 detour 指向未定义的 outbound: '{ob_detour}'！")
 
         # network 字段只接受 tcp/udp；ws/grpc 必须走 transport（常见笔误）
         net = ob.get("network")
@@ -112,7 +146,6 @@ def check_config_obj(cfg):
             errors.append(f"[非法字段] outbound[{idx}]({ob.get('tag')}) 的 'network' 设为 '{net}'，sing-box 只接受 'tcp'/'udp'！ws/grpc 请使用 'transport' 块。")
 
     # 4. 检查 inbounds 模块
-    inbounds = cfg.get("inbounds", [])
     for idx, ib in enumerate(inbounds):
         ib_type = ib.get("type", "")
         if "sniff" in ib or "sniff_override_destination" in ib:
@@ -122,10 +155,12 @@ def check_config_obj(cfg):
                 errors.append(f"inbounds[{idx}](tun) 包含已废弃的 'inet4_address'/'inet6_address'，请合并至 'address' 数组。")
             if ib.get("stack") is not None:
                 warnings.append(f"inbounds[{idx}](tun) 显式设置了 'stack'，该选项自 sing-box 1.15 起已废弃，建议删除以使用默认值。")
+            if ib.get("auto_redirect") is True:
+                warnings.append(f"inbounds[{idx}](tun) 启用了 'auto_redirect': true！OpenWrt 环境下缺少 nfqueue 模块时将导致流量自环死锁，强烈推荐设为 false。")
 
     # 5. 检查 experimental.cache_file 闪存磨损保护
-    exp = cfg.get("experimental", {})
-    cache_file = exp.get("cache_file", {})
+    exp = cfg.get("experimental") if isinstance(cfg.get("experimental"), dict) else {}
+    cache_file = exp.get("cache_file") if isinstance(exp.get("cache_file"), dict) else {}
     if cache_file.get("enabled"):
         cpath = cache_file.get("path", "")
         if not cpath:
@@ -134,10 +169,11 @@ def check_config_obj(cfg):
             warnings.append(f"[闪存高危] experimental.cache_file.path 设为 '{cpath}'！强烈建议设置在 '/tmp/sing-box-cache.db'。")
 
     # 6. 版本门控混合检测（1.13 与 1.14 字段混用最常见的两类事故）
+    rule_sets = [r for r in (route.get("rule_set") or []) if isinstance(r, dict)]
     has_legacy = any([
         "independent_cache" in dns,
         "store_rdrc" in cache_file,
-        any(r.get("download_detour") for r in cfg.get("route", {}).get("rule_set", [])),
+        any(r.get("download_detour") for r in rule_sets),
     ])
     has_modern = any([
         "optimistic" in dns,
@@ -149,20 +185,56 @@ def check_config_obj(cfg):
         warnings.append("[版本混用] 配置同时包含 1.13 专属字段 (independent_cache/store_rdrc/download_detour) 与 1.14+ 字段 (optimistic/store_dns/default_http_client)！请确认目标 sing-box 版本后只保留一套。")
 
     # 6.5 规则集下载 detour 指向 direct 的致命模式（启动期崩溃，真机验证）
-    for idx, client in enumerate(cfg.get("http_clients") or []):
+    for idx, client in enumerate(http_clients):
+        if not isinstance(client, dict):
+            continue
         if client.get("detour") == "direct":
             errors.append(f"[致命模式] http_clients[{idx}]({client.get('tag')}) 的 detour 指向 'direct'。"
                           "sing-box 启动期下载规则集时会报 'detour to an empty direct outbound makes no sense' 并退出。"
                           "直连下载请删除 detour 字段（不设即直连）。")
-    for idx, rs in enumerate(cfg.get("route", {}).get("rule_set") or []):
+        elif client.get("detour") and client.get("detour") not in all_outbounds:
+            errors.append(f"[悬空引用] http_clients[{idx}]({client.get('tag')}) 的 detour 指向未定义的 outbound: '{client.get('detour')}'！")
+
+    for idx, rs in enumerate(route.get("rule_set") or []):
+        if not isinstance(rs, dict):
+            continue
         if rs.get("download_detour") == "direct":
             errors.append(f"[致命模式] route.rule_set[{idx}]({rs.get('tag')}) 的 download_detour 指向 'direct'，"
                           "启动期同样会触发 'empty direct outbound' 崩溃；直连下载请删除该字段。")
+        elif rs.get("download_detour") and rs.get("download_detour") not in all_outbounds:
+            errors.append(f"[悬空引用] route.rule_set[{idx}]({rs.get('tag')}) 的 download_detour 指向未定义的 outbound: '{rs.get('download_detour')}'！")
 
     # 6.6 auto_detect_interface 与 default_interface 冲突检测
     if route.get("auto_detect_interface") and route.get("default_interface"):
         warnings.append("[配置冲突] route 同时启用 auto_detect_interface 与 default_interface，运行时会互相覆盖；"
                         "请只保留其一（缺 nfqueue 模块的设备推荐显式 default_interface）。")
+
+    # 7. 节点服务器域名解析防死锁闭环审计 (Bootstrap DNS Check)
+    node_domains = set()
+    ipv4_pat = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+    for ob in outbounds:
+        if ob.get("type") in ("vless", "hysteria2", "trojan", "shadowsocks", "vmess"):
+            srv = ob.get("server", "")
+            if srv and not ipv4_pat.match(srv) and ":" not in srv and not srv.startswith("["):
+                node_domains.add(srv)
+
+    if node_domains:
+        has_resolver = bool(route.get("default_domain_resolver"))
+        dns_rules = [dr for dr in (dns.get("rules") or []) if isinstance(dr, dict)]
+        explicit_domains = set()
+        for dr in dns_rules:
+            d_field = dr.get("domain", [])
+            if isinstance(d_field, str):
+                d_field = [d_field]
+            elif isinstance(d_field, list):
+                explicit_domains.update(d_field)
+
+        uncovered = node_domains - explicit_domains
+        if not has_resolver and uncovered:
+            warnings.append(
+                f"[启动死锁隐患] 出站节点使用了域名 ({list(uncovered)[:3]})，但未指定 route.default_domain_resolver，"
+                "且未在 dns.rules 显式指定直连 DNS 解析器！节点建连时可能陷入 DNS 递归死锁。"
+            )
 
     return errors, warnings
 

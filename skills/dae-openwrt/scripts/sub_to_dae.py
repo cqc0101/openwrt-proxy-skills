@@ -49,7 +49,11 @@ def main():
 
     args = parser.parse_args()
 
-    nodes = parse_source(args.source, include=args.include, exclude=args.exclude, max_nodes=args.max)
+    try:
+        nodes = parse_source(args.source, include=args.include, exclude=args.exclude, max_nodes=args.max)
+    except Exception as e:
+        print(f"[-] 解析订阅失败: {e}", file=sys.stderr)
+        sys.exit(1)
     if not nodes:
         print("[-] 未能解析出有效节点", file=sys.stderr)
         sys.exit(1)

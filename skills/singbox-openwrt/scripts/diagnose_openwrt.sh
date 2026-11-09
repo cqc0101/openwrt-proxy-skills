@@ -18,30 +18,30 @@ WARNINGS=0
 
 log_header() {
     echo ""
-    echo "${CYAN}${BOLD}=== [ $1 ] ===${NC}"
+    printf '%b\n' "${CYAN}${BOLD}=== [ $1 ] ===${NC}"
 }
 
 log_pass() {
-    echo "  ${GREEN}[✓ PASS]${NC} $1"
+    printf '  %b %s\n' "${GREEN}[✓ PASS]${NC}" "$1"
 }
 
 log_warn() {
-    echo "  ${YELLOW}[⚠ WARN]${NC} $1"
+    printf '  %b %s\n' "${YELLOW}[⚠ WARN]${NC}" "$1"
     WARNINGS=$((WARNINGS + 1))
 }
 
 log_fail() {
-    echo "  ${RED}[✗ FAIL]${NC} $1"
+    printf '  %b %s\n' "${RED}[✗ FAIL]${NC}" "$1"
     ERRORS=$((ERRORS + 1))
 }
 
 log_info() {
-    echo "  ${BLUE}[i INFO]${NC} $1"
+    printf '  %b %s\n' "${BLUE}[i INFO]${NC}" "$1"
 }
 
-echo "${BOLD}================================================================${NC}"
-echo "${BOLD}         OpenWrt / ImmortalWrt 透明代理全链路健康诊断报告         ${NC}"
-echo "${BOLD}================================================================${NC}"
+printf '%b\n' "${BOLD}================================================================${NC}"
+printf '%b\n' "${BOLD}         OpenWrt / ImmortalWrt 透明代理全链路健康诊断报告         ${NC}"
+printf '%b\n' "${BOLD}================================================================${NC}"
 echo "诊断时间: $(date '+%Y-%m-%d %H:%M:%S')"
 
 # ------------------------------------------------------------------------------
@@ -68,7 +68,7 @@ case "$RAW_ARCH" in
         ;;
     mips*|mipsel*)
         # 探测大小端
-        if echo -n I | od -to2 2>/dev/null | head -n1 | grep -q "122"; then
+        if printf 'I' | od -to2 2>/dev/null | head -n1 | grep -q "122"; then
             CPU_ARCH="mipsel (32位 MIPS小端架构，如MT7621)"
         else
             CPU_ARCH="mips (32位 MIPS大端架构，如AR9344)"
@@ -88,10 +88,13 @@ log_info "内核版本: $KERNEL"
 log_info "系统运行时间: $UPTIME | 负载: $LOAD"
 
 # 内存与缓存检查（MB）。注意：部分 BusyBox 的 free 不支持 -m（输出仍是 KB），
-# 改读 /proc/meminfo 避免数值放大 1000 倍。
-TOTAL_MEM=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
-FREE_MEM=$(( $(awk '/^MemFree:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
-AVAIL_MEM=$(( $(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+# 统一改读 /proc/meminfo 的 kB 值再除以 1024，并使用参数展开防止空值语法报错。
+MEM_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
+TOTAL_MEM=$(( ${MEM_KB:-0} / 1024 ))
+FREE_KB=$(awk '/^MemFree:/ {print $2}' /proc/meminfo 2>/dev/null)
+FREE_MEM=$(( ${FREE_KB:-0} / 1024 ))
+AVAIL_KB=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)
+AVAIL_MEM=$(( ${AVAIL_KB:-0} / 1024 ))
 [ "$AVAIL_MEM" -eq 0 ] && AVAIL_MEM=$FREE_MEM
 [ "$AVAIL_MEM" -eq 0 ] && AVAIL_MEM=0
 
@@ -115,9 +118,10 @@ fi
 # ------------------------------------------------------------------------------
 log_header "2. 代理服务进程状态"
 
-SINGBOX_PID=$(pidof sing-box 2>/dev/null)
-DAE_PID=$(pidof dae 2>/dev/null)
-DAED_PID=$(pidof daed 2>/dev/null)
+# 单 PID 截取，防止多实例时变量展开为多路径导致 awk 报错
+SINGBOX_PID=$(pidof sing-box 2>/dev/null | awk '{print $1}')
+DAE_PID=$(pidof dae 2>/dev/null | awk '{print $1}')
+DAED_PID=$(pidof daed 2>/dev/null | awk '{print $1}')
 
 if [ -n "$SINGBOX_PID" ]; then
     SINGBOX_VER=$(sing-box version 2>/dev/null | head -n 1)
@@ -186,7 +190,7 @@ if uci show firewall 2>/dev/null | grep -q "tun0"; then
     log_pass "OpenWrt 防火墙配置已显式加入 tun0 接口放行"
 elif [ -n "$SINGBOX_PID" ]; then
     log_warn "uci firewall 中未明确找到 tun0！若局域网设备无法出海，需放行 tun0。"
-    log_info "一键修复: 运行 sh setup_openwrt_firewall.sh"
+    log_info "一键修复: 运行 sh setup_openwrt_network.sh"
 fi
 
 # ------------------------------------------------------------------------------
@@ -197,8 +201,8 @@ log_header "5. DNS 劫持与分流探测"
 if ! command -v nslookup >/dev/null 2>&1; then
     log_warn "系统未安装 nslookup，跳过 DNS 解析测试 (可 opkg install bind-host 或 busybox-nslookup 安装)"
 else
-# 测试 Dnsmasq 本地解析 (BusyBox nslookup 输出兼容，不依赖 grep -A)
-DNS_LAN=$(nslookup router.lan 127.0.0.1 2>/dev/null | awk '/Name:/{n=1} n && /Address/{print $2; exit}')
+# 测试 Dnsmasq 本地解析 ($NF 保证兼容 BusyBox 的 'Address 1: <ip>' 与 bind-utils 的 'Address: <ip>')
+DNS_LAN=$(nslookup router.lan 127.0.0.1 2>/dev/null | awk '/Name:/{n=1} n && /Address/{print $NF; exit}')
 if [ -n "$DNS_LAN" ]; then
     log_pass "本地局域网域名解析正常: router.lan -> $DNS_LAN"
 else
@@ -206,7 +210,7 @@ else
 fi
 
 # 测试国内域名真实 IP 解析
-BAIDU_IP=$(nslookup baidu.com 127.0.0.1 2>/dev/null | awk '/Name:/{n=1} n && /Address/{print $2; exit}')
+BAIDU_IP=$(nslookup baidu.com 127.0.0.1 2>/dev/null | awk '/Name:/{n=1} n && /Address/{print $NF; exit}')
 if [ -n "$BAIDU_IP" ]; then
     log_pass "国内域名解析正常: baidu.com -> $BAIDU_IP"
 else
@@ -214,7 +218,7 @@ else
 fi
 
 # 测试海外域名 FakeIP / 代理解析
-GOOGLE_IP=$(nslookup google.com 127.0.0.1 2>/dev/null | awk '/Name:/{n=1} n && /Address/{print $2; exit}')
+GOOGLE_IP=$(nslookup google.com 127.0.0.1 2>/dev/null | awk '/Name:/{n=1} n && /Address/{print $NF; exit}')
 if [ -n "$GOOGLE_IP" ]; then
     case "$GOOGLE_IP" in
         198.18.*|198.19.*)
@@ -270,9 +274,9 @@ if [ "$OUTBOUND_OK" = "1" ]; then
         IP_INFO=$(wget -q -T 4 -O - https://api.ip.sb/geoip 2>/dev/null || wget -q -T 4 -O - https://ipinfo.io/json 2>/dev/null)
     fi
     if [ -n "$IP_INFO" ]; then
-        IP_ADDR=$(echo "$IP_INFO" | grep -o '"ip":"[^"]*"' | cut -d'"' -f4)
-        COUNTRY=$(echo "$IP_INFO" | grep -o '"country":"[^"]*"' | cut -d'"' -f4)
-        ISP=$(echo "$IP_INFO" | grep -o '"isp":"[^"]*"' | cut -d'"' -f4)
+        IP_ADDR=$(echo "$IP_INFO" | grep -oE '"ip"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+        COUNTRY=$(echo "$IP_INFO" | grep -oE '"country"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+        ISP=$(echo "$IP_INFO" | grep -oE '"isp"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
         log_info "出口公网 IP: ${IP_ADDR:-未知} (${COUNTRY:-未知} - ${ISP:-未知})"
     fi
 fi
@@ -281,14 +285,14 @@ fi
 # 7. 诊断总结与结论
 # ------------------------------------------------------------------------------
 echo ""
-echo "${BOLD}================================================================${NC}"
+printf '%b\n' "${BOLD}================================================================${NC}"
 if [ "$ERRORS" -eq 0 ] && [ "$WARNINGS" -eq 0 ]; then
-    echo "${GREEN}${BOLD}  【完美】软路由全链路体检全部通过！出海透明代理处于巅峰健康状态！${NC}"
+    printf '%b\n' "${GREEN}${BOLD}  【完美】软路由全链路体检全部通过！出海透明代理处于巅峰健康状态！${NC}"
 elif [ "$ERRORS" -eq 0 ]; then
-    echo "${YELLOW}${BOLD}  【良好】透明代理运行正常，发现 $WARNINGS 处轻微告警 (详见上方黄标提示)。${NC}"
+    printf '%b\n' "${YELLOW}${BOLD}  【良好】透明代理运行正常，发现 $WARNINGS 处轻微告警 (详见上方黄标提示)。${NC}"
 else
-    echo "${RED}${BOLD}  【异常】发现 $ERRORS 处阻断性致命错误！请参照上方红标排查！${NC}"
+    printf '%b\n' "${RED}${BOLD}  【异常】发现 $ERRORS 处阻断性致命错误！请参照上方红标排查！${NC}"
 fi
-echo "${BOLD}================================================================${NC}"
+printf '%b\n' "${BOLD}================================================================${NC}"
 
 exit $ERRORS

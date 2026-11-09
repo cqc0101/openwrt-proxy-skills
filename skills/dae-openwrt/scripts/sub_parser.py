@@ -17,6 +17,8 @@ import sys
 import json
 import re
 import base64
+import gzip
+import zlib
 import urllib.request
 import urllib.parse
 from typing import List, Dict, Any, Tuple
@@ -60,6 +62,22 @@ def safe_b64decode(s: str) -> str:
             return ""
 
 
+def _decompress(content: bytes, encoding: str = "") -> bytes:
+    """按 Content-Encoding（或魔数）解压响应体。urllib 不会自动解压 gzip/deflate。"""
+    enc = (encoding or "").lower().strip()
+    try:
+        if enc == "gzip" or (not enc and content[:2] == b"\x1f\x8b"):
+            return gzip.decompress(content)
+        if enc == "deflate":
+            try:
+                return zlib.decompress(content)
+            except zlib.error:
+                return zlib.decompress(content, -zlib.MAX_WBITS)  # raw deflate
+    except Exception:
+        pass  # 解压失败则退回原始字节，交由下游解码逻辑处理
+    return content
+
+
 def fetch_subscription(url: str, timeout: int = 15) -> str:
     """拉取远程订阅内容"""
     headers = {
@@ -70,7 +88,7 @@ def fetch_subscription(url: str, timeout: int = 15) -> str:
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            content = resp.read()
+            content = _decompress(resp.read(), resp.headers.get("Content-Encoding", ""))
             # 尝试解码
             try:
                 return content.decode('utf-8')
@@ -82,10 +100,17 @@ def fetch_subscription(url: str, timeout: int = 15) -> str:
 
 def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     """将单个 Clash 节点字典转为 sing-box outbound 结构"""
+    if not isinstance(p, dict):
+        return {}
     name = str(p.get("name", "node")).strip()
     ptype = str(p.get("type", "")).lower()
-    server = str(p.get("server", ""))
-    port = int(p.get("port", 443))
+    server = str(p.get("server", "")).strip()
+    if not server:
+        return {}
+    try:
+        port = int(p.get("port", 443))
+    except (ValueError, TypeError):
+        port = 443
 
     if ptype == "ss":
         cipher = str(p.get("cipher", ""))
@@ -101,8 +126,9 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
 
     elif ptype == "trojan":
         password = str(p.get("password", ""))
-        sni = str(p.get("sni", server))
+        sni = str(p.get("sni") or p.get("servername") or server)
         alpn = p.get("alpn")
+        network = str(p.get("network", "tcp")).lower()
         ob = {
             "type": "trojan",
             "tag": name,
@@ -117,11 +143,26 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         }
         if alpn and isinstance(alpn, list):
             ob["tls"]["alpn"] = alpn
+        if network == "ws":
+            ws_opts = p.get("ws-opts", {}) if isinstance(p.get("ws-opts"), dict) else {}
+            ob["transport"] = {
+                "type": "ws",
+                "path": ws_opts.get("path", "/") or "/"
+            }
+            headers = ws_opts.get("headers", {})
+            if isinstance(headers, dict) and "Host" in headers:
+                ob["transport"]["headers"] = {"Host": headers["Host"]}
+        elif network == "grpc":
+            grpc_opts = p.get("grpc-opts", {}) if isinstance(p.get("grpc-opts"), dict) else {}
+            ob["transport"] = {
+                "type": "grpc",
+                "service_name": grpc_opts.get("grpc-service-name", "") or ""
+            }
         return ob
 
     elif ptype in ("hysteria2", "hy2"):
-        password = str(p.get("password", ""))
-        sni = str(p.get("sni", server))
+        password = str(p.get("password") or p.get("auth") or "")
+        sni = str(p.get("sni") or p.get("servername") or server)
         ob = {
             "type": "hysteria2",
             "tag": name,
@@ -138,6 +179,11 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
             ob["up_mbps"] = int(re.sub(r"[^\d]", "", str(p["up"])) or 0)
         if "down" in p:
             ob["down_mbps"] = int(re.sub(r"[^\d]", "", str(p["down"])) or 0)
+        if "obfs" in p and p.get("obfs"):
+            ob["obfs"] = {
+                "type": str(p["obfs"]),
+                "password": str(p.get("obfs-password", ""))
+            }
         return ob
 
     elif ptype == "vless":
@@ -177,9 +223,12 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
 
         reality_opts = p.get("reality-opts", {})
         if reality_opts:
+            # Reality 的 SNI 必须是伪装域名：reality-opts 里常只有 public-key/short-id，
+            # 域名多在节点顶层的 servername/sni；回退到 server（IP）会导致握手必失败
+            sni = reality_opts.get("server-name") or p.get("servername") or p.get("sni") or server
             ob["tls"] = {
                 "enabled": True,
-                "server_name": reality_opts.get("server-name", server),
+                "server_name": str(sni),
                 "reality": {
                     "enabled": True,
                     "public_key": reality_opts.get("public-key", ""),
@@ -193,7 +242,7 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         elif tls_enabled:
             ob["tls"] = {
                 "enabled": True,
-                "server_name": str(p.get("servername", server)),
+                "server_name": str(p.get("servername") or p.get("sni") or server),
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
 
@@ -219,7 +268,7 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         if tls_enabled:
             ob["tls"] = {
                 "enabled": True,
-                "server_name": str(p.get("servername", server)),
+                "server_name": str(p.get("servername") or p.get("sni") or server),
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
         ws_opts = p.get("ws-opts", {})
@@ -363,6 +412,8 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
         ntype = n.get("type")
         server = n.get("server")
         port = n.get("server_port")
+        if not server or not port:
+            continue
         frag = urllib.parse.quote(tag)
         host = _uri_host(server)   # authority 部分：IPv6 必须 [v6]
 
@@ -410,7 +461,8 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             tls = n.get("tls", {})
             transport = n.get("transport", {})
             net_type = transport.get("type", "tcp")
-            path = transport.get("path", "")
+            # gRPC 的服务名存在 service_name；v2rayN 格式用 path 承载 serviceName
+            path = transport.get("path") or transport.get("service_name") or ""
             host = ""
             headers = transport.get("headers", {})
             if isinstance(headers, dict):
@@ -437,6 +489,20 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
 
     lines.append("}")
     return "\n".join(lines)
+
+
+def extract_node_domains(nodes: List[Dict[str, Any]]) -> List[str]:
+    """提取出站节点中所有使用域名的服务器地址（排除纯 IPv4 和 IPv6），用于 DNS 防死锁直连白名单"""
+    domains = set()
+    ipv4_pattern = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+    for n in nodes:
+        server = n.get("server", "").strip()
+        if not server:
+            continue
+        if ipv4_pattern.match(server) or ":" in server or server.startswith("["):
+            continue
+        domains.add(server)
+    return sorted(list(domains))
 
 
 def parse_source(source: str, 
@@ -466,7 +532,7 @@ if __name__ == "__main__":
     parser.add_argument("--include", help="仅保留包含此正则的节点 (如 '香港|日本|HK')")
     parser.add_argument("--exclude", help="排除包含此正则的节点")
     parser.add_argument("--max", type=int, default=15, help="最多保留节点数 (默认 15，防低配路由器 OOM)")
-    parser.add_argument("--format", choices=["json", "dae", "tags"], default="json", help="输出格式 (默认 json)")
+    parser.add_argument("--format", choices=["json", "dae", "tags", "domains"], default="json", help="输出格式 (默认 json)")
 
     args = parser.parse_args()
 
@@ -483,6 +549,9 @@ if __name__ == "__main__":
         elif args.format == "tags":
             for n in nodes:
                 print(f"[{n.get('type')}] {n.get('tag')} -> {n.get('server')}:{n.get('server_port')}")
+        elif args.format == "domains":
+            for d in extract_node_domains(nodes):
+                print(d)
 
         print(f"[+] 成功解析并清洗得到 {len(nodes)} 个优质节点", file=sys.stderr)
     except Exception as e:

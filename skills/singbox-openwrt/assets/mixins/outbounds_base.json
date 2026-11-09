@@ -1,0 +1,29 @@
+[
+  {
+    "type": "selector",
+    "tag": "proxy",
+    "outbounds": ["auto", "direct"],
+    "default": "auto"
+  },
+  {
+    "type": "selector",
+    "tag": "ai",
+    "outbounds": ["proxy"]
+  },
+  {
+    "type": "urltest",
+    "tag": "auto",
+    "outbounds": [],
+    "url": "http://cp.cloudflare.com/generate_204",
+    "interval": "3m",
+    "tolerance": 50
+  },
+  {
+    "type": "direct",
+    "tag": "direct"
+  },
+  {
+    "type": "block",
+    "tag": "block"
+  }
+]

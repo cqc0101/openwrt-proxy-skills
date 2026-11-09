@@ -31,7 +31,7 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from parse_node import parse_uri
-from sub_parser import parse_source
+from sub_parser import parse_source, extract_node_domains
 
 def version_ge(major_minor: str, min_major: int, min_minor: int) -> bool:
     """按主/次版本号做数值比较，避免 float('1.20') < 1.14 之类的坑。"""
@@ -44,16 +44,20 @@ def version_ge(major_minor: str, min_major: int, min_minor: int) -> bool:
     return (maj > min_major) or (maj == min_major and mnr >= min_minor)
 
 
-def detect_remote_version(host, user="root", port=22, timeout=5):
+def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
     """通过 SSH 远程执行 sing-box version 探测版本"""
     ssh_cmd = [
         "ssh",
-        "-o", "StrictHostKeyChecking=no",
+        "-o", "StrictHostKeyChecking=accept-new",
         "-o", f"ConnectTimeout={timeout}",
         "-p", str(port),
+    ]
+    if key_path:
+        ssh_cmd.extend(["-i", key_path])
+    ssh_cmd.extend([
         f"{user}@{host}",
         "sing-box version 2>&1 | head -n 1"
-    ]
+    ])
     try:
         res = subprocess.run(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout + 2)
         out = res.stdout.strip()
@@ -62,7 +66,10 @@ def detect_remote_version(host, user="root", port=22, timeout=5):
             major_minor = match.group(1)
             if version_ge(major_minor, 1, 14):
                 return "1.14", out
+            elif version_ge(major_minor, 1, 13):
+                return "1.13", out
             else:
+                print(f"[!] 目标软路由 sing-box 版本为 {out} (< 1.13)，建议升级至 1.14+ 现代版本以获得最佳稳定性与字段支持；已选用 1.13 基础规范兼容生成", file=sys.stderr)
                 return "1.13", out
         return "1.13", out if out else "Unknown"
     except Exception as e:
@@ -94,7 +101,7 @@ def apply_cdn_mirror(config, mirror_type="jsdelivr"):
                     rs["url"] = f"https://fastly.jsdelivr.net/gh/{user}/{repo}@{branch}/{path}"
     return config
 
-def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15, wan_iface=None):
+def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15, wan_iface=None, dns_cn="alidns", dns_remote="google-dns", topology="main", main_router_ip=None):
     template_file = f"openwrt-{version}-tun-{dns_mode}.json"
     template_path = os.path.join(TEMPLATES_DIR, template_file)
 
@@ -123,6 +130,12 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     if "clash_api" not in config["experimental"]:
         config["experimental"]["clash_api"] = {}
     config["experimental"]["clash_api"]["external_controller"] = "0.0.0.0:9090"
+    config["experimental"]["clash_api"].pop("external_ui", None)
+
+    # 纯净 TUN 模式保护：禁用 auto_redirect 杜绝缺少 nfqueue 模块时的流量自环
+    for ib in config.get("inbounds", []):
+        if ib.get("type") == "tun":
+            ib["auto_redirect"] = False
 
     # 路由防环与防死锁
     if "route" not in config:
@@ -135,6 +148,59 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     else:
         config["route"]["auto_detect_interface"] = True
     config["route"]["default_domain_resolver"] = "alidns"
+
+    # 1.1 自定义 DNS 解析上游配置 (国内与海外防污染)
+    dns_servers = config.get("dns", {}).get("servers", [])
+
+    def _configure_dns_server(entry, val, presets, detour=None):
+        val_str = val.strip()
+        val_lower = val_str.lower()
+        entry.pop("path", None)
+        entry.pop("server_port", None)
+        if val_lower in presets:
+            srv, stype = presets[val_lower]
+            entry["server"] = srv
+            entry["type"] = stype
+        elif val_lower.startswith(("https://", "http://")):
+            import urllib.parse as _up
+            parsed = _up.urlparse(val_str)
+            entry["server"] = parsed.hostname or val_str
+            entry["type"] = "https" if val_lower.startswith("https://") else "http"
+            if parsed.port:
+                entry["server_port"] = parsed.port
+            if parsed.path and parsed.path not in ("/", "/dns-query"):
+                entry["path"] = parsed.path
+        else:
+            entry["server"] = val_str
+            entry["type"] = "udp"
+        if detour:
+            entry["detour"] = detour
+
+    cn_server_entry = next((s for s in dns_servers if s.get("tag") == "alidns"), None)
+    if cn_server_entry and dns_cn:
+        _configure_dns_server(cn_server_entry, dns_cn, {
+            "alidns": ("223.5.5.5", "udp"),
+            "ali": ("223.5.5.5", "udp"),
+            "223.5.5.5": ("223.5.5.5", "udp"),
+            "dnspod": ("119.29.29.29", "udp"),
+            "tencent": ("119.29.29.29", "udp"),
+            "119.29.29.29": ("119.29.29.29", "udp"),
+            "114": ("114.114.114.114", "udp"),
+            "114.114.114.114": ("114.114.114.114", "udp"),
+        })
+
+    remote_server_entry = next((s for s in dns_servers if s.get("tag") == "google-dns"), None)
+    if remote_server_entry and dns_remote:
+        _configure_dns_server(remote_server_entry, dns_remote, {
+            "google": ("8.8.8.8", "https"),
+            "google-dns": ("8.8.8.8", "https"),
+            "8.8.8.8": ("8.8.8.8", "https"),
+            "cloudflare": ("1.1.1.1", "https"),
+            "cf": ("1.1.1.1", "https"),
+            "1.1.1.1": ("1.1.1.1", "https"),
+            "quad9": ("9.9.9.9", "https"),
+            "9.9.9.9": ("9.9.9.9", "https"),
+        }, detour="proxy")
 
     # 2. 注入规则集国内镜像源（防冷启动死锁）
     if mirror and mirror != "direct":
@@ -162,19 +228,49 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
 
     # 4. 组装节点与策略组
     if parsed_outbounds:
-        # 去重并截断节点，防弱路由 OOM
+        # 与模板内置出站重名的节点标签必须避让，否则节点会被去重逻辑丢弃，
+        # 而 urltest/selector 里仍引用同名内置出站（如 direct/auto），造成错误路由或自引用
+        reserved = {"proxy", "auto", "ai", "direct", "block"}
         clean_obs = []
         seen_tags = set()
         for o in parsed_outbounds:
             tag = o.get("tag", "node")
+            if tag in reserved:
+                tag = f"{tag}-node"
             if tag in seen_tags:
                 tag = f"{tag}-{len(seen_tags)}"
-                o["tag"] = tag
+            o["tag"] = tag
             seen_tags.add(tag)
             clean_obs.append(o)
 
         if max_nodes and len(clean_obs) > max_nodes:
             clean_obs = clean_obs[:max_nodes]
+
+        # 4.1 节点域名直连防死锁注入 (Bootstrap DNS Protection)
+        node_domains = extract_node_domains(clean_obs)
+        if node_domains:
+            for n in clean_obs:
+                if n.get("server") in node_domains:
+                    n["domain_resolver"] = "alidns"
+
+            dns_rules = config.get("dns", {}).get("rules", [])
+            dns_insert_idx = 1 if dns_rules and dns_rules[0].get("server") == "hosts" else 0
+            dns_rules.insert(dns_insert_idx, {
+                "domain": node_domains,
+                "server": "alidns"
+            })
+            config["dns"]["rules"] = dns_rules
+
+            route_rules = config.get("route", {}).get("rules", [])
+            route_insert_idx = 0
+            for idx, rr in enumerate(route_rules):
+                if rr.get("action") in ["sniff", "hijack-dns"]:
+                    route_insert_idx = idx + 1
+            route_rules.insert(route_insert_idx, {
+                "domain": node_domains,
+                "outbound": "direct"
+            })
+            config["route"]["rules"] = route_rules
 
         node_tags = [o["tag"] for o in clean_obs]
 
@@ -206,6 +302,22 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
             outbounds[insert_idx:insert_idx] = nodes_to_insert
             config["outbounds"] = outbounds
 
+    # 5. 旁路由拓扑 (Bypass Gateway) 适配
+    if topology == "bypass":
+        if main_router_ip:
+            cidr = f"{main_router_ip}/32" if "/" not in main_router_ip else main_router_ip
+            route_rules = config.get("route", {}).get("rules", [])
+            route_insert_idx = 0
+            for idx, rr in enumerate(route_rules):
+                if rr.get("action") in ["sniff", "hijack-dns"]:
+                    route_insert_idx = idx + 1
+            route_rules.insert(route_insert_idx, {
+                "ip_cidr": [cidr],
+                "action": "route",
+                "outbound": "direct"
+            })
+            config["route"]["rules"] = route_rules
+
     return config
 
 def main():
@@ -213,6 +325,7 @@ def main():
     parser.add_argument("--router", help="软路由 IP (指定后将自动 SSH 探测其安装的 sing-box 版本)")
     parser.add_argument("--user", default="root", help="SSH 用户名 (默认: root)")
     parser.add_argument("--port", type=int, default=22, help="SSH 端口 (默认: 22)")
+    parser.add_argument("--key", help="SSH 私钥文件路径 (可选，用于探测软路由版本)")
     parser.add_argument("--version", choices=["1.13", "1.14"], help="手动强制指定版本 (若未指定 --router 时有效，默认 1.13)")
     parser.add_argument("--dns-mode", choices=["fakeip", "realip"], default="fakeip", help="DNS 分流模式 (默认: fakeip)")
     parser.add_argument("--node", action="append", help="节点链接 (支持多个 --node 注入)")
@@ -220,18 +333,24 @@ def main():
     parser.add_argument("--mirror", choices=["jsdelivr", "ghproxy", "fastly", "direct"], default="jsdelivr", help="规则集国内镜像加速 (默认 jsdelivr，彻底避免国内首启下载死锁)")
     parser.add_argument("--max-nodes", type=int, default=15, help="最多注入的节点数 (默认 15，保护弱路由内存)")
     parser.add_argument("--wan-iface", help="显式指定 WAN 接口 (如 eth0/pppoe-wan)；部分内核缺 nfqueue 模块时 auto_detect_interface 会使国内直连被 TUN 自捕获，此时必须显式指定")
-    parser.add_argument("--out", help="输出配置文件路径 (不指定则输出到标准输出)")
+    parser.add_argument("--dns-cn", default="alidns", help="国内 DNS 解析上游 (支持: alidns / dnspod / 114 或自定义 IP/URL，默认: alidns)")
+    parser.add_argument("--dns-remote", default="google-dns", help="海外/被墙防污染 DNS 解析上游 (支持: google-dns / cloudflare / quad9 或自定义 IP/URL，默认: google-dns)")
+    parser.add_argument("--topology", choices=["main", "bypass"], default="main", help="网络拓扑模式 (默认: main，旁路由模式请指定 bypass)")
+    parser.add_argument("--main-router-ip", default=None, help="主路由 IP 地址 (旁路由模式下显式指定直连放行，如 192.168.1.1)")
+    parser.add_argument("-o", "--out", help="输出配置文件路径 (不指定则输出到标准输出)")
 
     args = parser.parse_args()
 
     detected_ver = args.version or "1.13"
     if args.router:
         print(f"[*] 正在连接软路由 {args.user}@{args.router}:{args.port} 探测 sing-box 核心版本...", file=sys.stderr)
-        v, raw_ver = detect_remote_version(args.router, args.user, args.port)
+        v, raw_ver = detect_remote_version(args.router, args.user, args.port, key_path=args.key)
         print(f"[+] 探测到软路由内核版本: {raw_ver} -> 匹配规则集版本: v{v}", file=sys.stderr)
         detected_ver = v
 
-    print(f"[*] 正在为 sing-box v{detected_ver} 生成 OpenWrt ({args.dns_mode.upper()} 模式) 专属适配规则...", file=sys.stderr)
+    print(f"[*] 正在为 sing-box v{detected_ver} 生成 OpenWrt ({args.dns_mode.upper()} 模式, 拓扑: {args.topology}) 专属适配规则...", file=sys.stderr)
+    if args.topology == "bypass":
+        print(f"[i] 旁路由模式：生成后请运行 'sh setup_openwrt_network.sh --bypass' 开启 LAN 伪装以防非对称路由丢包。", file=sys.stderr)
     config = build_config(
         version=detected_ver, 
         dns_mode=args.dns_mode, 
@@ -239,7 +358,11 @@ def main():
         sub_source=args.sub,
         mirror=args.mirror,
         max_nodes=args.max_nodes,
-        wan_iface=args.wan_iface
+        wan_iface=args.wan_iface,
+        dns_cn=args.dns_cn,
+        dns_remote=args.dns_remote,
+        topology=args.topology,
+        main_router_ip=args.main_router_ip
     )
 
     # 生成后自动静态审计：存在任何阻断错误绝不输出（“一次成功”保障）

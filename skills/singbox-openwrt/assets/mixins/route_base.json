@@ -1,0 +1,89 @@
+{
+  "auto_detect_interface": true,
+  "default_domain_resolver": "alidns",
+  "rules": [
+    { "action": "sniff" },
+    {
+      "type": "logical",
+      "mode": "or",
+      "rules": [
+        { "protocol": "dns" },
+        { "port": 53 }
+      ],
+      "action": "hijack-dns"
+    },
+    {
+      "domain_suffix": [
+        ".lan",
+        ".local",
+        "router.lan",
+        "openwrt.lan",
+        "x1pro.lan",
+        "speed.lan"
+      ],
+      "action": "route",
+      "outbound": "direct"
+    },
+    {
+      "ip_is_private": true,
+      "action": "route",
+      "outbound": "direct"
+    },
+    {
+      "type": "logical",
+      "mode": "or",
+      "rules": [
+        { "port": 853 },
+        { "protocol": "stun" }
+      ],
+      "action": "reject"
+    },
+    {
+      "clash_mode": "Direct",
+      "action": "route",
+      "outbound": "direct"
+    },
+    {
+      "clash_mode": "Global",
+      "action": "route",
+      "outbound": "proxy"
+    },
+    {
+      "rule_set": "geosite-ads",
+      "action": "reject"
+    },
+    {
+      "domain": [
+        "use-application-dns.net",
+        "mask.icloud.com",
+        "mask-h2.icloud.com"
+      ],
+      "action": "reject"
+    },
+    {
+      "rule_set": [
+        "geosite-openai",
+        "geosite-anthropic",
+        "geosite-category-ai-chat-!cn"
+      ],
+      "action": "route",
+      "outbound": "ai"
+    },
+    {
+      "rule_set": [
+        "geosite-google",
+        "geosite-telegram"
+      ],
+      "action": "route",
+      "outbound": "proxy"
+    },
+    {
+      "rule_set": [
+        "geosite-cn",
+        "geoip-cn"
+      ],
+      "action": "route",
+      "outbound": "direct"
+    }
+  ]
+}

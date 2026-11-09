@@ -107,6 +107,8 @@ routing {
 
     ### [第 3 层] 境外 QUIC/UDP 443 抑制 (规避运营商 UDP QoS 丢包，促使降级回稳定 TCP) ###
     l4proto(udp) && dport(443) && !domain(geosite:cn) -> block
+    # DoH 与 Apple 私密代理 Canary 域名阻断，强制浏览器/iOS 遵循网关 DNS 分流
+    domain('use-application-dns.net', 'mask.icloud.com', 'mask-h2.icloud.com') -> block
 
     ### [第 4 层] 重点海外服务专属分流 ###
     domain(geosite:google, geosite:github, geosite:telegram, geosite:openai) -> proxy

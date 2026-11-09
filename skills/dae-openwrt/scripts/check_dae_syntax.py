@@ -52,8 +52,8 @@ def check_dae_syntax(filepath):
         warnings.append("[网卡绑定提醒] global 块中未声明 'wan_interface: auto'。")
 
     # 3. 检查 must_direct 防环（宿主机 DNS 组件保护）
-    #    允许 pname(...) 与 -> must_direct 之间存在 && 条件（同一行内）
-    has_dnsmasq_protect = re.search(r'pname\([^)]*dnsmasq[^)]*\)[^\n]*->\s*must_direct', content)
+    #    允许 pname(...) 与 -> must_direct 跨行书写或存在 && 条件
+    has_dnsmasq_protect = re.search(r'pname\([^)]*dnsmasq[^)]*\)[^->\}]*->\s*must_direct', content, re.DOTALL)
     if not has_dnsmasq_protect:
         errors.append("[DNS 死循环高危] routing 规则中未发现针对 dnsmasq 的 'must_direct' 放行规则！"
                       "在 OpenWrt 上，宿主机 DNS 组件的 53 端口流量必须于规则顶部放行，否则极易形成 DNS 回环死锁。")

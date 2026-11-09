@@ -9,7 +9,10 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "skills", "singbox-openwrt", "scripts"))
 
-from parse_node import parse_uri, parse_vless, parse_trojan, parse_hysteria2, parse_shadowsocks, parse_vmess  # noqa: E402
+from parse_node import (  # noqa: E402
+    parse_uri, parse_vless, parse_trojan, parse_hysteria2, parse_shadowsocks, parse_vmess,
+    _split_host_port, _b64_decode,
+)
 
 
 class TestVLESS(unittest.TestCase):
@@ -110,6 +113,22 @@ class TestShadowsocks(unittest.TestCase):
         self.assertEqual(ob["server"], "240e:123:456::1")
         self.assertEqual(ob["server_port"], 8389)
 
+    def test_whole_base64_with_inner_tag(self):
+        import base64
+        b64 = base64.b64encode(b"aes-256-gcm:pass123@1.2.3.4:8388#InnerTag").decode()
+        ob = parse_shadowsocks(f"ss://{b64}")
+        self.assertEqual(ob["server"], "1.2.3.4")
+        self.assertEqual(ob["server_port"], 8388)
+        self.assertEqual(ob["tag"], "InnerTag")
+
+    def test_whole_base64_with_query_and_inner_tag(self):
+        import base64
+        b64 = base64.b64encode(b"aes-256-gcm:pass123@1.2.3.4:8388/?plugin=obfs#InnerTag").decode()
+        ob = parse_shadowsocks(f"ss://{b64}")
+        self.assertEqual(ob["server"], "1.2.3.4")
+        self.assertEqual(ob["server_port"], 8388)
+        self.assertEqual(ob["tag"], "InnerTag")
+
     def test_urlsafe_userinfo_supported(self):
         # 末字节 0x3F('?') 作为 3 字节组的第三字节 → 低 6 位全 1 → urlsafe 字符 '_'
         raw = b"aes-256-gcm:pw?"
@@ -160,6 +179,20 @@ class TestVMess(unittest.TestCase):
         self.assertEqual(ob["transport"]["headers"]["Host"], "h.com")
         self.assertEqual(ob["tls"]["server_name"], "s.com")
 
+    def test_vmess_with_native_fragment(self):
+        """vmess://BASE64#节点名 —— fragment 必须剥离，否则 base64 解码被污染"""
+        import base64, json
+        vm = {"v": "2", "ps": "香港01", "add": "1.1.1.1", "port": "443", "id": "u",
+              "aid": "0", "scy": "auto", "net": "tcp", "type": "none"}
+        b64 = base64.b64encode(json.dumps(vm).encode()).decode()
+        ob = parse_vmess(f"vmess://{b64}#香港01")
+        self.assertEqual(ob["tag"], "香港01")
+        self.assertEqual(ob["server"], "1.1.1.1")
+        # 无 padding + fragment 的组合
+        b64_nopad = b64.rstrip("=")
+        ob2 = parse_vmess(f"vmess://{b64_nopad}#节点")
+        self.assertEqual(ob2["server"], "1.1.1.1")
+
 
 class TestDispatch(unittest.TestCase):
     def test_unknown_scheme_raises(self):
@@ -169,6 +202,52 @@ class TestDispatch(unittest.TestCase):
     def test_hy2_alias(self):
         ob = parse_uri("hy2://pw@1.2.3.4:443?sni=x.com#A")
         self.assertEqual(ob["type"], "hysteria2")
+
+    def test_colon_password_formats(self):
+        ob_hy2 = parse_uri("hy2://:secret@1.2.3.4:443#H")
+        self.assertEqual(ob_hy2["password"], "secret")
+        ob_tr = parse_uri("trojan://:secret2@1.2.3.4:443#T")
+        self.assertEqual(ob_tr["password"], "secret2")
+
+
+class TestSplitHostPortAndB64(unittest.TestCase):
+    def test_b64_gbk_tolerance(self):
+        # 验证包含中文 GB18030 / GBK 编码的 Base64 字符串能平滑解码
+        text_gbk = "aes-128-gcm:密码测试".encode("gb18030")
+        b64 = base64.b64encode(text_gbk).decode("ascii")
+        res = _b64_decode(b64)
+        self.assertIn("aes-128-gcm:", res)
+
+    def test_split_host_port_edge_cases(self):
+        # 1. 缺端口
+        s, p = _split_host_port("example.com")
+        self.assertEqual(s, "example.com")
+        self.assertEqual(p, 443)
+
+        # 2. 非数字端口容错
+        s, p = _split_host_port("example.com:invalid_port", default_port=8080)
+        self.assertEqual(s, "example.com")
+        self.assertEqual(p, 8080)
+
+        # 3. 裸 IPv6
+        s, p = _split_host_port("2001:db8::1")
+        self.assertEqual(s, "2001:db8::1")
+        self.assertEqual(p, 443)
+
+        # 4. 方括号 IPv6 带端口
+        s, p = _split_host_port("[2001:db8::1]:8443")
+        self.assertEqual(s, "2001:db8::1")
+        self.assertEqual(p, 8443)
+
+        # 5. 方括号 IPv6 无端口
+        s, p = _split_host_port("[2001:db8::1]")
+        self.assertEqual(s, "2001:db8::1")
+        self.assertEqual(p, 443)
+
+        # 6. 带 URL 参数和 fragment
+        s, p = _split_host_port("node.com:8888?param=1#tag")
+        self.assertEqual(s, "node.com")
+        self.assertEqual(p, 8888)
 
 
 if __name__ == "__main__":

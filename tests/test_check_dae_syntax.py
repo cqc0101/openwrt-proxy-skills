@@ -39,6 +39,12 @@ class TestDaeChecker(unittest.TestCase):
             os.path.join(REPO, "skills", "dae-openwrt", "assets", "templates", "openwrt.dae"))
         self.assertEqual(errors, [], f"模板自身不应报错: {errors}")
 
+    def test_openwrt_dae_has_canary_blocking(self):
+        with open(os.path.join(REPO, "skills", "dae-openwrt", "assets", "templates", "openwrt.dae"), encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("use-application-dns.net", content)
+        self.assertIn("mask.icloud.com", content)
+
     def test_missing_dnsmasq_protection_is_blocking(self):
         errors, _ = check("""
 global { lan_interface: br-lan

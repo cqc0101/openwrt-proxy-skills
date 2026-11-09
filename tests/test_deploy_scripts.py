@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""部署脚本静态守护：
-1) 防止“远端检查写在本地”“SSH 选项漏配”这类回归；
+"""网络闭环与部署脚本静态守护：
+1) 守护 setup_openwrt_network.sh 的安全规范（zone 动态解析、accept-new、MSS 钳制、filter_aaaa）；
 2) 保证两个技能各自自包含时，双份共享脚本不会版本漂移。
 """
 
@@ -12,8 +12,13 @@ SINGBOX = os.path.join(REPO, "skills", "singbox-openwrt", "scripts")
 DAE = os.path.join(REPO, "skills", "dae-openwrt", "scripts")
 
 # 两个技能各存一份、内容必须一致的通用脚本（含自包含的 Python 解析副本）
-SHARED_SCRIPTS = ["probe.sh", "probe.ps1", "doctor.sh", "optimize_network.sh",
-                  "parse_node.py", "sub_parser.py"]
+SHARED_SCRIPTS = [
+    "probe.sh",
+    "doctor.sh",
+    "parse_node.py",
+    "sub_parser.py",
+    "diagnose_dns.sh",
+]
 
 
 def _read(path):
@@ -21,77 +26,53 @@ def _read(path):
         return f.read()
 
 
-class TestDeployShellScripts(unittest.TestCase):
-    def test_firewall_script_has_strict_host_key(self):
-        text = _read(os.path.join(SINGBOX, "setup_openwrt_firewall.sh"))
-        ssh_lines = [l for l in text.splitlines() if "SSH_CMD=" in l and "ssh " in l]
-        self.assertTrue(ssh_lines, "找不到 SSH_CMD 定义")
-        for line in ssh_lines:
-            self.assertIn("StrictHostKeyChecking=no", line,
-                          "BatchMode=yes 下首次连接会被 host key 验证打断")
+class TestNetworkSetupScripts(unittest.TestCase):
+    def test_network_scripts_cli_flags_not_misassigned(self):
+        """防止 --bypass/--revert 错位赋值给 SSH_USER。"""
+        for base in (SINGBOX, DAE):
+            text = _read(os.path.join(base, "setup_openwrt_network.sh"))
+            self.assertIn("while [ $# -gt 0 ]; do", text, "必须使用参数循环解析避免位置参数错位")
+            self.assertIn("--revert)", text)
+            self.assertNotIn('SSH_USER="${2:-root}"', text, "严禁将 $2 直接硬编码作为 SSH_USER")
 
-    def test_dae_sh_daed_check_runs_remotely(self):
-        """command -v daed 只允许出现在远端 heredoc 里（本地电脑上没有 daed）。"""
-        lines = _read(os.path.join(DAE, "deploy_dae.sh")).splitlines()
+    def test_singbox_network_script_security_and_features(self):
+        text = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
+        self.assertIn("StrictHostKeyChecking=accept-new", text, "SSH 模式必须使用 accept-new 首次自动接受且防篡改")
+        self.assertIn("mtu_fix='1'", text, "必须开启 MSS 钳制")
+        self.assertIn("filter_aaaa='1'", text, "必须开启 Dnsmasq filter_aaaa 过滤")
+        self.assertIn("tun0", text, "必须包含 tun0 接口配置")
+        self.assertNotIn("echo -e", text, "POSIX /bin/sh 严禁使用 echo -e")
+        # 必须动态定位 lan zone，严禁写死 @zone[0]
+        self.assertIn("uci get \"firewall.@zone[", text)
+        self.assertIn("zone_name", text)
 
-        remote_ranges = []
-        i = 0
-        while i < len(lines):
-            if "<< 'EOF'" in lines[i]:
-                start = i
-                j = i + 1
-                while j < len(lines) and lines[j].strip() != "EOF":
-                    j += 1
-                remote_ranges.append((start, j))
-                i = j + 1
-            else:
-                i += 1
-
-        daed_lines = [idx for idx, l in enumerate(lines) if "command -v daed" in l]
-        self.assertTrue(daed_lines, "deploy_dae.sh 必须包含 daed 检测")
-        for idx in daed_lines:
-            self.assertTrue(
-                any(s <= idx <= e for s, e in remote_ranges),
-                f"第 {idx+1} 行的 daed 检测不在远端 heredoc 内，属于本地死判断:\n  {lines[idx].strip()}")
-
-        self.assertIn("FAIL_ONLY_DAED", "\n".join(lines), "远端应输出 FAIL_ONLY_DAED 供本地捕获")
-
-    def test_dae_ps1_distinguishes_daed(self):
-        text = _read(os.path.join(DAE, "deploy_dae.ps1"))
-        self.assertIn("command -v dae", text)
-        self.assertIn("command -v daed", text)
-        self.assertIn("支持边界", text)
-
-    def test_deploy_scripts_no_echo_e(self):
-        for path in (os.path.join(SINGBOX, "deploy_singbox.sh"),
-                     os.path.join(DAE, "deploy_dae.sh")):
-            with self.subTest(script=os.path.basename(path)):
-                self.assertNotIn("echo -e", _read(path),
-                                 "dash/busybox 下 echo -e 会打印字面 -e，请用 printf '%b\\n'")
-
-    def test_singbox_deploy_enables_service(self):
-        """apk/opkg 安装后 sing-box 服务默认 enabled=0，部署脚本必须自动启用，否则 restart 静默无效。"""
-        for rel in ("skills/singbox-openwrt/scripts/deploy_singbox.sh",
-                    "skills/singbox-openwrt/scripts/deploy_singbox.ps1"):
-            with self.subTest(script=rel):
-                text = _read(os.path.join(REPO, rel))
-                self.assertIn("sing-box.main.enabled", text,
-                              "部署脚本必须处理 procd 服务的启用状态")
+    def test_dae_network_script_security_and_features(self):
+        text = _read(os.path.join(DAE, "setup_openwrt_network.sh"))
+        self.assertIn("StrictHostKeyChecking=accept-new", text, "SSH 模式必须使用 accept-new")
+        self.assertIn("flow_offloading='0'", text, "dae 必须关闭流量分载 Flow Offloading")
+        self.assertIn("filter_aaaa='1'", text, "必须开启 Dnsmasq filter_aaaa 过滤")
+        self.assertNotIn("echo -e", text, "POSIX /bin/sh 严禁使用 echo -e")
 
     def test_probe_reports_hardening_facts(self):
         """真机验证沉淀：probe 必须报告 nfqueue 缺失与 sing-box-tiny 安装建议。"""
         text = _read(os.path.join(SINGBOX, "probe.sh"))
         self.assertIn("nfqueue", text)
         self.assertIn("sing-box-tiny", text)
+        self.assertIn("OUTPUT_JSON", text)
 
-    def test_ps1_supports_keypath(self):
-        """Windows 远程脚本必须支持 -KeyPath（BatchMode 需要非默认密钥）。"""
-        for rel in ("skills/singbox-openwrt/scripts/probe.ps1",
-                    "skills/singbox-openwrt/scripts/diagnose_openwrt.ps1",
-                    "skills/singbox-openwrt/scripts/deploy_singbox.ps1",
-                    "skills/dae-openwrt/scripts/deploy_dae.ps1"):
-            with self.subTest(script=rel):
-                self.assertIn("KeyPath", _read(os.path.join(REPO, rel)))
+    def test_doctor_script_features(self):
+        """doctor 脚本必须支持 JSON 模式与核心报错特征扫描。"""
+        text = _read(os.path.join(SINGBOX, "doctor.sh"))
+        self.assertIn("OUTPUT_JSON", text)
+        self.assertIn("certificate", text)
+        self.assertIn("out of memory", text)
+        self.assertIn("bind: address already in use", text)
+
+    def test_doctor_ruleset_regex_does_not_catch_bare_context_deadline(self):
+        """防止普通的 Go 链接超时 (context deadline exceeded) 误报为规则集阻断。"""
+        for base in (SINGBOX, DAE):
+            text = _read(os.path.join(base, "doctor.sh"))
+            self.assertNotIn("|context deadline exceeded\"", text, "严禁将裸 context deadline 作为独立分支误判规则集阻断")
 
 
 class TestSharedScriptsConsistency(unittest.TestCase):

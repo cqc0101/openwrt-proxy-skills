@@ -7,9 +7,11 @@
 # [共享脚本] 本文件与 dae-openwrt/scripts/probe.sh 完全一致，修改需双份同步！
 
 OUTPUT_JSON=0
-if [ "$1" = "-j" ] || [ "$1" = "--json" ]; then
-    OUTPUT_JSON=1
-fi
+for arg in "$@"; do
+    if [ "$arg" = "-j" ] || [ "$arg" = "--json" ]; then
+        OUTPUT_JSON=1
+    fi
+done
 
 # 彩色定义 (仅在非 JSON 模式下生效)
 if [ "$OUTPUT_JSON" -eq 0 ]; then
@@ -89,7 +91,7 @@ case "$RAW_ARCH" in
         ARCH_DESC="32-bit ARM"
         ;;
     mips*|mipsel*)
-        if echo -n I | od -to2 2>/dev/null | head -n1 | grep -q "122"; then
+        if printf 'I' | od -to2 2>/dev/null | head -n1 | grep -q "122"; then
             CPU_ARCH="mipsel"
             ARCH_DESC="32-bit MIPS Little-Endian (e.g. MT7621)"
         else
@@ -103,11 +105,17 @@ case "$RAW_ARCH" in
 esac
 
 # 内存评估 (MB)。注意：部分 BusyBox 的 free 不支持 -m（静默忽略、仍输出 KB），
-# 统一改读 /proc/meminfo 的 kB 值再除以 1024，避免单位错乱放大 1000 倍。
-TOTAL_RAM=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
-AVAIL_RAM=$(( $(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
-[ "$AVAIL_RAM" -eq 0 ] && AVAIL_RAM=$(( $(awk '/^MemFree:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
-TOTAL_SWAP=$(( $(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+# 统一改读 /proc/meminfo 的 kB 值再除以 1024，并使用参数展开防止空值语法报错。
+RAM_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
+TOTAL_RAM=$(( ${RAM_KB:-0} / 1024 ))
+AV_KB=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)
+AVAIL_RAM=$(( ${AV_KB:-0} / 1024 ))
+if [ "$AVAIL_RAM" -eq 0 ]; then
+    FR_KB=$(awk '/^MemFree:/ {print $2}' /proc/meminfo 2>/dev/null)
+    AVAIL_RAM=$(( ${FR_KB:-0} / 1024 ))
+fi
+SWAP_KB=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
+TOTAL_SWAP=$(( ${SWAP_KB:-0} / 1024 ))
 
 # 闪存/存储评估 (MB)
 FREE_ROM=0
@@ -176,20 +184,37 @@ SINGBOX_CAPABLE=1 # sing-box TUN 适配全版本 Linux
 DNS_PORT_HOLDER="unknown"
 if command -v netstat >/dev/null 2>&1; then
     if netstat -tuln 2>/dev/null | grep -q ":53 "; then
-        if pgrep -f "dnsmasq" >/dev/null 2>&1; then
+        if pidof dnsmasq >/dev/null 2>&1 || pgrep -x "dnsmasq" >/dev/null 2>&1; then
             DNS_PORT_HOLDER="dnsmasq"
-        elif pgrep -f "smartdns" >/dev/null 2>&1; then
+        elif pidof smartdns >/dev/null 2>&1 || pgrep -x "smartdns" >/dev/null 2>&1; then
             DNS_PORT_HOLDER="smartdns"
-        elif pgrep -f "adguardhome" >/dev/null 2>&1; then
+        elif pidof AdGuardHome >/dev/null 2>&1 || pgrep -x "AdGuardHome" >/dev/null 2>&1 || pgrep -x "adguardhome" >/dev/null 2>&1; then
             DNS_PORT_HOLDER="AdGuardHome"
-        elif pgrep -f "mosdns" >/dev/null 2>&1; then
+        elif pidof mosdns >/dev/null 2>&1 || pgrep -x "mosdns" >/dev/null 2>&1; then
             DNS_PORT_HOLDER="mosdns"
+        elif pidof sing-box >/dev/null 2>&1 || pgrep -x "sing-box" >/dev/null 2>&1; then
+            DNS_PORT_HOLDER="sing-box"
         else
             DNS_PORT_HOLDER="active(53)"
         fi
     fi
 fi
 [ -z "$DNS_PORT_HOLDER" ] && DNS_PORT_HOLDER="none"
+
+# 检查 Dnsmasq 上游解析配置与潜在回环死锁风险
+DNSMASQ_UPSTREAM="default"
+DNSMASQ_LOOP_RISK=0
+if command -v uci >/dev/null 2>&1; then
+    DM_SERVERS=$(uci get dhcp.@dnsmasq[0].server 2>/dev/null || true)
+    if [ -n "$DM_SERVERS" ]; then
+        DNSMASQ_UPSTREAM="$DM_SERVERS"
+        case "$DM_SERVERS" in
+            *127.0.0.1*|*::1*)
+                DNSMASQ_LOOP_RISK=1
+                ;;
+        esac
+    fi
+fi
 
 # 检查冲突插件运行状态
 CONFLICT_PLUGINS=""
@@ -245,9 +270,14 @@ WAN_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
 # ------------------------------------------------------------------------------
 # 输出渲染
 # ------------------------------------------------------------------------------
-# JSON 值转义：设备名/发行版字符串可能包含引号、反斜杠，必须转义否则 JSON 损坏
+# JSON 值转义：剥离 ANSI 颜色代码与不可打印控制字符，转义引号与反斜杠，压平换行
 je() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r//g'
+    ESC=$(printf '\033')
+    printf '%s' "$1" \
+        | sed "s/${ESC}\[[0-9;]*[a-zA-Z]//g" \
+        | tr '\r\n' '  ' \
+        | tr -d '\000-\010\013\014\016-\037\177' \
+        | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g'
 }
 CONFLICT_STR=$(echo $CONFLICT_PLUGINS | xargs 2>/dev/null)
 
@@ -285,6 +315,8 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
   },
   "conflicts": {
     "dns_port_holder": "$(je "$DNS_PORT_HOLDER")",
+    "dnsmasq_upstream": "$(je "$DNSMASQ_UPSTREAM")",
+    "dnsmasq_loop_risk": $DNSMASQ_LOOP_RISK,
     "active_conflicts": "$(je "$CONFLICT_STR")",
     "firewall": "$(je "$FW_TYPE")",
     "software_flow_offload": "$(je "$SW_OFFLOAD")",
@@ -299,66 +331,73 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
 }
 EOF
 else
-    echo "${BOLD}================================================================${NC}"
-    echo "${BOLD}       OpenWrt / ImmortalWrt / iStoreOS 全维环境探针报告        ${NC}"
-    echo "${BOLD}================================================================${NC}"
+    say() { printf '%b\n' "$1"; }
+
+    say "${BOLD}================================================================${NC}"
+    say "${BOLD}       OpenWrt / ImmortalWrt / iStoreOS 全维环境探针报告        ${NC}"
+    say "${BOLD}================================================================${NC}"
     
-    echo "${CYAN}[1. 系统与包管理]${NC}"
-    echo "  - 发行版本: ${GREEN}${DISTRO}${NC} (${DISTRO_VER}, Target: ${DISTRO_TARGET})"
-    echo "  - 包管理器: ${GREEN}${PKG_MGR}${NC} $([ "$PKG_MGR" = "apk" ] && echo "(新系列/main-SNAPSHOT 版 apk)" || echo "(经典 opkg，24.10 及更早)")"
+    say "${CYAN}[1. 系统与包管理]${NC}"
+    say "  - 发行版本: ${GREEN}${DISTRO}${NC} (${DISTRO_VER}, Target: ${DISTRO_TARGET})"
+    say "  - 包管理器: ${GREEN}${PKG_MGR}${NC} $([ "$PKG_MGR" = "apk" ] && echo "(新系列/main-SNAPSHOT 版 apk)" || echo "(经典 opkg，24.10 及更早)")"
 
-    echo "${CYAN}[2. 硬件与存储资源]${NC}"
-    echo "  - 设备型号: $MODEL"
-    echo "  - CPU 架构: ${GREEN}${CPU_ARCH}${NC} (${ARCH_DESC})"
-    echo "  - 物理内存: 可用 ${AVAIL_RAM}MB / 总计 ${TOTAL_RAM}MB (Swap: ${TOTAL_SWAP}MB)"
+    say "${CYAN}[2. 硬件与存储资源]${NC}"
+    say "  - 设备型号: $MODEL"
+    say "  - CPU 架构: ${GREEN}${CPU_ARCH}${NC} (${ARCH_DESC})"
+    say "  - 物理内存: 可用 ${AVAIL_RAM}MB / 总计 ${TOTAL_RAM}MB (Swap: ${TOTAL_SWAP}MB)"
     if [ "$FREE_ROM" -lt 15 ]; then
-        echo "  - 闪存空间: ${RED}剩余仅 ${FREE_ROM}MB！已触发闪存写保护锁定 (/tmp 缓存)${NC}"
+        say "  - 闪存空间: ${RED}剩余仅 ${FREE_ROM}MB！已触发闪存写保护锁定 (/tmp 缓存)${NC}"
     elif [ "$FREE_ROM" -lt 70 ]; then
-        echo "  - 闪存空间: 剩余 ${FREE_ROM}MB (偏小；安装 sing-box 请用 ${GREEN}sing-box-tiny${NC} ≈39MiB，完整版 ≈62MiB 装不下)"
+        say "  - 闪存空间: 剩余 ${FREE_ROM}MB (偏小；安装 sing-box 请用 ${GREEN}sing-box-tiny${NC} ≈39MiB，完整版 ≈62MiB 装不下)"
     else
-        echo "  - 闪存空间: 剩余 ${FREE_ROM}MB (充裕)"
+        say "  - 闪存空间: 剩余 ${FREE_ROM}MB (充裕)"
     fi
 
-    echo "${CYAN}[3. 内核与 eBPF / BTF]${NC}"
-    echo "  - 内核版本: Linux ${KERNEL_VER}"
+    say "${CYAN}[3. 内核与 eBPF / BTF]${NC}"
+    say "  - 内核版本: Linux ${KERNEL_VER}"
     if [ "$HAS_BTF" -eq 1 ]; then
-        echo "  - BTF 符号: ${GREEN}存在${NC} (${BTF_PATH})"
+        say "  - BTF 符号: ${GREEN}存在${NC} (${BTF_PATH})"
     else
-        echo "  - BTF 符号: ${YELLOW}缺失${NC} (若运行 dae 需安装 vmlinux-btf 补丁包)"
+        say "  - BTF 符号: ${YELLOW}缺失${NC} (若运行 dae 需安装 vmlinux-btf 补丁包)"
     fi
-    echo "  - TUN 网卡: $([ "$HAS_TUN" -eq 1 ] && echo "${GREEN}可用 (/dev/net/tun)${NC}" || echo "${RED}未就绪${NC}")"
+    say "  - TUN 网卡: $([ "$HAS_TUN" -eq 1 ] && echo "${GREEN}可用 (/dev/net/tun)${NC}" || echo "${RED}未就绪${NC}")"
     if [ "$NFQUEUE_OK" -eq 1 ]; then
-        echo "  - nfqueue 模块: ${GREEN}可用${NC} (auto_detect_interface 自保正常)"
+        say "  - nfqueue 模块: ${GREEN}可用${NC} (auto_detect_interface 自保正常)"
     else
-        echo "  - nfqueue 模块: ${YELLOW}缺失${NC} (sing-box 生成配置时建议加 --wan-iface ${WAN_IF:-eth0} 防直连被 TUN 自捕获)"
+        say "  - nfqueue 模块: ${YELLOW}缺失${NC} (TUN 模式已启用纯净 auto_redirect: false 防死锁自环)"
     fi
 
-    echo "${CYAN}[4. 科学上网引擎适配能力]${NC}"
+    say "${CYAN}[4. 科学上网引擎适配能力]${NC}"
     if [ "$DAE_CAPABLE" -eq 1 ]; then
-        echo "  - dae (eBPF)   : ${GREEN}[完美支持]${NC} 内核与 BTF 满足要求，可获得巅峰性能与最低 CPU 开销"
+        say "  - dae (eBPF)   : ${GREEN}[完美支持]${NC} 内核与 BTF 满足要求，可获得巅峰性能与最低 CPU 开销"
     else
-        echo "  - dae (eBPF)   : ${YELLOW}[受限]${NC} $([ "$KERNEL_GE_515" -eq 0 ] && echo "内核 < 5.15" || echo "缺少 BTF 符号")"
+        say "  - dae (eBPF)   : ${YELLOW}[受限]${NC} $([ "$KERNEL_GE_515" -eq 0 ] && echo "内核 < 5.15" || echo "缺少 BTF 符号")"
     fi
-    echo "  - sing-box (TUN): ${GREEN}[完美支持]${NC} 兼容所有 Linux 内核与复杂分流协议"
+    say "  - sing-box (TUN): ${GREEN}[完美支持]${NC} 兼容所有 Linux 内核与复杂分流协议"
 
-    echo "${CYAN}[5. 端口、防火墙与冲突插件]${NC}"
-    echo "  - 53 端口占用: ${DNS_PORT_HOLDER}"
-    echo "  - 防火墙框架 : ${FW_TYPE} $([ "$FW_TYPE" = "fw4" ] && echo "(nftables)" || echo "(iptables)")"
+    say "${CYAN}[5. 端口、防火墙与冲突插件]${NC}"
+    say "  - 53 端口占用: ${DNS_PORT_HOLDER}"
+    if [ "$DNSMASQ_LOOP_RISK" -eq 1 ]; then
+        say "  - ${YELLOW}Dnsmasq 上游: ${DNSMASQ_UPSTREAM} (警告: 指向本地回环，请注意防死锁循环)${NC}"
+    elif [ "$DNSMASQ_UPSTREAM" != "default" ]; then
+        say "  - Dnsmasq 上游: ${DNSMASQ_UPSTREAM}"
+    fi
+    say "  - 防火墙框架 : ${FW_TYPE} $([ "$FW_TYPE" = "fw4" ] && echo "(nftables)" || echo "(iptables)")"
     if [ -n "$CONFLICT_PLUGINS" ]; then
-        echo "  - ${RED}冲突警告${NC}   : 检测到正在运行的代理插件 [ ${RED}${CONFLICT_PLUGINS}${NC}]，部署前建议关闭！"
+        say "  - ${RED}冲突警告${NC}   : 检测到正在运行的代理插件 [ ${RED}${CONFLICT_PLUGINS}${NC}]，部署前建议关闭！"
     else
-        echo "  - 冲突插件检测: ${GREEN}无冲突${NC} (未发现运行中的 PassWall/OpenClash/HomeProxy)"
+        say "  - 冲突插件检测: ${GREEN}无冲突${NC} (未发现运行中的 PassWall/OpenClash/HomeProxy)"
     fi
     if [ "$SW_OFFLOAD" = "1" ] || [ "$HW_OFFLOAD" = "1" ]; then
-        echo "  - 流量分载   : ${YELLOW}已开启 (软卸载: $SW_OFFLOAD, 硬卸载: $HW_OFFLOAD)${NC}"
-        echo "                 ${YELLOW}注意: 部署 dae 时必须关闭流量分载，否则报文绕过 eBPF 导致失效${NC}"
+        say "  - 流量分载   : ${YELLOW}已开启 (软卸载: $SW_OFFLOAD, 硬卸载: $HW_OFFLOAD)${NC}"
+        say "                 ${YELLOW}注意: 部署 dae 时必须关闭流量分载，否则报文绕过 eBPF 导致失效${NC}"
     else
-        echo "  - 流量分载   : 已关闭 (适合 eBPF 与透明代理)"
+        say "  - 流量分载   : 已关闭 (适合 eBPF 与透明代理)"
     fi
 
-    echo "${CYAN}[6. 网络性能与 BBR 评估]${NC}"
-    echo "  - 默认路由接口: ${GREEN}${WAN_IF}${NC} (生成配置时可作 --wan-iface 参数)"
-    echo "  - 内核转发开关: $([ "$IP_FORWARD" = "1" ] && echo "${GREEN}开启 (1)${NC}" || echo "${RED}关闭 (0)${NC}")"
-    echo "  - TCP 拥塞算法: 当前为 ${GREEN}${CURRENT_CC}${NC} $([ "$BBR_AVAILABLE" -eq 1 ] && echo "(内核支持 BBR)" || echo "(内核不支持 BBR)")"
-    echo "${BOLD}================================================================${NC}"
+    say "${CYAN}[6. 网络性能与 BBR 评估]${NC}"
+    say "  - 默认路由接口: ${GREEN}${WAN_IF}${NC} (生成配置时可作 --wan-iface 参数)"
+    say "  - 内核转发开关: $([ "$IP_FORWARD" = "1" ] && echo "${GREEN}开启 (1)${NC}" || echo "${RED}关闭 (0)${NC}")"
+    say "  - TCP 拥塞算法: 当前为 ${GREEN}${CURRENT_CC}${NC} $([ "$BBR_AVAILABLE" -eq 1 ] && echo "(内核支持 BBR)" || echo "(内核不支持 BBR)")"
+    say "${BOLD}================================================================${NC}"
 fi

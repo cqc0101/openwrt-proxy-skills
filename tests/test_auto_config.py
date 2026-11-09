@@ -42,6 +42,8 @@ class TestTemplateSelection(unittest.TestCase):
         cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct")
         tags = [s.get("tag") for s in cfg["dns"]["servers"]]
         self.assertIn("fakeip-dns", tags)
+        tun = [i for i in cfg["inbounds"] if i.get("type") == "tun"][0]
+        self.assertFalse(tun.get("auto_redirect", False))
 
 
 class TestNodeInjection(unittest.TestCase):
@@ -81,6 +83,26 @@ class TestNodeInjection(unittest.TestCase):
         cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct")
         self.assertIs(cfg["route"]["auto_detect_interface"], True)
         self.assertNotIn("default_interface", cfg["route"])
+
+
+class TestReservedTags(unittest.TestCase):
+    """机场节点若命名成 direct/auto/proxy 等保留名，必须避让重命名，否则会被去重丢弃且选择器引用错对象。"""
+
+    def test_node_named_direct_renamed(self):
+        cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct",
+                           node_uris=["trojan://pw@1.2.3.4:443?sni=a.com#direct"])
+        tags = [o.get("tag") for o in cfg["outbounds"]]
+        self.assertIn("direct-node", tags)
+        self.assertIn("direct", tags)  # 内置 direct 仍保留
+        auto = next(o for o in cfg["outbounds"] if o["tag"] == "auto")
+        self.assertEqual(auto["outbounds"], ["direct-node"])
+
+    def test_node_named_auto_not_self_referencing(self):
+        cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct",
+                           node_uris=["trojan://pw@1.2.3.4:443?sni=a.com#auto"])
+        auto = next(o for o in cfg["outbounds"] if o["tag"] == "auto")
+        self.assertNotIn("auto", auto["outbounds"])
+        self.assertIn("auto-node", auto["outbounds"])
 
 
 class TestCdnMirror(unittest.TestCase):
@@ -134,6 +156,97 @@ class TestEndToEndAndSelfCheck(unittest.TestCase):
                 cfg = json.load(f)
             tags = [o.get("tag") for o in cfg["outbounds"]]
             self.assertIn("GOOD", tags)
+
+
+class TestCustomDnsUpstreams(unittest.TestCase):
+    def test_dns_cn_presets(self):
+        cfg_ali = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_cn="alidns")
+        ali_server = next(s for s in cfg_ali["dns"]["servers"] if s.get("tag") == "alidns")
+        self.assertEqual(ali_server["server"], "223.5.5.5")
+        self.assertEqual(ali_server["type"], "udp")
+
+        cfg_dnspod = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_cn="dnspod")
+        dnspod_server = next(s for s in cfg_dnspod["dns"]["servers"] if s.get("tag") == "alidns")
+        self.assertEqual(dnspod_server["server"], "119.29.29.29")
+        self.assertEqual(dnspod_server["type"], "udp")
+
+        cfg_114 = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_cn="114")
+        server_114 = next(s for s in cfg_114["dns"]["servers"] if s.get("tag") == "alidns")
+        self.assertEqual(server_114["server"], "114.114.114.114")
+
+    def test_dns_cn_custom_ip_and_doh(self):
+        cfg_custom = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_cn="180.76.76.76")
+        s_custom = next(s for s in cfg_custom["dns"]["servers"] if s.get("tag") == "alidns")
+        self.assertEqual(s_custom["server"], "180.76.76.76")
+        self.assertEqual(s_custom["type"], "udp")
+
+        cfg_doh = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_cn="https://dns.alidns.com/dns-query")
+        s_doh = next(s for s in cfg_doh["dns"]["servers"] if s.get("tag") == "alidns")
+        self.assertEqual(s_doh["server"], "https://dns.alidns.com/dns-query")
+        self.assertEqual(s_doh["type"], "https")
+
+    def test_dns_remote_presets_and_doh(self):
+        cfg_cf = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_remote="cloudflare")
+        s_cf = next(s for s in cfg_cf["dns"]["servers"] if s.get("tag") == "google-dns")
+        self.assertEqual(s_cf["server"], "1.1.1.1")
+        self.assertEqual(s_cf["type"], "https")
+        self.assertEqual(s_cf["detour"], "proxy")
+
+        cfg_quad9 = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_remote="quad9")
+        s_quad9 = next(s for s in cfg_quad9["dns"]["servers"] if s.get("tag") == "google-dns")
+        self.assertEqual(s_quad9["server"], "9.9.9.9")
+        self.assertEqual(s_quad9["type"], "https")
+        self.assertEqual(s_quad9["detour"], "proxy")
+
+        cfg_doh = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_remote="https://1.1.1.1/dns-query")
+        s_doh = next(s for s in cfg_doh["dns"]["servers"] if s.get("tag") == "google-dns")
+        self.assertEqual(s_doh["server"], "https://1.1.1.1/dns-query")
+        self.assertEqual(s_doh["type"], "https")
+        self.assertEqual(s_doh["detour"], "proxy")
+
+
+class TestBootstrapDns(unittest.TestCase):
+    def test_node_domain_injected_to_dns_and_route(self):
+        cfg = build_config(
+            version="1.14", dns_mode="fakeip", mirror="direct",
+            node_uris=["trojan://pw@hk.example.com:443?sni=hk.example.com#HK-01"]
+        )
+        dns_rules = cfg["dns"]["rules"]
+        matched_dns = [r for r in dns_rules if "hk.example.com" in r.get("domain", [])]
+        self.assertTrue(matched_dns, "dns.rules 未发现节点域名直连规则")
+        self.assertEqual(matched_dns[0]["server"], "alidns")
+
+        route_rules = cfg["route"]["rules"]
+        matched_route = [r for r in route_rules if "hk.example.com" in r.get("domain", [])]
+        self.assertTrue(matched_route, "route.rules 未发现节点域名直连规则")
+        self.assertEqual(matched_route[0]["outbound"], "direct")
+
+        node_ob = next(o for o in cfg["outbounds"] if o["tag"] == "HK-01")
+        self.assertEqual(node_ob.get("domain_resolver"), "alidns")
+
+
+class TestBypassTopology(unittest.TestCase):
+    def test_bypass_with_main_router_ip(self):
+        cfg = build_config(
+            version="1.14", dns_mode="fakeip", mirror="direct",
+            topology="bypass", main_router_ip="192.168.1.1"
+        )
+        route_rules = cfg["route"]["rules"]
+        direct_rules = [r for r in route_rules if "192.168.1.1/32" in r.get("ip_cidr", [])]
+        self.assertTrue(direct_rules, "旁路由模式下未找到主路由 IP 的直连放行规则")
+        self.assertEqual(direct_rules[0]["outbound"], "direct")
+
+
+class TestCanaryDomainRejection(unittest.TestCase):
+    def test_generated_config_retains_canary_blocking(self):
+        cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct")
+        dns_rules = cfg["dns"]["rules"]
+        canary_dns = [r for r in dns_rules if r.get("action") == "reject" and "use-application-dns.net" in r.get("domain", [])]
+        self.assertTrue(canary_dns, "生成配置中必须包含 DoH Canary 阻断规则")
+
+        route_rules = cfg["route"]["rules"]
+        canary_route = [r for r in route_rules if r.get("action") == "reject" and "mask.icloud.com" in r.get("domain", [])]
+        self.assertTrue(canary_route, "生成配置中必须包含 Apple Private Relay Canary 阻断规则")
 
 
 if __name__ == "__main__":

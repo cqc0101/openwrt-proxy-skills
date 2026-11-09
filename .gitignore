@@ -5,3 +5,4 @@ Thumbs.db
 desktop.ini
 .tmp/
 .deploy_key/
+docker/.mock_host_key*

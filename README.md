@@ -15,19 +15,22 @@
 
 ## 工作流
 
-1. **环境检测**（`probe.sh` / `probe.ps1`）：发行版、包管理器（实际检测 opkg 或 apk）、内核与 BTF、内存与存储空间、冲突插件。
-2. **配置生成**（`auto_config.py`、`sub_parser.py`、`sub_to_dae.py`）：订阅解析与清洗、按 sing-box 版本选择模板、规则集镜像、生成后静态校验。
-3. **部署**（`deploy_*.sh` / `deploy_*.ps1`）：远端校验、配置快照、热重载、存活检查、失败回滚。
-4. **系统调优**（`optimize_network.sh`）：BBR 与连接数相关参数。
-5. **诊断**（`diagnose_openwrt.sh`、`doctor.sh`）：链路检查与日志模式分析。
+1. **环境探针**（`probe.sh -j`）：发行版、包管理器（实际检测 opkg 或 apk）、内核与 BTF、内存与存储空间、冲突插件，输出机器可读 JSON。
+2. **配置生成与积木拼装**（`auto_config.py`、`sub_parser.py`、`assets/mixins/`）：通用订阅清洗、自适应版本模板选择、Mixins 积木拼装、CDN 规则集镜像、生成后内置静态审计。
+3. **Agent 自主原子部署**（标准 SSH 管道）：远端沙盒语法与依赖校验（`sing-box check` / `dae validate -c`）、原子替换、平滑重启或无感热重载。
+4. **最后一公里网络闭环**（`setup_openwrt_network.sh`）：LAN 区域动态定位并注入 `tun0` 放行、开启 forward=ACCEPT、MSS 钳制 (`mtu_fix=1`)、DNAT 53 劫持重定向、Dnsmasq `filter_aaaa=1` 过滤、内核 BBR 调优；支持 `--bypass` 自动开启旁路由 masquerade 伪装。
+5. **结构化自愈诊断**（`doctor.sh --json`、`diagnose_dns.sh --json`、`diagnose_openwrt.sh`）：机器可读 JSON 诊断输出，包含状态码、问题特征与自愈执行命令。
 
 ## 参考文档
 
 | 文档 | 内容 |
 | :--- | :--- |
-| [compat-matrix.md](skills/singbox-openwrt/references/compat-matrix.md) | OpenWrt 版本与包管理器、sing-box 1.13–1.15 字段差异、dae 运行前提；仅收录对照官方来源确认过的内容 |
-| [troubleshooting-index.md](skills/singbox-openwrt/references/troubleshooting-index.md) | 症状、排查命令、常见原因与处理方式，共 7 类 |
-| [china-scenarios.md](skills/singbox-openwrt/references/china-scenarios.md) | 机场订阅、光猫桥接、旁路由、IPv6、Clash 面板、多拨等场景 |
+| [architecture-and-schema.md](skills/singbox-openwrt/references/architecture-and-schema.md) | sing-box 架构规范、OpenWrt 硬件防护基线、v1.13 vs v1.14 字段门控与兼容矩阵 |
+| [dns-and-routing.md](skills/singbox-openwrt/references/dns-and-routing.md) | RealIP vs FakeIP 机制、DNS 防污染、Canary 域名阻断与多级解析防环 |
+| [openwrt-pitfalls-and-troubleshooting.md](skills/singbox-openwrt/references/openwrt-pitfalls-and-troubleshooting.md) | OpenWrt 闪存寿命保护、防火墙 tun0 放行、常见症状与排障速查索引 |
+| [modular-blocks.md](skills/singbox-openwrt/references/modular-blocks.md) | 模块化规则积木与主路由/旁路由/指定设备分流等复杂拓扑组装指南 |
+| [dae-rules-and-syntax.md](skills/dae-openwrt/references/dae-rules-and-syntax.md) | dae 5 条语义与拓扑铁律、路由语法、网卡绑定约束与 DNS 重查白名单 |
+| [troubleshooting.md](skills/dae-openwrt/references/troubleshooting.md) | dae 常见故障诊断排查手册与内核 eBPF 日志特征速查 |
 
 ## 目录结构
 
@@ -36,16 +39,21 @@
 ├── skills/                   # 可分发给 Agent 的技能包（符合 SKILL.md 目录约定）
 │   ├── singbox-openwrt/      # sing-box 技能
 │   │   ├── SKILL.md
-│   │   ├── assets/templates/ # 4 个基准模板（1.13/1.14 × FakeIP/RealIP）
-│   │   ├── scripts/          # 生成 / 部署 / 诊断脚本
-│   │   └── references/       # 兼容矩阵、排障索引、场景说明、版本字段、节点转换
+│   │   ├── assets/
+│   │   │   ├── mixins/       # 模块化配置片段 (TUN入站/DNS/路由/实验性缓存/出站)
+│   │   │   └── templates/    # 4 个基准模板（1.13/1.14 × FakeIP/RealIP）
+│   │   ├── scripts/          # 生成 / 诊断 / 网络闭环接管脚本
+│   │   └── references/       # 架构规范、DNS防环、避坑排障、模块化积木（一级深度）
 │   └── dae-openwrt/          # dae 技能
 │       ├── SKILL.md
 │       ├── assets/templates/ # openwrt.dae 基准模板
-│       ├── scripts/
-│       └── references/       # 路由语法、DNS、协议、排错、上游索引（均为一级深度）
+│       ├── scripts/          # 探针 / 诊断 / 网络闭环接管脚本
+│       └── references/       # 5条铁律与语法、故障排查手册（一级深度）
+├── docker/                   # 本地 OpenWrt 自动化测试基座（Docker 容器 & Mock 仿真）
+├── docs/                     # 真机验证报告
 ├── tests/                    # 回归测试（unittest，无第三方依赖）
 ├── run_tests.py              # 一键回归入口
+├── HARDENING_REPORT.md       # 稳定性加固与边界异常测试审计报告
 └── .github/workflows/ci.yml  # GitHub Actions
 ```
 
@@ -95,17 +103,28 @@ cp -r skills/singbox-openwrt skills/dae-openwrt ~/.claude/skills/
 ## 测试
 
 ```bash
+# 1. 单元回归测试（纯标准库无依赖）
 python run_tests.py
+
+# 2. 本地 OpenWrt 自动化流水线测试（支持 Docker 容器或本地 Mock 仿真）
+python docker/run_docker_tests.py
+
+# 3. 工业级异常边界与可靠性压力测试矩阵（默认 DRY-RUN 安全模式，支持带快照安全演练）
+python docker/stress_test_matrix.py
 ```
 
+本地测试基座设计与用法详见 [docker/README.md](docker/README.md)。
+
 测试覆盖：模板字段与引用完整性、节点解析、订阅清洗、生成器端到端与静态校验、两个检查脚本、文档链接、shell 语法与行尾规范。GitHub Actions 在推送与 PR 时对多个 Python 版本执行同一套测试。
+
+真机验证记录（Oray X1 Pro / ImmortalWrt SNAPSHOT / sing-box 1.14.3）见 [docs/validation-report-x1pro.md](docs/validation-report-x1pro.md)。
 
 ## 致谢与第三方内容
 
 第三方内容的版权说明见 [NOTICE.md](NOTICE.md)。
 
 - sing-box：<https://github.com/SagerNet/sing-box>。`singbox-openwrt` 的模板骨架参考 [shpirt/singbox-config](https://github.com/shpirt/singbox-config) 修改而来。
-- dae / daed：<https://github.com/daeuniverse/dae>。`dae-openwrt/references/` 内为 dae 官方文档镜像，版权归 daeuniverse 所有，按原样保留。
+- dae / daed：<https://github.com/daeuniverse/dae>。
 - 规则集：<https://github.com/SagerNet/sing-geosite>、<https://github.com/SagerNet/sing-geoip>。
 
 ## 声明
