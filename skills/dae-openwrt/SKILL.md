@@ -64,7 +64,7 @@ description: >-
 
 ## 🛡️ OpenWrt 必须遵守的 5 条语义与拓扑铁律
 
-在为软路由生成或调整 `.dae` 规则时，必须 100% 执行以下铁律：
+在为软路由生成或调整 `.dae` 规则时，必须 严格遵循以下约束：
 
 ### 1. 单引号词法规范
 在 `.dae` 规范中，除 `ext:"xxx.dat:tag"` 外部文件引用外，所有包含冒号 `:`、斜杠 `/`、正则表达式或复合协议的字符串，统一使用单引号 `'...'` 包裹，避免解析歧义。
@@ -92,7 +92,7 @@ routing {
 !domain(geosite:a, geosite:b) -> my_group
 ```
 
-### 4. 路由短路 (First-Match) 六层黄金顺序
+### 4. 路由短路 (First-Match) 六层匹配顺序
 规则自上而下匹配，一旦命中立即终止后续规则：
 1. **[第 1 层] 核心宿主进程与私网广播保护**：`pname(dnsmasq, ...) -> must_direct` 及 `dip(geoip:private) -> direct`
 2. **[第 2 层] 大流量下载与 P2P 绕行**：`pname(aria2c, qbittorrent-nox) -> must_direct` 及 `dscp(0x4) -> direct`
@@ -168,8 +168,10 @@ ssh root@192.168.1.1 "dae validate /tmp/config.dae.test"
 # - 官方裸二进制（非 procd 管理）：使用 dae reload
 ssh root@192.168.1.1 "[ -f /etc/dae/config.dae ] && cp /etc/dae/config.dae /tmp/config.dae.bak; mv /tmp/config.dae.test /etc/dae/config.dae && chmod 600 /etc/dae/config.dae && ( [ -x /etc/init.d/dae ] && uci set dae.config.enabled='1' 2>/dev/null && uci commit dae 2>/dev/null && /etc/init.d/dae reload || dae reload )"
 
-# 4. 执行软路由网络闭环脚本 (关闭 flow offloading，设置 filter_aaaa 与 MSS 钳制)
+# 4. 启动本地看门狗、执行网络闭环脚本并在确认连通后解除看门狗
+ssh root@192.168.1.1 "sh -s -- --watchdog" < scripts/setup_openwrt_network.sh
 ssh root@192.168.1.1 "sh -s" < scripts/setup_openwrt_network.sh
+ssh root@192.168.1.1 "sh -s -- --confirm" < scripts/setup_openwrt_network.sh
 ```
 
 ---

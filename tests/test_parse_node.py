@@ -280,5 +280,38 @@ class TestAuditHardeningParseNode(unittest.TestCase):
         ob2 = parse_vmess(f"vmess://{b64}")
         self.assertEqual(ob2["tag"], "vmess-1.2.3.4")
 
+
+    def test_httpupgrade_and_http_transports(self):
+        ob_hu = parse_uri("vless://u-1@1.2.3.4:443?security=tls&sni=a.com&type=httpupgrade&path=%2Fup&host=cdn.a.com&alpn=h2,http/1.1#V-HU")
+        self.assertEqual(ob_hu["transport"], {"type": "httpupgrade", "path": "/up", "host": "cdn.a.com"})
+        self.assertEqual(ob_hu["tls"]["alpn"], ["h2", "http/1.1"])
+
+        ob_h2 = parse_uri("trojan://pw@5.6.7.8:443?sni=b.com&type=h2&path=%2Fh2&host=h1.b.com,h2.b.com#T-H2")
+        self.assertEqual(ob_h2["transport"], {"type": "http", "path": "/h2", "host": ["h1.b.com", "h2.b.com"]})
+
+    def test_unknown_transport_raises_not_silently_downgraded(self):
+        for bad_type in ("xhttp", "splithttp", "kcp", "mkcp", "quic"):
+            with self.subTest(net_type=bad_type):
+                with self.assertRaises(ValueError):
+                    parse_uri(f"vless://u-1@1.2.3.4:443?security=tls&type={bad_type}#BAD")
+                with self.assertRaises(ValueError):
+                    parse_uri(f"trojan://pw@1.2.3.4:443?type={bad_type}#BAD")
+
+    def test_tuic_and_anytls_uris(self):
+        tuic_ob = parse_uri("tuic://uuid-1:pass-1@9.9.9.9:8443?congestion_control=bbr&udp_relay_mode=quic&alpn=h3&sni=tuic.example.com#TUIC-01")
+        self.assertEqual(tuic_ob["type"], "tuic")
+        self.assertEqual(tuic_ob["uuid"], "uuid-1")
+        self.assertEqual(tuic_ob["password"], "pass-1")
+        self.assertEqual(tuic_ob["congestion_control"], "bbr")
+        self.assertEqual(tuic_ob["udp_relay_mode"], "quic")
+        self.assertEqual(tuic_ob["tls"]["alpn"], ["h3"])
+
+        anytls_ob = parse_uri("anytls://secret_pw@8.8.4.4:443?sni=any.example.com&alpn=h2#ANY-01")
+        self.assertEqual(anytls_ob["type"], "anytls")
+        self.assertEqual(anytls_ob["password"], "secret_pw")
+        self.assertEqual(anytls_ob["tls"]["server_name"], "any.example.com")
+        self.assertEqual(anytls_ob["tls"]["alpn"], ["h2"])
+
+
 if __name__ == "__main__":
     unittest.main()

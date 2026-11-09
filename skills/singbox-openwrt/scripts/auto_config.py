@@ -27,6 +27,7 @@ for _s in (sys.stdout, sys.stderr):
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "assets", "templates"))
+MIXINS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "assets", "mixins"))
 
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
@@ -123,6 +124,84 @@ def apply_cdn_mirror(config, mirror_type="jsdelivr"):
     return config
 
 
+def compose_from_mixins(version="1.13", dns_mode="fakeip"):
+    """由 assets/mixins/ 模块化正交积木动态组装版本与 DNS 模式对应的基准配置，消除双数据源漂移。"""
+    def _load_mixin(name):
+        with open(os.path.join(MIXINS_DIR, name), "r", encoding="utf-8") as mf:
+            return json.load(mf)
+
+    exp_mixin = _load_mixin("experimental.json").get("experimental", {})
+    dns_mixin = _load_mixin("dns_base.json")
+    inb_mixin = _load_mixin("inbound_tun.json").get("inbounds", [])
+    out_mixin = _load_mixin("outbounds_base.json")
+    rt_mixin = _load_mixin("route_base.json")
+
+    cache_file = {
+        "enabled": True,
+        "path": exp_mixin.get("cache_file", {}).get("path", "/tmp/sing-box-cache.db"),
+    }
+    if dns_mode == "fakeip":
+        cache_file["store_fakeip"] = True
+    if version == "1.13":
+        cache_file["store_rdrc"] = True
+    else:
+        cache_file["store_dns"] = True
+
+    dns_servers = list(dns_mixin.get("servers", []))
+    dns_rules = list(dns_mixin.get("rules", []))
+    if dns_mode == "fakeip":
+        if not any(s.get("tag") == "fakeip-dns" for s in dns_servers):
+            dns_servers.append({
+                "tag": "fakeip-dns",
+                "type": "fakeip",
+                "inet4_range": "198.18.0.0/15"
+            })
+        dns_rules.append({
+            "query_type": ["A", "AAAA"],
+            "action": "route",
+            "server": "fakeip-dns"
+        })
+
+    dns_block = {
+        "servers": dns_servers,
+        "rules": dns_rules,
+        "final": dns_mixin.get("final", "google-dns"),
+        "strategy": dns_mixin.get("strategy", "ipv4_only"),
+    }
+    if dns_mode == "realip":
+        dns_block["reverse_mapping"] = True
+    if version == "1.13":
+        dns_block["independent_cache"] = True
+    else:
+        dns_block["optimistic"] = True
+
+    route_block = {
+        "auto_detect_interface": rt_mixin.get("auto_detect_interface", True),
+        "default_domain_resolver": rt_mixin.get("default_domain_resolver", "alidns"),
+    }
+    if version != "1.13":
+        route_block["default_http_client"] = "direct-client"
+    route_block["rules"] = list(rt_mixin.get("rules", []))
+    route_block["rule_set"] = list(rt_mixin.get("rule_set", []))
+    route_block["final"] = rt_mixin.get("final", "proxy")
+
+    cfg = {
+        "$schema": "https://raw.githubusercontent.com/SagerNet/sing-box/main/docs/configuration/schema.json",
+        "log": {"level": "info", "timestamp": True},
+        "experimental": {
+            "cache_file": cache_file,
+            "clash_api": dict(exp_mixin.get("clash_api", {})),
+        },
+        "dns": dns_block,
+        "inbounds": inb_mixin,
+        "outbounds": out_mixin,
+        "route": route_block,
+    }
+    if version != "1.13":
+        cfg["http_clients"] = [{"tag": "direct-client"}]
+    return cfg
+
+
 def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15, wan_iface=None, dns_cn="alidns", dns_remote="google-dns", topology="main", main_router_ip=None, clash_secret=None, strict_nodes=False):
     template_file = f"openwrt-{version}-tun-{dns_mode}.json"
     template_path = os.path.join(TEMPLATES_DIR, template_file)
@@ -136,8 +215,11 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
         print(f"       请检查 --version / --dns-mode 组合是否正确。", file=sys.stderr)
         sys.exit(2)
 
-    with open(template_path, 'r', encoding='utf-8') as f:
-        config = json.load(f)
+    if os.path.isdir(MIXINS_DIR):
+        config = compose_from_mixins(version=version, dns_mode=dns_mode)
+    else:
+        with open(template_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
 
     # 1. 强制注入 OpenWrt 防护字段（杜绝漏配）
     if "experimental" not in config:

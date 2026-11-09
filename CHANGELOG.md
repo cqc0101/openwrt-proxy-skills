@@ -2,6 +2,27 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.5.0] - 2026-11-09
+
+### 新特性与现代协议扩展 (New Features & Protocol Expansions)
+
+- **[特性] 新增 TUIC 与 AnyTLS 全链路协议支持**：
+  - `parse_node.py`、`sub_parser.py` 与 `to_dae_nodes` 全面支持 TUIC (`tuic://`) 与 AnyTLS (`anytls://`) 协议解析；
+  - 自动适配 TLS ALPN (`h3`/`h2`)、拥塞控制算法 (`congestion_control: bbr`) 与多路复用参数 (`multiplex`)；
+  - 同步打通 Clash YAML 代理节点转换与 dae 节点导出语法。
+- **[特性] 新增 Modern Transport 现代传输层支持 (HTTPUpgrade & H2)**：
+  - 为 VLESS 与 Trojan 节点扩展 `httpupgrade` 与 `h2` 传输层解析，支持独立配置 `path`、`host` 及 TLS ALPN (`["h2", "http/1.1"]`)；
+  - 精确映射 sing-box `transport: {"type": "httpupgrade", "path": "...", "host": "..."}` 块。
+- **[安全] 不支持传输层快速失败防护 (Fail-fast Transport Gating)**：
+  - 对尚未受目标核心稳定支持的传输层协议（如 `xhttp`、`splithttp`、`kcp`、`quic` 等）建立阻断门禁；
+  - 在 URI 解析中显式抛出 `ValueError`，在 Clash YAML 转换中丢弃并返回空对象，**严禁静默降级为裸 TCP** 造成黑洞或握手超时故障。
+- **[重构] 模块化正交积木动态组装 (`compose_from_mixins`)**：
+  - `auto_config.py` 引入 `compose_from_mixins` 架构级拼装引擎，统一调度 `assets/mixins/` 内的模块化积木；
+  - 彻底杜绝全量独立基准模板与正交积木之间的双数据源配置漂移。
+- **[测试] 单元测试矩阵扩充至 189 项**：
+  - 新增 TUIC/AnyTLS 语法校验、HTTPUpgrade 传输映射、不支持协议硬拦截阻断测试；
+  - 全量 189 项单元测试与 Docker/Mock 仿真套件 100% 绿灯通过。
+
 ## [0.4.3] - 2026-11-09
 
 ### 全量安全审计与 26 项深度缺陷修复 (Full Security Audit & Deep Remediation)

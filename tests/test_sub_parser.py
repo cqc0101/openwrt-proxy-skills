@@ -426,5 +426,49 @@ proxies:
         with self.assertRaises(ValueError):
             _decompress(payload, "gzip", max_bytes=512)
 
+
+    def test_clash_tuic_anytls_hy2_ports_httpupgrade_and_reject_xhttp(self):
+        hy2_ob = parse_clash_proxy({
+            "name": "HY2-Hop", "type": "hysteria2", "server": "1.2.3.4", "port": 443,
+            "password": "pw", "ports": "20000-40000", "alpn": ["h3"],
+        })
+        self.assertEqual(hy2_ob["server_ports"], ["20000:40000"])
+        self.assertEqual(hy2_ob["tls"]["alpn"], ["h3"])
+
+        tuic_ob = parse_clash_proxy({
+            "name": "TUIC-Node", "type": "tuic", "server": "2.3.4.5", "port": 8443,
+            "uuid": "u-1", "password": "p-1", "congestion-controller": "bbr", "alpn": ["h3"],
+        })
+        self.assertEqual(tuic_ob["type"], "tuic")
+        self.assertEqual(tuic_ob["uuid"], "u-1")
+        self.assertEqual(tuic_ob["tls"]["alpn"], ["h3"])
+
+        anytls_ob = parse_clash_proxy({
+            "name": "ANY-Node", "type": "anytls", "server": "3.4.5.6", "port": 443,
+            "password": "pw", "smux": {"enabled": True, "protocol": "h2mux"},
+        })
+        self.assertEqual(anytls_ob["type"], "anytls")
+        self.assertEqual(anytls_ob["multiplex"], {"enabled": True, "protocol": "h2mux"})
+
+        hu_ob = parse_clash_proxy({
+            "name": "VLESS-HU", "type": "vless", "server": "4.5.6.7", "port": 443,
+            "uuid": "u-2", "tls": True, "network": "httpupgrade",
+            "httpupgrade-opts": {"path": "/hu", "host": "hu.example.com"},
+        })
+        self.assertEqual(hu_ob["transport"], {"type": "httpupgrade", "path": "/hu", "host": "hu.example.com"})
+
+        # xhttp/splithttp 等不支持传输层必须返回空字典丢弃，严禁静默生成裸 TCP
+        bad_ob = parse_clash_proxy({
+            "name": "VLESS-XHTTP", "type": "vless", "server": "4.5.6.7", "port": 443,
+            "uuid": "u-2", "tls": True, "network": "xhttp",
+        })
+        self.assertEqual(bad_ob, {})
+
+        dae_out = to_dae_nodes([tuic_ob, anytls_ob, hu_ob])
+        self.assertIn("tuic://u-1:p-1@2.3.4.5:8443", dae_out)
+        self.assertIn("anytls://pw@3.4.5.6:443", dae_out)
+        self.assertIn("type=httpupgrade&path=/hu&host=hu.example.com", dae_out)
+
+
 if __name__ == "__main__":
     unittest.main()

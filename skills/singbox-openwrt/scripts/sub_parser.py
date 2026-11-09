@@ -38,7 +38,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from parse_node import parse_uri as parse_node
+from parse_node import parse_uri as parse_node, _normalize_port_ranges
 
 # 尝试导入 PyYAML 处理 Clash 订阅
 try:
@@ -137,6 +137,86 @@ def fetch_subscription(url: str, timeout: int = 15) -> str:
         raise RuntimeError(f"拉取订阅链接失败: {url} -> {e}")
 
 
+def _apply_clash_alpn(tls_obj: Dict[str, Any], p: Dict[str, Any]):
+    alpn = p.get("alpn")
+    if not alpn:
+        return
+    if isinstance(alpn, list):
+        cleaned = [str(x).strip() for x in alpn if str(x).strip()]
+    else:
+        cleaned = [x.strip() for x in str(alpn).split(",") if x.strip()]
+    if cleaned:
+        tls_obj["alpn"] = cleaned
+
+
+def _apply_clash_smux(ob: Dict[str, Any], p: Dict[str, Any]):
+    smux = p.get("smux")
+    if isinstance(smux, dict) and smux.get("enabled") is True:
+        proto = str(smux.get("protocol") or "smux").strip() or "smux"
+        ob["multiplex"] = {"enabled": True, "protocol": proto}
+
+
+def _apply_clash_transport(ob: Dict[str, Any], p: Dict[str, Any], allow_udp: bool = False) -> bool:
+    """映射 Clash network/transport 字段。若遇到不支持的传输层返回 False（拒绝静默退化为裸 TCP）。"""
+    network = str(p.get("network") or "tcp").strip().lower()
+    if network in ("", "tcp", "none"):
+        return True
+    if network == "udp" and allow_udp:
+        ob["network"] = "udp"
+        return True
+    if network == "ws":
+        ws_opts = p.get("ws-opts") if isinstance(p.get("ws-opts"), dict) else {}
+        ob["transport"] = {
+            "type": "ws",
+            "path": ws_opts.get("path", "/") or "/"
+        }
+        headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
+        if "Host" in headers and headers["Host"] is not None:
+            ob["transport"]["headers"] = {"Host": headers["Host"]}
+        return True
+    if network == "grpc":
+        grpc_opts = p.get("grpc-opts") if isinstance(p.get("grpc-opts"), dict) else {}
+        ob["transport"] = {
+            "type": "grpc",
+            "service_name": grpc_opts.get("grpc-service-name", "") or ""
+        }
+        return True
+    if network == "httpupgrade":
+        hu_opts = p.get("httpupgrade-opts") if isinstance(p.get("httpupgrade-opts"), dict) else (
+            p.get("ws-opts") if isinstance(p.get("ws-opts"), dict) else {}
+        )
+        ob["transport"] = {
+            "type": "httpupgrade",
+            "path": hu_opts.get("path", "/") or "/"
+        }
+        host = hu_opts.get("host")
+        if not host and isinstance(hu_opts.get("headers"), dict):
+            host = hu_opts["headers"].get("Host")
+        if host:
+            ob["transport"]["host"] = str(host)
+        return True
+    if network in ("http", "h2"):
+        h2_opts = p.get("h2-opts") if isinstance(p.get("h2-opts"), dict) else (
+            p.get("http-opts") if isinstance(p.get("http-opts"), dict) else {}
+        )
+        raw_path = h2_opts.get("path", "/")
+        if isinstance(raw_path, list):
+            path_val = str(raw_path[0]) if raw_path else "/"
+        else:
+            path_val = str(raw_path or "/")
+        ob["transport"] = {
+            "type": "http",
+            "path": path_val or "/"
+        }
+        raw_host = h2_opts.get("host")
+        if raw_host:
+            hosts = [str(x).strip() for x in (raw_host if isinstance(raw_host, list) else [raw_host]) if str(x).strip()]
+            if hosts:
+                ob["transport"]["host"] = hosts
+        return True
+    return False
+
+
 def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     """将单个 Clash 节点字典转为 sing-box outbound 结构"""
     if not isinstance(p, dict):
@@ -154,7 +234,7 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     if ptype == "ss":
         cipher = str(p.get("cipher") or "")
         password = str(p.get("password") or "")
-        return {
+        ob = {
             "type": "shadowsocks",
             "tag": name,
             "server": server,
@@ -162,12 +242,12 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
             "method": cipher,
             "password": password
         }
+        _apply_clash_smux(ob, p)
+        return ob
 
     elif ptype == "trojan":
         password = str(p.get("password") or "")
         sni = str(p.get("sni") or p.get("servername") or server)
-        alpn = p.get("alpn")
-        network = str(p.get("network") or "tcp").lower()
         ob = {
             "type": "trojan",
             "tag": name,
@@ -180,23 +260,10 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
         }
-        if alpn and isinstance(alpn, list):
-            ob["tls"]["alpn"] = alpn
-        if network == "ws":
-            ws_opts = p.get("ws-opts") if isinstance(p.get("ws-opts"), dict) else {}
-            ob["transport"] = {
-                "type": "ws",
-                "path": ws_opts.get("path", "/") or "/"
-            }
-            headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
-            if "Host" in headers and headers["Host"] is not None:
-                ob["transport"]["headers"] = {"Host": headers["Host"]}
-        elif network == "grpc":
-            grpc_opts = p.get("grpc-opts") if isinstance(p.get("grpc-opts"), dict) else {}
-            ob["transport"] = {
-                "type": "grpc",
-                "service_name": grpc_opts.get("grpc-service-name", "") or ""
-            }
+        _apply_clash_alpn(ob["tls"], p)
+        if not _apply_clash_transport(ob, p, allow_udp=False):
+            return {}
+        _apply_clash_smux(ob, p)
         return ob
 
     elif ptype in ("hysteria2", "hy2"):
@@ -214,6 +281,12 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
         }
+        _apply_clash_alpn(ob["tls"], p)
+        ports_spec = p.get("ports") or p.get("mport")
+        if ports_spec:
+            _, port_ranges = _normalize_port_ranges(str(ports_spec))
+            if port_ranges:
+                ob["server_ports"] = port_ranges
         if p.get("up") is not None:
             ob["up_mbps"] = int(re.sub(r"[^\d]", "", str(p["up"])) or 0)
         if p.get("down") is not None:
@@ -228,7 +301,6 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     elif ptype == "vless":
         uuid = str(p.get("uuid") or "")
         flow = str(p.get("flow") or "")
-        network = str(p.get("network") or "tcp").lower()
         tls_enabled = bool(p.get("tls", False))
 
         ob = {
@@ -241,29 +313,11 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         if flow:
             ob["flow"] = flow
 
-        # sing-box 的 vless.network 只接受 tcp/udp；ws/grpc 属于 transport
-        if network == "udp":
-            ob["network"] = "udp"
-        elif network == "ws":
-            ws_opts = p.get("ws-opts") if isinstance(p.get("ws-opts"), dict) else {}
-            ob["transport"] = {
-                "type": "ws",
-                "path": ws_opts.get("path", "/") or "/"
-            }
-            headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
-            if "Host" in headers and headers["Host"] is not None:
-                ob["transport"]["headers"] = {"Host": headers["Host"]}
-        elif network == "grpc":
-            grpc_opts = p.get("grpc-opts") if isinstance(p.get("grpc-opts"), dict) else {}
-            ob["transport"] = {
-                "type": "grpc",
-                "service_name": grpc_opts.get("grpc-service-name", "") or ""
-            }
+        if not _apply_clash_transport(ob, p, allow_udp=True):
+            return {}
 
         reality_opts = p.get("reality-opts") if isinstance(p.get("reality-opts"), dict) else {}
         if reality_opts:
-            # Reality 的 SNI 必须是伪装域名：reality-opts 里常只有 public-key/short-id，
-            # 域名多在节点顶层的 servername/sni；回退到 server（IP）会导致握手必失败
             sni = reality_opts.get("server-name") or p.get("servername") or p.get("sni") or server
             ob["tls"] = {
                 "enabled": True,
@@ -278,18 +332,20 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                     "fingerprint": str(p.get("client-fingerprint") or "chrome")
                 }
             }
+            _apply_clash_alpn(ob["tls"], p)
         elif tls_enabled:
             ob["tls"] = {
                 "enabled": True,
                 "server_name": str(p.get("servername") or p.get("sni") or server),
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
+            _apply_clash_alpn(ob["tls"], p)
 
+        _apply_clash_smux(ob, p)
         return ob
 
     elif ptype == "vmess":
         uuid = str(p.get("uuid") or "")
-        # Clash YAML 用 alterId，部分旧配置用 aid，容错 null 与非数字值
         raw_aid = p.get("alterId") if p.get("alterId") is not None else p.get("aid", 0)
         try:
             alter_id = int(raw_aid if raw_aid is not None else 0)
@@ -297,7 +353,6 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
             alter_id = 0
         cipher = str(p.get("cipher") or "auto")
         tls_enabled = bool(p.get("tls", False))
-        network = str(p.get("network") or "tcp").lower()
 
         ob = {
             "type": "vmess",
@@ -314,21 +369,57 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                 "server_name": str(p.get("servername") or p.get("sni") or server),
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
-        ws_opts = p.get("ws-opts") if isinstance(p.get("ws-opts"), dict) else {}
-        if network == "ws":
-            ob["transport"] = {
-                "type": "ws",
-                "path": ws_opts.get("path", "/") or "/"
+            _apply_clash_alpn(ob["tls"], p)
+        if not _apply_clash_transport(ob, p, allow_udp=False):
+            return {}
+        _apply_clash_smux(ob, p)
+        return ob
+
+    elif ptype == "tuic":
+        uuid = str(p.get("uuid") or "").strip()
+        password = str(p.get("password") or "").strip()
+        if not uuid:
+            return {}
+        sni = str(p.get("sni") or p.get("servername") or server)
+        cc = str(p.get("congestion-controller") or p.get("congestion_control") or "bbr")
+        urm = str(p.get("udp-relay-mode") or p.get("udp_relay_mode") or "native")
+        ob = {
+            "type": "tuic",
+            "tag": name,
+            "server": server,
+            "server_port": port,
+            "uuid": uuid,
+            "password": password,
+            "congestion_control": cc,
+            "udp_relay_mode": urm,
+            "tls": {
+                "enabled": True,
+                "server_name": sni,
+                "insecure": bool(p.get("skip-cert-verify", False))
             }
-            headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
-            if "Host" in headers and headers["Host"] is not None:
-                ob["transport"]["headers"] = {"Host": headers["Host"]}
-        elif network == "grpc":
-            grpc_opts = p.get("grpc-opts") if isinstance(p.get("grpc-opts"), dict) else {}
-            ob["transport"] = {
-                "type": "grpc",
-                "service_name": grpc_opts.get("grpc-service-name", "") or ""
+        }
+        _apply_clash_alpn(ob["tls"], p)
+        return ob
+
+    elif ptype == "anytls":
+        password = str(p.get("password") or "").strip()
+        if not password:
+            return {}
+        sni = str(p.get("sni") or p.get("servername") or server)
+        ob = {
+            "type": "anytls",
+            "tag": name,
+            "server": server,
+            "server_port": port,
+            "password": password,
+            "tls": {
+                "enabled": True,
+                "server_name": sni,
+                "insecure": bool(p.get("skip-cert-verify", False))
             }
+        }
+        _apply_clash_alpn(ob["tls"], p)
+        _apply_clash_smux(ob, p)
         return ob
 
     return {}
@@ -366,9 +457,9 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
 
     # 2. 尝试作为 Base64 解码
     # 机场典型格式：整个订阅是一大串未换行或每 76 字符换行的 base64
-    if not text.startswith(("vless://", "hysteria2://", "hy2://", "ss://", "trojan://", "vmess://")):
+    if not text.startswith(("vless://", "hysteria2://", "hy2://", "ss://", "trojan://", "vmess://", "tuic://", "anytls://")):
         decoded = safe_b64decode(text)
-        if decoded and any(proto in decoded for proto in ("vless://", "hy2://", "hysteria2://", "trojan://", "ss://", "vmess://")):
+        if decoded and any(proto in decoded for proto in ("vless://", "hy2://", "hysteria2://", "trojan://", "ss://", "vmess://", "tuic://", "anytls://")):
             text = decoded
 
     # 3. 按行解析单个节点 URI
@@ -477,6 +568,22 @@ def _dae_transport_query(n: Dict[str, Any]) -> str:
     elif ttype == "grpc":
         svc = _q(transport.get("service_name") or "")
         return f"&type=grpc&serviceName={svc}"
+    elif ttype == "httpupgrade":
+        path = _q(transport.get("path") or "/", safe="/")
+        q = f"&type=httpupgrade&path={path}"
+        host = transport.get("host")
+        if host:
+            q += f"&host={_q(host)}"
+        return q
+    elif ttype in ("http", "h2"):
+        path = _q(transport.get("path") or "/", safe="/")
+        q = f"&type=http&path={path}"
+        host = transport.get("host")
+        if isinstance(host, (list, tuple)):
+            host = host[0] if host else ""
+        if host:
+            q += f"&host={_q(host)}"
+        return q
     return ""
 
 
@@ -583,6 +690,21 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             }
             b64 = base64.b64encode(json.dumps(vm, ensure_ascii=False).encode()).decode()
             raw_uri = f"vmess://{b64}"
+        elif ntype == "tuic":
+            uuid = _q(n.get("uuid", ""))
+            pw = _q(n.get("password", ""))
+            tls = n.get("tls", {})
+            sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
+            cc = _q(n.get("congestion_control") or "bbr")
+            urm = _q(n.get("udp_relay_mode") or "native")
+            insecure = "&allow_insecure=1" if tls.get("insecure") else ""
+            raw_uri = f"tuic://{uuid}:{pw}@{host}:{port}?congestion_control={cc}&udp_relay_mode={urm}&sni={sni}{insecure}#{frag}"
+        elif ntype == "anytls":
+            pw = _q(n.get("password", ""))
+            tls = n.get("tls", {})
+            sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
+            insecure = "&insecure=1" if tls.get("insecure") else ""
+            raw_uri = f"anytls://{pw}@{host}:{port}?sni={sni}{insecure}#{frag}"
 
         if raw_uri:
             # 严格防止 URI 中的单引号破坏 .dae 的 '...' 语法定界符（转为合法 RFC 3986 %27）

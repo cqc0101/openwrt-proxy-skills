@@ -86,7 +86,7 @@ ssh root@192.168.1.1 "sh -s -- -j" < scripts/probe.sh
 
 ## ⚙️ 维度二：双引擎配置生成器 (Config Engine)
 
-本技能自带自动化版本探测与规则生成工具 `scripts/auto_config.py` 与通用订阅清洗器 `scripts/sub_parser.py`，实现**零人工干预的自适应版本匹配与全协议机场订阅接入**：
+本技能自带自动化版本探测与规则生成工具 `scripts/auto_config.py` 与通用订阅清洗器 `scripts/sub_parser.py`，实现**自适应版本匹配与多协议订阅解析**：
 
 ```bash
 # 方式 A：指定软路由 IP + 机场通用订阅链接 (自动探测版本、拉取清洗订阅、应用 CDN 镜像、输出生产配置)
@@ -106,7 +106,7 @@ python scripts/auto_config.py --version 1.14 --dns-mode fakeip --sub ./airport_c
    - 若探测为 **v1.14+**：自动选用 `openwrt-1.14-tun-fakeip.json`（默认）或 `--dns-mode realip` 的 `openwrt-1.14-tun-realip.json`，启用 `optimistic: true`、`store_dns: true` 及 `default_http_client`，彻底剔除已废弃的旧字段。
 3. **生成后自动静态审计（“一次成功”保障）**：`auto_config.py` 输出前会内置跑一遍 `check_config`——存在悬空引用、重复标签、非法字段等阻断错误时**绝不输出文件**，先修再发。
 4. **国内首启动冷启动死锁消除 (`--mirror jsdelivr`)**：自动将 GitHub 原始链接替换为国内直接秒拉的 jsDelivr CDN 镜像，根除“未翻墙无法下载规则，无规则无法翻墙”的死锁问题。
-5. **机场广告过滤与节点上限保护 (`--max-nodes 15`)**：自动剔除垃圾公告节点，去重并限制节点数，彻底杜绝上百个节点冲垮低配路由器 256MB/512MB 内存。
+5. **机场广告过滤与节点上限保护 (`--max-nodes 15`)**：自动剔除垃圾公告节点，去重并限制节点数，防止过多节点耗尽 256MB/512MB 内存。
 6. **强制注入 OpenWrt 物理网关防御**：不论哪个版本，一律强制注入 `/tmp/sing-box-cache.db` 闪存保护、`auto_detect_interface: true` 防环、`default_domain_resolver` 纯 IP 引导防死锁及 `0.0.0.0:9090` Clash API 局域网控制。
 
 ---
@@ -134,7 +134,7 @@ OpenWrt SPI 闪存擦写寿命极为脆弱，`experimental.cache_file.path` **�
   "default_domain_resolver": "alidns"
 }
 ```
-* `auto_detect_interface: true`：自动将节点出站连接绑定到物理 WAN 口，彻底杜绝 TUN 流量自环。
+* `auto_detect_interface: true`：自动将节点出站连接绑定到物理 WAN 口，防止 TUN 流量自环。
 * `default_domain_resolver`：指定国内直连纯 IP DNS（如阿里 DNS `223.5.5.5`），确保启动初期拉取远程 `.srs` 规则集与解析 VPS 域名时不会死锁。
 * **纯净 TUN 入站防自环**：TUN 入站严禁开启 `auto_redirect: true`（缺少 `kmod-nft-queue` 内核会导致 nfqueue 崩溃并退化为端口重定向自环死锁），统一使用纯净 L3 原生 TUN（`auto_redirect: false`）。
 
@@ -150,7 +150,7 @@ sh /etc/sing-box/setup_openwrt_network.sh --bypass
 1. **精准定位 LAN Zone**：动态查询 `uci get firewall.@zone[i].name`，严禁硬编码 `@zone[0]`，将 `tun0` 安全注入 lan zone 并开启 `forward=ACCEPT`。
 2. **MSS 钳制 (MTU Clamping)**：开启 `mtu_fix='1'`，杜绝因 PPPoE MTU 1492 引起的大包握手卡死。
 3. **DNS 转发路径清理**：清理遗留的本机 53 端口 DNAT 重定向规则，确保三层 `tun0` 的 `hijack-dns` 不被本机重定向短路。
-4. **Dnsmasq 接管与 AAAA 纯净过滤**：开启 `filter_aaaa='1'`，纯净返回 IPv4，根除手机 App 转圈假死。
+4. **Dnsmasq 接管与 AAAA 纯净过滤**：开启 `filter_aaaa='1'`，纯净返回 IPv4，避免无 IPv6 环境下客户端等待 AAAA 超时。
 5. **系统内核网络调优**：写入 `/etc/sysctl.d/99-singbox.conf`，激活 BBR 拥塞控制与 65536 连接池。
 
 ### 4. 路由首部双保险 DNS 劫持
@@ -173,7 +173,7 @@ sh /etc/sing-box/setup_openwrt_network.sh --bypass
 * **v1.14 严禁使用**：`independent_cache`、`store_rdrc`（自 1.14 起已废弃，直接换用新字段）。
 
 ### 6. IPv4 纯净防假死原则
-除非用户明确确认其宽带 IPv6 链路优质且要求启用，否则默认执行 IPv4-only 策略以防止国内手机 App 打开首页转圈死锁：
+除非用户明确确认其宽带 IPv6 链路优质且要求启用，否则默认执行 IPv4-only 策略以避免无 IPv6 路由时客户端等待 AAAA 超时：
 * DNS 模块：`"strategy": "ipv4_only"`
 * TUN 入站：仅分配 IPv4 子网（`"address": "172.19.0.1/30"`），不给 TUN 配 IPv6 地址。
 
@@ -181,7 +181,7 @@ sh /etc/sing-box/setup_openwrt_network.sh --bypass
 为了杜绝开启 FakeIP 后导致局域网主机名（如 `router.lan`、`nas.lan`）解析失败，模板必须内置定向规则将 `.lan`、`.local` 及内网 `PTR` 反向解析无条件送给 `local-dns` 直连解析，严禁为其分配 FakeIP。
 
 ### 8. Canary 域名阻断防 DoH 绕过
-针对 Firefox DoH (`use-application-dns.net`) 与 Apple Private Relay (`mask.icloud.com`)，在 DNS 与 Route 规则中显式设为 `reject`，强制内网浏览器和客户端遵循网关分流规则，绝不泄漏。
+针对 Firefox DoH (`use-application-dns.net`) 与 Apple Private Relay (`mask.icloud.com`)，在 DNS 与 Route 规则中显式设为 `reject`，促使浏览器与客户端回退使用网关 DNS 分流。
 
 ---
 
@@ -190,17 +190,18 @@ sh /etc/sing-box/setup_openwrt_network.sh --bypass
 Agent 无需依赖笨重多余的宿主机部署脚本，直接通过标准终端工具自主完成部署与验证：
 
 ```bash
-# 1. 将生成的配置上传至软路由 /tmp 临时沙盒
-ssh root@192.168.1.1 "cat > /tmp/config.json.test" < /tmp/config.json
+# 1. 将生成的配置上传至软路由 /tmp 临时沙盒并执行语法校验
+ssh root@192.168.1.1 "cat > /tmp/config.json.test && sing-box check -c /tmp/config.json.test" < /tmp/config.json
 
-# 2. 远端沙盒严格语法与依赖校验
-ssh root@192.168.1.1 "sing-box check -c /tmp/config.json.test"
+# 2. 启动路由器本地 45 秒防失联看门狗 (若重启后 SSH 断联，45 秒后自动还原配置与网络)
+ssh root@192.168.1.1 "sh -s -- --watchdog" < scripts/setup_openwrt_network.sh
 
-# 3. 校验通过后备份快照、原子替换生产配置、修正 UCI root 权限与内存工作目录并平滑重启
+# 3. 备份快照、原子替换生产配置、设置 UCI 权限并重启服务
 ssh root@192.168.1.1 "[ -f /etc/sing-box/config.json ] && cp /etc/sing-box/config.json /tmp/config.json.bak; mv /tmp/config.json.test /etc/sing-box/config.json && uci set sing-box.main.enabled='1' 2>/dev/null && uci set sing-box.main.user='root' 2>/dev/null && uci set sing-box.main.workdir='/tmp/sing-box' 2>/dev/null && uci commit sing-box 2>/dev/null; /etc/init.d/sing-box restart"
 
-# 4. 执行网络闭环接管脚本
+# 4. 执行网络闭环接管 (含二级路由私网 DNS 防旁路) 并在全新 SSH 连接中解除看门狗
 ssh root@192.168.1.1 "sh -s" < scripts/setup_openwrt_network.sh
+ssh root@192.168.1.1 "sh -s -- --confirm" < scripts/setup_openwrt_network.sh
 ```
 
 ---

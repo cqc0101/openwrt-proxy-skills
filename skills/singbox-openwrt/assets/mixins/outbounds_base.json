@@ -2,21 +2,41 @@
   {
     "type": "selector",
     "tag": "proxy",
-    "outbounds": ["auto", "direct"],
+    "outbounds": [
+      "auto",
+      "direct",
+      "US-Node"
+    ],
     "default": "auto"
   },
   {
     "type": "selector",
     "tag": "ai",
-    "outbounds": ["proxy"]
+    "outbounds": [
+      "proxy",
+      "US-Node"
+    ]
   },
   {
     "type": "urltest",
     "tag": "auto",
-    "outbounds": [],
+    "outbounds": [
+      "US-Node"
+    ],
     "url": "http://cp.cloudflare.com/generate_204",
     "interval": "3m",
     "tolerance": 50
+  },
+  {
+    "type": "hysteria2",
+    "tag": "US-Node",
+    "server": "example.com",
+    "server_port": 34589,
+    "password": "PASSWORD",
+    "tls": {
+      "enabled": true,
+      "server_name": "example.com"
+    }
   },
   {
     "type": "direct",

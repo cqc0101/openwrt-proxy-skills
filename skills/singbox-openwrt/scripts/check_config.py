@@ -278,7 +278,7 @@ def check_config_obj(cfg):
     # 7. 节点服务器域名解析防死锁闭环审计 (Bootstrap DNS Check)
     node_domains = set()
     for ob in outbounds:
-        if ob.get("type") in ("vless", "hysteria2", "trojan", "shadowsocks", "vmess"):
+        if ob.get("type") in ("vless", "hysteria2", "trojan", "shadowsocks", "vmess", "tuic", "anytls"):
             srv = str(ob.get("server") or "").strip()
             if srv and not _is_ip_literal(srv):
                 node_domains.add(srv)

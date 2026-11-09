@@ -119,7 +119,7 @@ def _normalize_port_ranges(raw_spec: str):
 
 
 def _build_ws_transport(params, default_host=""):
-    """由 URI 参数构建 ws transport 块；不存在 ws 参数时返回 None。"""
+    """由 URI 参数构建 ws transport 块。"""
     path = params.get("path", [""])[0]
     host = params.get("host", [default_host])[0]
     transport = {
@@ -132,12 +132,67 @@ def _build_ws_transport(params, default_host=""):
 
 
 def _build_grpc_transport(params):
-    """由 URI 参数构建 grpc transport 块；不存在 grpc 参数时返回 None。"""
+    """由 URI 参数构建 grpc transport 块。"""
     service = params.get("serviceName", params.get("servicename", [""]))[0]
     return {
         "type": "grpc",
         "service_name": service or ""
     }
+
+
+def _build_httpupgrade_transport(params, default_host=""):
+    """由 URI 参数构建 httpupgrade transport 块。"""
+    path = params.get("path", [""])[0]
+    host = params.get("host", [default_host])[0]
+    transport = {
+        "type": "httpupgrade",
+        "path": path or "/"
+    }
+    if host:
+        transport["host"] = host
+    return transport
+
+
+def _build_http_transport(params, default_host=""):
+    """由 URI 参数构建 http (H2/HTTP) transport 块。"""
+    path = params.get("path", [""])[0]
+    host = params.get("host", [default_host])[0]
+    transport = {
+        "type": "http",
+        "path": path or "/"
+    }
+    if host:
+        hosts = [h.strip() for h in host.split(",") if h.strip()]
+        if hosts:
+            transport["host"] = hosts
+    return transport
+
+
+def _apply_uri_transport(outbound, net_type: str, params, allow_udp_network: bool = False):
+    """统一映射 URI 传输层，对 xhttp/splithttp/kcp/quic 等不支持传输层显式抛出 ValueError，严禁静默退化为裸 TCP。"""
+    nt = (net_type or "tcp").strip().lower()
+    if nt in ("", "tcp", "none"):
+        return
+    if nt == "udp" and allow_udp_network:
+        outbound["network"] = "udp"
+    elif nt == "ws":
+        outbound["transport"] = _build_ws_transport(params)
+    elif nt == "grpc":
+        outbound["transport"] = _build_grpc_transport(params)
+    elif nt == "httpupgrade":
+        outbound["transport"] = _build_httpupgrade_transport(params)
+    elif nt in ("http", "h2"):
+        outbound["transport"] = _build_http_transport(params)
+    else:
+        raise ValueError(f"不支持的传输层类型 (拒绝静默降级为裸 TCP): {nt!r}")
+
+
+def _extract_alpn_list(params):
+    """从 URI 查询参数提取 alpn 列表。"""
+    raw = params.get("alpn", [""])[0]
+    if not raw:
+        return []
+    return [x.strip() for x in urllib.parse.unquote(raw).split(",") if x.strip()]
 
 
 def parse_vless(uri_str):
@@ -163,14 +218,7 @@ def parse_vless(uri_str):
         "uuid": uuid
     }
 
-    # `network` 只接受 tcp/udp；ws/grpc/h2/http 属于 transport
-    if net_type in ("tcp", "udp"):
-        if net_type == "udp":
-            outbound["network"] = "udp"
-    elif net_type == "ws":
-        outbound["transport"] = _build_ws_transport(params)
-    elif net_type == "grpc":
-        outbound["transport"] = _build_grpc_transport(params)
+    _apply_uri_transport(outbound, net_type, params, allow_udp_network=True)
 
     if flow:
         outbound["flow"] = flow
@@ -207,6 +255,10 @@ def parse_vless(uri_str):
                 "fingerprint": fp
             }
         }
+
+    alpn_list = _extract_alpn_list(params)
+    if alpn_list and "tls" in outbound:
+        outbound["tls"]["alpn"] = alpn_list
 
     return outbound
 
@@ -251,6 +303,9 @@ def parse_hysteria2(uri_str):
             "insecure": insecure
         }
     }
+    alpn_list = _extract_alpn_list(params)
+    if alpn_list:
+        outbound["tls"]["alpn"] = alpn_list
     if port_ranges:
         outbound["server_ports"] = port_ranges
 
@@ -291,10 +346,11 @@ def parse_trojan(uri_str):
         }
     }
 
-    if net_type == "ws":
-        outbound["transport"] = _build_ws_transport(params)
-    elif net_type == "grpc":
-        outbound["transport"] = _build_grpc_transport(params)
+    alpn_list = _extract_alpn_list(params)
+    if alpn_list:
+        outbound["tls"]["alpn"] = alpn_list
+
+    _apply_uri_transport(outbound, net_type, params, allow_udp_network=False)
 
     return outbound
 
@@ -425,7 +481,18 @@ def parse_vmess(uri_str):
         if str(data.get("allowInsecure", "")).lower() in ("1", "true") or data.get("verify_cert") is False:
             outbound["tls"]["insecure"] = True
 
-    if net_type == "ws":
+    raw_alpn = data.get("alpn")
+    if raw_alpn and "tls" in outbound:
+        if isinstance(raw_alpn, list):
+            alpn_list = [str(x).strip() for x in raw_alpn if str(x).strip()]
+        else:
+            alpn_list = [x.strip() for x in str(raw_alpn).split(",") if x.strip()]
+        if alpn_list:
+            outbound["tls"]["alpn"] = alpn_list
+
+    if net_type in ("", "tcp", "none"):
+        pass
+    elif net_type == "ws":
         outbound["transport"] = {
             "type": "ws",
             "path": path if path else "/"
@@ -437,7 +504,100 @@ def parse_vmess(uri_str):
             "type": "grpc",
             "service_name": path
         }
+    elif net_type == "httpupgrade":
+        outbound["transport"] = {
+            "type": "httpupgrade",
+            "path": path if path else "/"
+        }
+        if host:
+            outbound["transport"]["host"] = host
+    elif net_type in ("http", "h2"):
+        outbound["transport"] = {
+            "type": "http",
+            "path": path if path else "/"
+        }
+        if host:
+            hosts = [h.strip() for h in host.split(",") if h.strip()]
+            if hosts:
+                outbound["transport"]["host"] = hosts
+    else:
+        raise ValueError(f"VMess 不支持的传输层类型 (拒绝静默降级为裸 TCP): {net_type!r}")
 
+    return outbound
+
+
+def parse_tuic(uri_str):
+    """解析 TUIC v5 节点 URI: tuic://uuid:password@host:port?congestion_control=bbr&alpn=h3&sni=...#Tag"""
+    parsed = urllib.parse.urlparse(uri_str)
+    params = urllib.parse.parse_qs(parsed.query)
+    uuid = urllib.parse.unquote(parsed.username or "").strip()
+    password = urllib.parse.unquote(parsed.password or "").strip()
+    if not password and "password" in params:
+        password = params.get("password", [""])[0]
+    if ":" in uuid and not password:
+        uuid, password = uuid.split(":", 1)
+    server = parsed.hostname
+    if not server or not uuid:
+        raise ValueError(f"无法解析 TUIC 节点地址 (缺少有效主机或 UUID): {uri_str[:40]}...")
+    port = _safe_port(parsed, 443)
+    raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
+    tag = raw_frag or f"tuic-{server}"
+
+    sni = params.get("sni", [server])[0]
+    cc = params.get("congestion_control", ["bbr"])[0] or "bbr"
+    urm = params.get("udp_relay_mode", ["native"])[0] or "native"
+    insecure = params.get("allow_insecure", params.get("allowInsecure", params.get("insecure", ["0"])))[0] in ("1", "true", "True")
+
+    outbound = {
+        "type": "tuic",
+        "tag": tag,
+        "server": server,
+        "server_port": port,
+        "uuid": uuid,
+        "password": password,
+        "congestion_control": cc,
+        "udp_relay_mode": urm,
+        "tls": {
+            "enabled": True,
+            "server_name": sni,
+            "insecure": insecure
+        }
+    }
+    alpn_list = _extract_alpn_list(params)
+    if alpn_list:
+        outbound["tls"]["alpn"] = alpn_list
+    return outbound
+
+
+def parse_anytls(uri_str):
+    """解析 AnyTLS 节点 URI: anytls://password@host:port?sni=...&insecure=0#Tag"""
+    parsed = urllib.parse.urlparse(uri_str)
+    password = _extract_userinfo_password(parsed)
+    server = parsed.hostname
+    if not server or not password:
+        raise ValueError(f"无法解析 AnyTLS 节点地址 (缺少有效主机或密码): {uri_str[:40]}...")
+    port = _safe_port(parsed, 443)
+    params = urllib.parse.parse_qs(parsed.query)
+    raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
+    tag = raw_frag or f"anytls-{server}"
+    sni = params.get("sni", [server])[0]
+    insecure = params.get("insecure", params.get("allowInsecure", ["0"]))[0] in ("1", "true", "True")
+
+    outbound = {
+        "type": "anytls",
+        "tag": tag,
+        "server": server,
+        "server_port": port,
+        "password": password,
+        "tls": {
+            "enabled": True,
+            "server_name": sni,
+            "insecure": insecure
+        }
+    }
+    alpn_list = _extract_alpn_list(params)
+    if alpn_list:
+        outbound["tls"]["alpn"] = alpn_list
     return outbound
 
 
@@ -453,6 +613,10 @@ def parse_uri(uri_str):
         return parse_shadowsocks(uri_str)
     elif uri_str.startswith("vmess://"):
         return parse_vmess(uri_str)
+    elif uri_str.startswith("tuic://"):
+        return parse_tuic(uri_str)
+    elif uri_str.startswith("anytls://"):
+        return parse_anytls(uri_str)
     else:
         raise ValueError(f"暂不支持或未识别的协议 URI: {uri_str[:15]}...")
 

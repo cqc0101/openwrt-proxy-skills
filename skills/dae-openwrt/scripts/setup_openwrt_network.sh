@@ -41,8 +41,29 @@ run_dae_hardening() {
         ZONE_IDX=$((ZONE_IDX + 1))
     done
 
+    if [ "$ACTION_FLAG" = "--confirm" ]; then
+        touch /tmp/proxy_deploy_confirmed
+        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗已解除。${NC}"
+        return 0
+    fi
+
+    if [ "$ACTION_FLAG" = "--watchdog" ]; then
+        rm -f /tmp/proxy_deploy_confirmed
+        say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (若 45 秒内未收到 --confirm 将自动回滚配置与网络)...${NC}"
+        (
+            sleep 45
+            if [ ! -f /tmp/proxy_deploy_confirmed ]; then
+                [ -f /tmp/config.dae.bak ] && cp /tmp/config.dae.bak /etc/dae/config.dae 2>/dev/null || true
+                ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
+                sh "$0" --revert 2>/dev/null || true
+            fi
+        ) >/dev/null 2>&1 &
+        return 0
+    fi
+
     if [ "$ACTION_FLAG" = "--revert" ]; then
         say "${YELLOW}[REVERT] 正在撤销 dae 网络加固并还原基线...${NC}"
+        touch /tmp/proxy_deploy_confirmed 2>/dev/null || true
         if [ -f /etc/dae/.flow_offload.bak ]; then
             . /etc/dae/.flow_offload.bak
             [ -n "${ORIG_SW_OFFLOAD:-}" ] && uci set "firewall.@defaults[0].flow_offloading=${ORIG_SW_OFFLOAD}" 2>/dev/null || uci delete firewall.@defaults[0].flow_offloading 2>/dev/null || true
@@ -131,7 +152,7 @@ SYSCTL_EOF
 }
 
 FIRST_ARG="${1:-}"
-if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--bypass" ] || [ "$FIRST_ARG" = "--revert" ]; then
+if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--bypass" ] || [ "$FIRST_ARG" = "--revert" ] || [ "$FIRST_ARG" = "--watchdog" ] || [ "$FIRST_ARG" = "--confirm" ]; then
     run_dae_hardening "$FIRST_ARG"
 else
     ROUTER_IP="$FIRST_ARG"
@@ -146,7 +167,7 @@ else
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --bypass|--revert)
+            --bypass|--watchdog|--confirm|--revert)
                 EXTRA_FLAG="$1"
                 ;;
             -u|--user)

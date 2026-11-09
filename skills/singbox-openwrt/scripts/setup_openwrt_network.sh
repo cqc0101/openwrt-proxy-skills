@@ -58,8 +58,29 @@ run_router_hardening() {
         return 1
     fi
 
+    if [ "$ACTION_FLAG" = "--confirm" ]; then
+        touch /tmp/proxy_deploy_confirmed
+        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗已解除。${NC}"
+        return 0
+    fi
+
+    if [ "$ACTION_FLAG" = "--watchdog" ]; then
+        rm -f /tmp/proxy_deploy_confirmed
+        say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (若 45 秒内未收到 --confirm 将自动回滚配置与网络)...${NC}"
+        (
+            sleep 45
+            if [ ! -f /tmp/proxy_deploy_confirmed ]; then
+                [ -f /tmp/config.json.bak ] && cp /tmp/config.json.bak /etc/sing-box/config.json 2>/dev/null || true
+                /etc/init.d/sing-box restart 2>/dev/null || true
+                sh "$0" --revert 2>/dev/null || true
+            fi
+        ) >/dev/null 2>&1 &
+        return 0
+    fi
+
     if [ "$ACTION_FLAG" = "--revert" ]; then
         say "${YELLOW}[REVERT] 正在撤销最后一公里网络接管配置并恢复基线...${NC}"
+        touch /tmp/proxy_deploy_confirmed 2>/dev/null || true
         uci del_list firewall.@zone[${LAN_INDEX}].device='tun0' 2>/dev/null || true
         uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
         uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
@@ -67,6 +88,16 @@ run_router_hardening() {
         clean_dns_redirects
         rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-proxy-tuning.conf
         uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+        if [ -f /etc/sing-box/.dnsmasq_upstream.bak ]; then
+            . /etc/sing-box/.dnsmasq_upstream.bak
+            if [ -n "${ORIG_NORESOLV:-}" ]; then
+                uci set "dhcp.@dnsmasq[0].noresolv=${ORIG_NORESOLV}" 2>/dev/null || true
+            else
+                uci delete dhcp.@dnsmasq[0].noresolv 2>/dev/null || true
+            fi
+            uci delete dhcp.@dnsmasq[0].server 2>/dev/null || true
+            rm -f /etc/sing-box/.dnsmasq_upstream.bak
+        fi
         uci commit dhcp 2>/dev/null || true
         uci commit firewall
         /etc/init.d/dnsmasq reload 2>/dev/null || true
@@ -126,9 +157,27 @@ SYSCTL_EOF
     uci commit firewall
     /etc/init.d/firewall reload 2>/dev/null || true
 
-    say "${BLUE}[5/5] 配置 Dnsmasq AAAA 过滤 (filter_aaaa=1，纯净 IPv4 模式)...${NC}"
+    say "${BLUE}[5/5] 配置 Dnsmasq AAAA 过滤与二级路由私网上游防旁路治理...${NC}"
     if uci get dhcp.@dnsmasq[0] >/dev/null 2>&1; then
         uci set dhcp.@dnsmasq[0].filter_aaaa='1' 2>/dev/null || true
+        # 二级路由 DHCP 拓扑治理：当 WAN 上游 DNS 为光猫私网 IP 且 Dnsmasq 未显式指定 server 时，
+        # Dnsmasq 发往光猫的请求会走物理 WAN 直连链路绕过 tun0。将其切换为公网 223.5.5.5 使其进入 tun0 hijack-dns。
+        _RESOLV_FILE="/tmp/resolv.conf.d/resolv.conf.auto"
+        [ ! -f "$_RESOLV_FILE" ] && _RESOLV_FILE="/tmp/resolv.conf.auto"
+        _DM_SRV=$(uci get dhcp.@dnsmasq[0].server 2>/dev/null || true)
+        if [ -z "$_DM_SRV" ] && [ -f "$_RESOLV_FILE" ]; then
+            if grep -qE "^nameserver[[:space:]]+(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.)" "$_RESOLV_FILE" 2>/dev/null; then
+                say "${YELLOW}[二级路由防旁路] 检测到 WAN 上游 DNS 为私网地址，配置 Dnsmasq 上游为 223.5.5.5 确保进入 tun0 hijack-dns...${NC}"
+                mkdir -p /etc/sing-box
+                if [ ! -f /etc/sing-box/.dnsmasq_upstream.bak ]; then
+                    _orig_nr=$(uci get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo "")
+                    printf "ORIG_NORESOLV='%s'\n" "$_orig_nr" > /etc/sing-box/.dnsmasq_upstream.bak
+                fi
+                uci set dhcp.@dnsmasq[0].noresolv='1' 2>/dev/null || true
+                uci delete dhcp.@dnsmasq[0].server 2>/dev/null || true
+                uci add_list dhcp.@dnsmasq[0].server='223.5.5.5' 2>/dev/null || true
+            fi
+        fi
         uci commit dhcp 2>/dev/null || true
         /etc/init.d/dnsmasq reload 2>/dev/null || true
     fi
@@ -138,7 +187,7 @@ SYSCTL_EOF
 
 # 模式判断：本地执行还是远程 SSH 调度
 FIRST_ARG="${1:-}"
-if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--bypass" ] || [ "$FIRST_ARG" = "--revert" ]; then
+if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--bypass" ] || [ "$FIRST_ARG" = "--revert" ] || [ "$FIRST_ARG" = "--watchdog" ] || [ "$FIRST_ARG" = "--confirm" ]; then
     # 本地直接在 OpenWrt 路由器上运行
     run_router_hardening "$FIRST_ARG"
 else
@@ -155,7 +204,7 @@ else
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --bypass|--revert)
+            --bypass|--watchdog|--confirm|--revert)
                 EXTRA_FLAG="$1"
                 ;;
             -u|--user)

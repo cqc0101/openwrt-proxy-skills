@@ -80,5 +80,24 @@ class TestModularMixins(unittest.TestCase):
         self.assertNotIn("x1pro.lan", raw, "dns.rules 严禁残留个人设备特定域名")
 
 
+
+    def test_compose_from_mixins_matches_all_templates(self):
+        """确保 auto_config.compose_from_mixins() 动态合成结果与 assets/templates/ 下的 4 个基准模板 100% 一致，彻底消除双数据源漂移。"""
+        import sys
+        scripts_dir = os.path.join(REPO, "skills", "singbox-openwrt", "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from auto_config import compose_from_mixins
+        templates_dir = os.path.join(REPO, "skills", "singbox-openwrt", "assets", "templates")
+        for ver in ("1.13", "1.14"):
+            for mode in ("fakeip", "realip"):
+                with self.subTest(version=ver, mode=mode):
+                    composed = compose_from_mixins(version=ver, dns_mode=mode)
+                    tpl_path = os.path.join(templates_dir, f"openwrt-{ver}-tun-{mode}.json")
+                    with open(tpl_path, "r", encoding="utf-8") as tf:
+                        tpl_data = json.load(tf)
+                    self.assertEqual(composed, tpl_data)
+
+
 if __name__ == "__main__":
     unittest.main()

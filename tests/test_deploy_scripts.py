@@ -83,6 +83,24 @@ class TestNetworkSetupScripts(unittest.TestCase):
             self.assertNotIn("|context deadline exceeded\"", text, "严禁将裸 context deadline 作为独立分支误判规则集阻断")
 
 
+
+    def test_secondary_router_private_wan_dns_governance(self):
+        """二级路由防旁路：检测 resolv.conf.auto 私网 nameserver 并自动切换 Dnsmasq 上游至 223.5.5.5，且 --revert 可还原。"""
+        text = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
+        self.assertIn("resolv.conf.auto", text)
+        self.assertIn("dhcp.@dnsmasq[0].noresolv='1'", text)
+        self.assertIn("dhcp.@dnsmasq[0].server='223.5.5.5'", text)
+        self.assertIn(".dnsmasq_upstream.bak", text)
+
+    def test_local_watchdog_and_confirm_flags(self):
+        """路由器本地防失联看门狗：支持 --watchdog 与 --confirm 闭环。"""
+        for base in (SINGBOX, DAE):
+            text = _read(os.path.join(base, "setup_openwrt_network.sh"))
+            self.assertIn("--watchdog", text)
+            self.assertIn("--confirm", text)
+            self.assertIn("/tmp/proxy_deploy_confirmed", text)
+
+
 class TestSharedScriptsConsistency(unittest.TestCase):
     """每个技能需自包含，因此共享脚本存两份；此测试防止两份内容漂移。
 
