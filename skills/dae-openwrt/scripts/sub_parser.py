@@ -617,42 +617,47 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
         frag = _q(tag)
         host = _uri_host(server)   # authority 部分：IPv6 必须 [v6]
         trans_part = _dae_transport_query(n)
+        tls_obj = n.get("tls") if isinstance(n.get("tls"), dict) else {}
+        alpn_vals = tls_obj.get("alpn") if isinstance(tls_obj.get("alpn"), list) else []
+        alpn_part = f"&alpn={_q(','.join(str(a) for a in alpn_vals if a), safe=',')}" if alpn_vals else ""
 
         raw_uri = ""
         if ntype == "hysteria2":
             pw = _q(n.get("password", ""), safe=":")
-            tls = n.get("tls", {})
+            tls = tls_obj
             sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             insecure = "&insecure=1" if tls.get("insecure") else ""
             obfs = n.get("obfs", {})
             obfs_part = ""
             if obfs and obfs.get("type"):
                 obfs_part = f"&obfs={_q(obfs.get('type'))}&obfs-password={_q(obfs.get('password', ''))}"
-            raw_uri = f"hysteria2://{pw}@{host}:{port}?sni={sni}{insecure}{obfs_part}#{frag}"
+            srv_ports = n.get("server_ports") if isinstance(n.get("server_ports"), list) else []
+            mport_part = f"&mport={_q(','.join(str(r).replace(':', '-') for r in srv_ports if r), safe=',-')}" if srv_ports else ""
+            raw_uri = f"hysteria2://{pw}@{host}:{port}?sni={sni}{insecure}{alpn_part}{mport_part}{obfs_part}#{frag}"
         elif ntype == "vless":
             uuid = _q(n.get("uuid", ""))
             flow = _q(n.get("flow", ""))
-            tls = n.get("tls", {})
+            tls = tls_obj
             flow_part = f"&flow={flow}" if flow else ""
             if tls.get("reality", {}).get("enabled"):
                 pbk = _q(tls["reality"].get("public_key", ""))
                 sid = _q(tls["reality"].get("short_id", ""))
                 sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
                 fp = _q(tls.get("utls", {}).get("fingerprint", "chrome"))
-                raw_uri = f"vless://{uuid}@{host}:{port}?security=reality&sni={sni}&pbk={pbk}&sid={sid}&fp={fp}{flow_part}{trans_part}#{frag}"
+                raw_uri = f"vless://{uuid}@{host}:{port}?security=reality&sni={sni}&pbk={pbk}&sid={sid}&fp={fp}{alpn_part}{flow_part}{trans_part}#{frag}"
             elif tls.get("enabled"):
                 sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
                 fp = _q(tls.get("utls", {}).get("fingerprint", "chrome"))
                 insecure = "&allowInsecure=1" if tls.get("insecure") else ""
-                raw_uri = f"vless://{uuid}@{host}:{port}?security=tls&sni={sni}&fp={fp}{insecure}{flow_part}{trans_part}#{frag}"
+                raw_uri = f"vless://{uuid}@{host}:{port}?security=tls&sni={sni}&fp={fp}{insecure}{alpn_part}{flow_part}{trans_part}#{frag}"
             else:
                 raw_uri = f"vless://{uuid}@{host}:{port}?security=none{flow_part}{trans_part}#{frag}"
         elif ntype == "trojan":
             pw = _q(n.get("password", ""))
-            tls = n.get("tls", {})
+            tls = tls_obj
             sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             insecure = "&allowInsecure=1" if tls.get("insecure") else ""
-            raw_uri = f"trojan://{pw}@{host}:{port}?sni={sni}{insecure}{trans_part}#{frag}"
+            raw_uri = f"trojan://{pw}@{host}:{port}?sni={sni}{insecure}{alpn_part}{trans_part}#{frag}"
         elif ntype == "shadowsocks":
             method = n.get("method", "")
             pw = n.get("password", "")
@@ -698,13 +703,13 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             cc = _q(n.get("congestion_control") or "bbr")
             urm = _q(n.get("udp_relay_mode") or "native")
             insecure = "&allow_insecure=1" if tls.get("insecure") else ""
-            raw_uri = f"tuic://{uuid}:{pw}@{host}:{port}?congestion_control={cc}&udp_relay_mode={urm}&sni={sni}{insecure}#{frag}"
+            raw_uri = f"tuic://{uuid}:{pw}@{host}:{port}?congestion_control={cc}&udp_relay_mode={urm}&sni={sni}{insecure}{alpn_part}#{frag}"
         elif ntype == "anytls":
             pw = _q(n.get("password", ""))
-            tls = n.get("tls", {})
+            tls = tls_obj
             sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             insecure = "&insecure=1" if tls.get("insecure") else ""
-            raw_uri = f"anytls://{pw}@{host}:{port}?sni={sni}{insecure}#{frag}"
+            raw_uri = f"anytls://{pw}@{host}:{port}?sni={sni}{insecure}{alpn_part}#{frag}"
 
         if raw_uri:
             # 严格防止 URI 中的单引号破坏 .dae 的 '...' 语法定界符（转为合法 RFC 3986 %27）

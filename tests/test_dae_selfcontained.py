@@ -86,5 +86,18 @@ class TestDaeSelfContained(unittest.TestCase):
             self.assertIn("tuic://u-1:p-1@9.9.9.9:8443", dae_text)
 
 
+
+    def test_sub_to_dae_ram_adaptive_map_size(self):
+        import sys
+        if DAE_SCRIPTS not in sys.path:
+            sys.path.insert(0, DAE_SCRIPTS)
+        from sub_to_dae import build_full_dae_config
+        nodes = [{"type": "trojan", "tag": "T1", "server": "1.2.3.4", "server_port": 443, "password": "pw", "tls": {"enabled": True, "server_name": "example.com"}}]
+        cfg_128 = build_full_dae_config(nodes, ram_mb=128)
+        self.assertIn("bpf_conn_state_map_size: 32768", cfg_128)
+        cfg_256 = build_full_dae_config(nodes, ram_mb=256)
+        self.assertIn("bpf_conn_state_map_size: 65536", cfg_256)
+
+
 if __name__ == "__main__":
     unittest.main()

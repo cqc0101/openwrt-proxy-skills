@@ -2,17 +2,17 @@
 # ==============================================================================
 # OpenWrt dae eBPF 最后一公里网络与内核加固工具 (dae Network Hook)
 # 彻底闭环：
-# 1. 内核转发限制：激活 net.ipv4.ip_forward=1 并持久化
+# 1. 内核转发限制：激活 net.ipv4.ip_forward=1 并按物理内存自适应扩充 nf_conntrack_max
 # 2. 流量分载关闭：关闭 flow_offloading，防止报文绕过 eBPF 挂载点
-# 3. MSS 钳制 (MSS Clamping)：激活 mtu_fix=1
+# 3. MSS 钳制 (MSS Clamping)：激活 mtu_fix=1（与防火墙变更合并单次提交，消除 3 次重复 reload）
 # 4. 旁路由支持：支持 --bypass 开启 LAN 伪装 (masq=1)，消除非对称路由丢包
 # 5. Dnsmasq 纯净过滤：激活 filter_aaaa='1' 根治国内手机 App 打开转圈假死
-# 6. 系统性能调优：激活 BBR + fq_codel 算法与扩充连接池
-# 7. 安全回滚支持：支持 --revert 一键无损还原原始网络基线
+# 6. 系统性能调优：激活 BBR + fq_codel 算法与 SSH OOM 豁免保护
+# 7. 状态快照与安全回滚：支持 --watchdog / --confirm / --revert 一键无损还原原始网络基线
 #
 # 运行方式：
-# - 路由器本地执行: sh setup_openwrt_network.sh [--bypass|--revert]
-# - 宿主机远程执行: sh setup_openwrt_network.sh <路由器IP> [用户] [端口] [私钥] [--bypass|--revert]
+# - 路由器本地执行: sh setup_openwrt_network.sh [--bypass|--watchdog|--confirm|--revert]
+# - 宿主机远程执行: sh setup_openwrt_network.sh <路由器IP> [用户] [端口] [私钥] [--bypass|--watchdog|--confirm|--revert]
 # ==============================================================================
 
 set -e
@@ -25,6 +25,16 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 say() { printf '%b\n' "$1"; }
+
+kill_active_watchdog() {
+    if [ -f /tmp/proxy_watchdog.pid ]; then
+        _wd_pid=$(cat /tmp/proxy_watchdog.pid 2>/dev/null || true)
+        if [ -n "$_wd_pid" ]; then
+            kill "$_wd_pid" 2>/dev/null || true
+        fi
+        rm -f /tmp/proxy_watchdog.pid
+    fi
+}
 
 run_dae_hardening() {
     ACTION_FLAG="${1:-}"
@@ -43,11 +53,13 @@ run_dae_hardening() {
 
     if [ "$ACTION_FLAG" = "--confirm" ]; then
         touch /tmp/proxy_deploy_confirmed
-        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗已解除。${NC}"
+        kill_active_watchdog
+        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗已解除并清理。${NC}"
         return 0
     fi
 
     if [ "$ACTION_FLAG" = "--watchdog" ]; then
+        kill_active_watchdog
         rm -f /tmp/proxy_deploy_confirmed
         say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (若 45 秒内未收到 --confirm 将自动回滚配置与网络)...${NC}"
         (
@@ -55,30 +67,44 @@ run_dae_hardening() {
             if [ ! -f /tmp/proxy_deploy_confirmed ]; then
                 [ -f /tmp/config.dae.bak ] && cp /tmp/config.dae.bak /etc/dae/config.dae 2>/dev/null || true
                 ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
-                sh "$0" --revert 2>/dev/null || true
+                run_dae_hardening "--revert" 2>/dev/null || true
             fi
+            rm -f /tmp/proxy_watchdog.pid 2>/dev/null || true
         ) </dev/null >/dev/null 2>&1 &
+        echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
         return 0
     fi
 
     if [ "$ACTION_FLAG" = "--revert" ]; then
         say "${YELLOW}[REVERT] 正在撤销 dae 网络加固并还原基线...${NC}"
         touch /tmp/proxy_deploy_confirmed 2>/dev/null || true
+        kill_active_watchdog
         if [ -f /etc/dae/.flow_offload.bak ]; then
             . /etc/dae/.flow_offload.bak
             [ -n "${ORIG_SW_OFFLOAD:-}" ] && uci set "firewall.@defaults[0].flow_offloading=${ORIG_SW_OFFLOAD}" 2>/dev/null || uci delete firewall.@defaults[0].flow_offloading 2>/dev/null || true
             [ -n "${ORIG_HW_OFFLOAD:-}" ] && uci set "firewall.@defaults[0].flow_offloading_hw=${ORIG_HW_OFFLOAD}" 2>/dev/null || uci delete firewall.@defaults[0].flow_offloading_hw 2>/dev/null || true
             rm -f /etc/dae/.flow_offload.bak
         fi
-        if [ -n "$LAN_INDEX" ]; then
-            uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
-            uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
-            uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+        if [ -f /etc/dae/.network_baseline.bak ]; then
+            . /etc/dae/.network_baseline.bak
+            if [ -n "$LAN_INDEX" ]; then
+                uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
+                [ -n "${ORIG_LAN_MASQ:-}" ] && uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+                [ -n "${ORIG_LAN_MTU_FIX:-}" ] && uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+            fi
+            [ -n "${ORIG_FILTER_AAAA:-}" ] && uci set "dhcp.@dnsmasq[0].filter_aaaa=${ORIG_FILTER_AAAA}" 2>/dev/null || uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+            rm -f /etc/dae/.network_baseline.bak
+        else
+            if [ -n "$LAN_INDEX" ]; then
+                uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+                uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
+                uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+            fi
+            uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         fi
         uci commit firewall 2>/dev/null || true
         /etc/init.d/firewall reload 2>/dev/null || true
         rm -f /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
-        uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         uci commit dhcp 2>/dev/null || true
         /etc/init.d/dnsmasq reload 2>/dev/null || true
         /etc/init.d/sysctl restart 2>/dev/null || sysctl -p 2>/dev/null || true
@@ -86,10 +112,33 @@ run_dae_hardening() {
         return 0
     fi
 
-    say "${BLUE}[1/5] 激活系统 IPv4 路由转发与连接池参数...${NC}"
+    mkdir -p /etc/dae
+    if [ ! -f /etc/dae/.network_baseline.bak ]; then
+        _orig_masq=""
+        _orig_mtu=""
+        if [ -n "$LAN_INDEX" ]; then
+            _orig_masq=$(uci get "firewall.@zone[${LAN_INDEX}].masq" 2>/dev/null || echo "")
+            _orig_mtu=$(uci get "firewall.@zone[${LAN_INDEX}].mtu_fix" 2>/dev/null || echo "")
+        fi
+        _orig_aaaa=$(uci get dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || echo "")
+        printf "ORIG_LAN_MASQ='%s'\nORIG_LAN_MTU_FIX='%s'\nORIG_FILTER_AAAA='%s'\n" "$_orig_masq" "$_orig_mtu" "$_orig_aaaa" > /etc/dae/.network_baseline.bak
+    fi
+
+    # 按路由器物理内存动态计算安全 nf_conntrack_max，防止小内存设备内核 Slab OOM
+    _ram_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    _ram_mb=$(( ${_ram_kb:-0} / 1024 ))
+    if [ "$_ram_mb" -gt 0 ] && [ "$_ram_mb" -lt 256 ]; then
+        CONNTRACK_MAX=16384
+    elif [ "$_ram_mb" -gt 0 ] && [ "$_ram_mb" -lt 512 ]; then
+        CONNTRACK_MAX=32768
+    else
+        CONNTRACK_MAX=65536
+    fi
+
+    say "${BLUE}[1/5] 激活系统 IPv4 路由转发与自适应连接池参数 (nf_conntrack_max=${CONNTRACK_MAX})...${NC}"
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
     sysctl -w net.ipv4.conf.all.forwarding=1 >/dev/null 2>&1
-    sysctl -w net.netfilter.nf_conntrack_max=65536 >/dev/null 2>&1 || true
+    sysctl -w "net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}" >/dev/null 2>&1 || true
 
     # 守护进程 OOM 豁免保护：防止内存紧张时内核 OOM Killer 误杀 dropbear/sshd 导致失联
     for _ssh_pid in $(pidof dropbear sshd 2>/dev/null); do
@@ -97,10 +146,10 @@ run_dae_hardening() {
     done
 
     mkdir -p /etc/sysctl.d
-    cat << 'SYSCTL_EOF' > /etc/sysctl.d/99-dae.conf
+    cat << SYSCTL_EOF > /etc/sysctl.d/99-dae.conf
 net.ipv4.ip_forward=1
 net.ipv4.conf.all.forwarding=1
-net.netfilter.nf_conntrack_max=65536
+net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}
 SYSCTL_EOF
 
     if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw "bbr"; then
@@ -113,22 +162,17 @@ SYSCTL_EOF
     say "${BLUE}[2/5] 关闭流量分载 (Flow Offloading，防止报文跳过 eBPF 探针)...${NC}"
     if command -v uci >/dev/null 2>&1; then
         if [ ! -f /etc/dae/.flow_offload.bak ]; then
-            mkdir -p /etc/dae
             _sw=$(uci get firewall.@defaults[0].flow_offloading 2>/dev/null || echo "")
             _hw=$(uci get firewall.@defaults[0].flow_offloading_hw 2>/dev/null || echo "")
             printf "ORIG_SW_OFFLOAD='%s'\nORIG_HW_OFFLOAD='%s'\n" "$_sw" "$_hw" > /etc/dae/.flow_offload.bak
         fi
         uci set firewall.@defaults[0].flow_offloading='0' 2>/dev/null || true
         uci set firewall.@defaults[0].flow_offloading_hw='0' 2>/dev/null || true
-        uci commit firewall 2>/dev/null || true
-        /etc/init.d/firewall reload 2>/dev/null || true
     fi
 
     say "${BLUE}[3/5] 开启 LAN 区域 MSS 钳制 (mtu_fix=1)...${NC}"
     if [ -n "$LAN_INDEX" ]; then
         uci set firewall.@zone[${LAN_INDEX}].mtu_fix='1' 2>/dev/null || true
-        uci commit firewall 2>/dev/null || true
-        /etc/init.d/firewall reload 2>/dev/null || true
     fi
 
     if [ "$ACTION_FLAG" = "--bypass" ]; then
@@ -136,9 +180,13 @@ SYSCTL_EOF
         if [ -n "$LAN_INDEX" ]; then
             uci set firewall.@zone[${LAN_INDEX}].masq='1' 2>/dev/null || true
             uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
-            uci commit firewall 2>/dev/null || true
-            /etc/init.d/firewall reload 2>/dev/null || true
         fi
+    fi
+
+    # 合并提交所有防火墙变更并仅执行 1 次 reload，消除嵌入式路由多次重载 nftables 的 CPU 峰值抖动
+    if command -v uci >/dev/null 2>&1; then
+        uci commit firewall 2>/dev/null || true
+        /etc/init.d/firewall reload 2>/dev/null || true
     fi
 
     say "${BLUE}[4/5] 配置 Dnsmasq AAAA 过滤 (filter_aaaa=1，纯净 IPv4 模式)...${NC}"

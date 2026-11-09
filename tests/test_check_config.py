@@ -210,5 +210,31 @@ class TestAuditHardeningCheckConfig(unittest.TestCase):
             })
             self.assertTrue(any("致命递归死锁" in e for e in errs), f"未拦截非 IP 引导地址: {bad_srv}")
 
+
+    def test_unsupported_outbound_transport_and_invalid_port_blocked(self):
+        errs1, _ = run({
+            "outbounds": [{
+                "type": "vless",
+                "tag": "bad-trans",
+                "server": "1.2.3.4",
+                "server_port": 443,
+                "uuid": "u",
+                "transport": {"type": "xhttp"},
+            }]
+        })
+        self.assertTrue(any("非法传输层" in e for e in errs1), errs1)
+
+        errs2, _ = run({
+            "outbounds": [{
+                "type": "trojan",
+                "tag": "bad-port",
+                "server": "1.2.3.4",
+                "server_port": 70000,
+                "password": "p",
+            }]
+        })
+        self.assertTrue(any("非法端口" in e for e in errs2), errs2)
+
+
 if __name__ == "__main__":
     unittest.main()

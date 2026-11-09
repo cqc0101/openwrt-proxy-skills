@@ -102,6 +102,36 @@ class TestNetworkSetupScripts(unittest.TestCase):
             self.assertIn("</dev/null >/dev/null 2>&1 &", text, "后台看门狗必须关闭 stdin 防止阻塞 SSH 会话")
 
 
+
+    def test_watchdog_uses_in_memory_revert_not_sh_dollar0(self):
+        """通过 ssh 'sh -s -- --watchdog' 管道执行时 $0 为 'sh'，回滚必须直接调用内存函数而非 sh "$0" --revert。"""
+        sb_txt = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
+        dae_txt = _read(os.path.join(DAE, "setup_openwrt_network.sh"))
+        self.assertIn('run_router_hardening "--revert"', sb_txt)
+        self.assertIn('run_dae_hardening "--revert"', dae_txt)
+        self.assertNotIn('sh "$0" --revert', sb_txt)
+        self.assertNotIn('sh "$0" --revert', dae_txt)
+        for txt in (sb_txt, dae_txt):
+            self.assertIn("kill_active_watchdog", txt)
+            self.assertIn("/tmp/proxy_watchdog.pid", txt)
+
+    def test_non_destructive_baseline_backup_and_ram_adaptive_conntrack(self):
+        """首次运行必须备份 ORIG_LAN_MASQ/ORIG_LAN_MTU_FIX/ORIG_FILTER_AAAA，且按物理内存自适应 nf_conntrack_max。"""
+        for base in (SINGBOX, DAE):
+            txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
+            self.assertIn(".network_baseline.bak", txt)
+            self.assertIn("ORIG_LAN_MTU_FIX", txt)
+            self.assertIn("ORIG_FILTER_AAAA", txt)
+            self.assertIn("CONNTRACK_MAX=16384", txt)
+            self.assertIn("CONNTRACK_MAX=32768", txt)
+
+    def test_dae_network_script_single_firewall_reload_in_normal_flow(self):
+        """dae 网络加固主流程应合并提交防火墙变更，避免连续 3 次执行 /etc/init.d/firewall reload。"""
+        dae_txt = _read(os.path.join(DAE, "setup_openwrt_network.sh"))
+        # 整個腳本只應有 2 處 firewall reload：1 處在 --revert 分支，1 處在正向加固末尾
+        self.assertEqual(dae_txt.count("/etc/init.d/firewall reload"), 2)
+
+
 class TestSharedScriptsConsistency(unittest.TestCase):
     """每个技能需自包含，因此共享脚本存两份；此测试防止两份内容漂移。
 

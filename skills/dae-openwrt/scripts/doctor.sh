@@ -92,7 +92,7 @@ fi
 
 OUTBOUND_OK=0
 if command -v curl >/dev/null 2>&1; then
-    _hc=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 http://cp.cloudflare.com/generate_204 2>/dev/null || true)
+    _hc=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 -m 5 http://cp.cloudflare.com/generate_204 2>/dev/null || true)
     [ "$_hc" = "204" ] && OUTBOUND_OK=1
 elif command -v wget >/dev/null 2>&1; then
     wget -q -T 3 --spider http://cp.cloudflare.com/generate_204 2>/dev/null && OUTBOUND_OK=1

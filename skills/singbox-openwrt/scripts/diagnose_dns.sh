@@ -123,16 +123,24 @@ elif command -v dig >/dev/null 2>&1; then
     RESOLVE_TOOL="dig"
 fi
 
+run_nslookup() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 3 nslookup "$@" 2>/dev/null || true
+    else
+        nslookup "$@" 2>/dev/null || true
+    fi
+}
+
 query_ips() {
     _domain="$1"
     _raw=""
     if [ "$RESOLVE_TOOL" = "nslookup" ]; then
-        _raw=$(nslookup "$_domain" 127.0.0.1 2>/dev/null || true)
+        _raw=$(run_nslookup "$_domain" 127.0.0.1)
         if ! printf '%s\n' "$_raw" | grep -qE "Address.*:" 2>/dev/null; then
-            _raw=$(nslookup "$_domain" 2>/dev/null || true)
+            _raw=$(run_nslookup "$_domain")
         fi
     elif [ "$RESOLVE_TOOL" = "dig" ]; then
-        _raw=$(dig +short "$_domain" @127.0.0.1 2>/dev/null || dig +short "$_domain" 2>/dev/null || true)
+        _raw=$(dig +time=2 +tries=1 +short "$_domain" @127.0.0.1 2>/dev/null || dig +time=2 +tries=1 +short "$_domain" 2>/dev/null || true)
         if [ -n "$_raw" ]; then
             printf '%s\n' "$_raw" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$|^[0-9a-fA-F:]+:[0-9a-fA-F:]+$' || true
             return 0
@@ -220,7 +228,8 @@ say "\n${CYAN}[4/7] 检查 IPv6 AAAA 污染黑洞与转圈假死防御...${NC}"
 
 AAAA_RESP=""
 if [ "$RESOLVE_TOOL" = "nslookup" ]; then
-    AAAA_RAW=$(nslookup -type=AAAA google.com 127.0.0.1 2>/dev/null || nslookup -type=AAAA google.com 2>/dev/null || true)
+    AAAA_RAW=$(run_nslookup -type=AAAA google.com 127.0.0.1)
+    [ -z "$AAAA_RAW" ] && AAAA_RAW=$(run_nslookup -type=AAAA google.com)
     AAAA_RESP=$(printf '%s\n' "$AAAA_RAW" | awk '
         BEGIN { in_ans = 0 }
         /Name:|answer:/ { in_ans = 1; next }
@@ -235,7 +244,7 @@ if [ "$RESOLVE_TOOL" = "nslookup" ]; then
         }
     ')
 elif [ "$RESOLVE_TOOL" = "dig" ]; then
-    AAAA_RAW=$(dig +short AAAA google.com @127.0.0.1 2>/dev/null || dig +short AAAA google.com 2>/dev/null || true)
+    AAAA_RAW=$(dig +time=2 +tries=1 +short AAAA google.com @127.0.0.1 2>/dev/null || dig +time=2 +tries=1 +short AAAA google.com 2>/dev/null || true)
     AAAA_RESP=$(printf '%s\n' "$AAAA_RAW" | grep -E '^[0-9a-fA-F:]+:[0-9a-fA-F:]+$' || true)
 fi
 

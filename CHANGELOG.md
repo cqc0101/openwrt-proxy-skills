@@ -2,6 +2,29 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.5.2] - 2026-11-09
+
+### 进程与管道弹性、物理硬件自适应与全链路超时硬化 (Resilience & Hardware Adaptability)
+
+- **[高危] `setup_openwrt_network.sh` 修复 SSH 管道下 `$0` 回滚崩溃与看门狗进程竞态**：
+  - 彻底修复通过 `ssh "sh -s"` 管道执行时因 `$0="sh"` 导致子看门狗 `sh "$0" --revert` 执行失败的致命缺陷，改为直接在子进程内存中调用 `run_router_hardening "--revert"` / `run_dae_hardening "--revert"`；
+  - 增加 `/tmp/proxy_watchdog.pid` 进程锁与 `kill_active_watchdog`，防止反复重试触发看门狗进程竞态踩踏。
+- **[特性] 无损物理网络基线备份与内存自适应连接池 (`nf_conntrack_max`)**：
+  - 首次运行前自动持久化快照至 `/etc/config/.network_baseline.bak`，精准保留 `ORIG_LAN_MASQ`、`ORIG_LAN_MTU_FIX` 与 `ORIG_FILTER_AAAA`，`--revert` 严格无损还原，消除盲目破坏原有网络选项的反模式；
+  - 依据物理内存动态自适应连接池：128MB 弱内存路由器配置 `16384`（杜绝 OOM 崩溃），256MB 配置 `32768`，512MB+ 配置 `65536`。
+- **[优化] `dae` 网络接管合并防火墙重载 (Single Firewall Reload)**：
+  - 消除旧版连续 3 次触发 `/etc/init.d/firewall reload` 导致的瞬时连接抖动，合并全量变更后在正向流程末尾仅执行 1 次平滑重载。
+- **[审计] `check_config.py` 静态门禁增强传输层与端口边界校验**：
+  - 新增 `transport.type` 白名单审计，精准拦截手改配置中的 `xhttp`/`splithttp`/`kcp` 等未受 sing-box 标准支持的传输层；
+  - 新增出站代理节点端口合法性检验（`1 <= server_port <= 65535`），杜绝越界端口下发启动崩溃。
+- **[容错] 诊断与探测脚本超时硬化与二级路由风险识别**：
+  - `diagnose_dns.sh` 与 `doctor.sh` 为 `dig` 注入 `+time=2 +tries=1`、为 `curl` 注入 `-m 5`、为 `nslookup` 包装 `timeout 3`，防止上游死循环阻塞诊断 120 秒；
+  - `probe.sh` 新增 `PRIVATE_WAN_DNS_RISK` 检测，自动预警光猫二级路由下的私网 DNS 旁路隐患。
+- **[特性] `sub_parser.py` 导出 dae 完整保留 TLS ALPN 与 HY2 端口跳跃 (`mport`)**：
+  - 支持将 `alpn` 及 `server_ports` 转换为 dae 原生 `alpn=...` 与 `mport=...` 查询参数。
+- **[测试] 单元测试矩阵扩充至 199 项**：
+  - 扩充测试套件至 199 项，全量 100% 满分通过。
+
 ## [0.5.1] - 2026-11-09
 
 ### 拓扑增强、SSH 会话解耦与 Agent 规范合规 (Topology & Process Hardening)

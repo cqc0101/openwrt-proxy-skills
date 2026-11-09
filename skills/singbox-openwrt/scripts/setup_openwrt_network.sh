@@ -2,18 +2,18 @@
 # ==============================================================================
 # OpenWrt / ImmortalWrt 最后一公里网络与网关接管加固工具 (Last-Mile Network Hook)
 # 彻底闭环：
-# 1. 内核转发限制：激活 net.ipv4.ip_forward=1 并持久化
+# 1. 内核转发限制：激活 net.ipv4.ip_forward=1 并按物理内存自适应扩充 nf_conntrack_max
 # 2. 防火墙拦截：精准定位 LAN 区域注入 tun0，放行转发 (forward=ACCEPT)
 # 3. MSS 钳制 (MSS Clamping)：激活 mtu_fix=1，彻底根治 TLS 大报文黑洞与分片卡死
 # 4. 局域网 DNS 路径清理：移除遗留的本机 53 DNAT 重定向，确保三层 tun0 hijack-dns 正常截获
-# 5. Dnsmasq 纯净过滤：激活 filter_aaaa='1' 彻底根治国内手机 App 打开转圈假死
-# 6. 系统网络性能调优：自动检测并激活 BBR + fq_codel 算法与扩充连接池
+# 5. Dnsmasq 纯净过滤与防旁路：激活 filter_aaaa='1'，二级路由私网 WAN DNS 自动切换公网上游
+# 6. 系统网络性能调优：自动检测并激活 BBR + fq_codel 算法与 SSH OOM 豁免保护
 # 7. 旁路由自适应：支持 --bypass 自动配置 LAN 区域 masq='1' 防非对称路由丢包
-# 8. 安全回滚支持：支持 --revert 一键无损还原原始网络基线
+# 8. 状态快照与安全回滚：支持 --watchdog / --confirm / --revert 无损还原原始网络基线
 #
 # 运行方式：
-# - 路由器本地执行: sh setup_openwrt_network.sh [--bypass|--revert]
-# - 宿主机远程执行: sh setup_openwrt_network.sh <路由器IP> [用户] [端口] [私钥] [--bypass|--revert]
+# - 路由器本地执行: sh setup_openwrt_network.sh [--bypass|--watchdog|--confirm|--revert]
+# - 宿主机远程执行: sh setup_openwrt_network.sh <路由器IP> [用户] [端口] [私钥] [--bypass|--watchdog|--confirm|--revert]
 # ==============================================================================
 
 set -e
@@ -26,6 +26,16 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 say() { printf '%b\n' "$1"; }
+
+kill_active_watchdog() {
+    if [ -f /tmp/proxy_watchdog.pid ]; then
+        _wd_pid=$(cat /tmp/proxy_watchdog.pid 2>/dev/null || true)
+        if [ -n "$_wd_pid" ]; then
+            kill "$_wd_pid" 2>/dev/null || true
+        fi
+        rm -f /tmp/proxy_watchdog.pid
+    fi
+}
 
 # 逆序清理名为 Redirect-DNS-Proxy 的防火墙 redirect 规则，防止正序删除时匿名节索引前移漏删
 clean_dns_redirects() {
@@ -60,11 +70,13 @@ run_router_hardening() {
 
     if [ "$ACTION_FLAG" = "--confirm" ]; then
         touch /tmp/proxy_deploy_confirmed
-        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗已解除。${NC}"
+        kill_active_watchdog
+        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗已解除并清理。${NC}"
         return 0
     fi
 
     if [ "$ACTION_FLAG" = "--watchdog" ]; then
+        kill_active_watchdog
         rm -f /tmp/proxy_deploy_confirmed
         say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (若 45 秒内未收到 --confirm 将自动回滚配置与网络)...${NC}"
         (
@@ -72,22 +84,33 @@ run_router_hardening() {
             if [ ! -f /tmp/proxy_deploy_confirmed ]; then
                 [ -f /tmp/config.json.bak ] && cp /tmp/config.json.bak /etc/sing-box/config.json 2>/dev/null || true
                 /etc/init.d/sing-box restart 2>/dev/null || true
-                sh "$0" --revert 2>/dev/null || true
+                run_router_hardening "--revert" 2>/dev/null || true
             fi
+            rm -f /tmp/proxy_watchdog.pid 2>/dev/null || true
         ) </dev/null >/dev/null 2>&1 &
+        echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
         return 0
     fi
 
     if [ "$ACTION_FLAG" = "--revert" ]; then
         say "${YELLOW}[REVERT] 正在撤销最后一公里网络接管配置并恢复基线...${NC}"
         touch /tmp/proxy_deploy_confirmed 2>/dev/null || true
+        kill_active_watchdog
         uci del_list firewall.@zone[${LAN_INDEX}].device='tun0' 2>/dev/null || true
-        uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
         uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
-        uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+        if [ -f /etc/sing-box/.network_baseline.bak ]; then
+            . /etc/sing-box/.network_baseline.bak
+            [ -n "${ORIG_LAN_MASQ:-}" ] && uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+            [ -n "${ORIG_LAN_MTU_FIX:-}" ] && uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+            [ -n "${ORIG_FILTER_AAAA:-}" ] && uci set "dhcp.@dnsmasq[0].filter_aaaa=${ORIG_FILTER_AAAA}" 2>/dev/null || uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+            rm -f /etc/sing-box/.network_baseline.bak
+        else
+            uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+            uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+            uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+        fi
         clean_dns_redirects
         rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-proxy-tuning.conf
-        uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         if [ -f /etc/sing-box/.dnsmasq_upstream.bak ]; then
             . /etc/sing-box/.dnsmasq_upstream.bak
             if [ -n "${ORIG_NORESOLV:-}" ]; then
@@ -107,10 +130,30 @@ run_router_hardening() {
         return 0
     fi
 
-    say "${BLUE}[1/5] 校验与激活系统 IPv4 路由转发与连接池参数...${NC}"
+    # 首次执行前保存用户原始防火墙与 Dnsmasq 基线，确保 --revert 不误删用户原有配置
+    mkdir -p /etc/sing-box
+    if [ ! -f /etc/sing-box/.network_baseline.bak ]; then
+        _orig_masq=$(uci get "firewall.@zone[${LAN_INDEX}].masq" 2>/dev/null || echo "")
+        _orig_mtu=$(uci get "firewall.@zone[${LAN_INDEX}].mtu_fix" 2>/dev/null || echo "")
+        _orig_aaaa=$(uci get dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || echo "")
+        printf "ORIG_LAN_MASQ='%s'\nORIG_LAN_MTU_FIX='%s'\nORIG_FILTER_AAAA='%s'\n" "$_orig_masq" "$_orig_mtu" "$_orig_aaaa" > /etc/sing-box/.network_baseline.bak
+    fi
+
+    # 按路由器物理内存动态计算安全 nf_conntrack_max，防止小内存设备内核 Slab OOM
+    _ram_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    _ram_mb=$(( ${_ram_kb:-0} / 1024 ))
+    if [ "$_ram_mb" -gt 0 ] && [ "$_ram_mb" -lt 256 ]; then
+        CONNTRACK_MAX=16384
+    elif [ "$_ram_mb" -gt 0 ] && [ "$_ram_mb" -lt 512 ]; then
+        CONNTRACK_MAX=32768
+    else
+        CONNTRACK_MAX=65536
+    fi
+
+    say "${BLUE}[1/5] 校验与激活系统 IPv4 路由转发与自适应连接池参数 (nf_conntrack_max=${CONNTRACK_MAX})...${NC}"
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
     sysctl -w net.ipv4.conf.all.forwarding=1 >/dev/null 2>&1
-    sysctl -w net.netfilter.nf_conntrack_max=65536 >/dev/null 2>&1 || true
+    sysctl -w "net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}" >/dev/null 2>&1 || true
 
     # 守护进程 OOM 豁免保护：防止内存紧张时内核 OOM Killer 误杀 dropbear/sshd 导致失联
     for _ssh_pid in $(pidof dropbear sshd 2>/dev/null); do
@@ -119,11 +162,11 @@ run_router_hardening() {
     sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null 2>&1 || true
 
     mkdir -p /etc/sysctl.d
-    cat << 'SYSCTL_EOF' > /etc/sysctl.d/99-singbox.conf
+    cat << SYSCTL_EOF > /etc/sysctl.d/99-singbox.conf
 net.ipv4.ip_forward=1
 net.ipv4.conf.all.forwarding=1
 net.ipv4.conf.all.route_localnet=1
-net.netfilter.nf_conntrack_max=65536
+net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}
 net.ipv4.tcp_tw_reuse=1
 SYSCTL_EOF
 
@@ -168,7 +211,6 @@ SYSCTL_EOF
         if [ -z "$_DM_SRV" ] && [ -f "$_RESOLV_FILE" ]; then
             if grep -qE "^nameserver[[:space:]]+(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.)" "$_RESOLV_FILE" 2>/dev/null; then
                 say "${YELLOW}[二级路由防旁路] 检测到 WAN 上游 DNS 为私网地址，配置 Dnsmasq 上游为 223.5.5.5 确保进入 tun0 hijack-dns...${NC}"
-                mkdir -p /etc/sing-box
                 if [ ! -f /etc/sing-box/.dnsmasq_upstream.bak ]; then
                     _orig_nr=$(uci get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo "")
                     printf "ORIG_NORESOLV='%s'\n" "$_orig_nr" > /etc/sing-box/.dnsmasq_upstream.bak

@@ -48,5 +48,14 @@ class TestDnsDoctorScripts(unittest.TestCase):
         self.assertIn("203.98.7.65", content)
 
 
+
+    def test_dns_queries_have_strict_timeouts(self):
+        sh_path = os.path.join(SINGBOX_SCRIPTS, "diagnose_dns.sh")
+        with open(sh_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("+time=2 +tries=1", content, "dig 必须带超时参数防止死上游阻塞 120 秒")
+        self.assertIn("timeout 3 nslookup", content, "nslookup 必须支持 timeout 包装防挂起")
+
+
 if __name__ == "__main__":
     unittest.main()

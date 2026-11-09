@@ -211,6 +211,19 @@ def check_config_obj(cfg):
         if net and net not in ("tcp", "udp"):
             errors.append(f"[非法字段] outbound[{idx}]({ob_tag}) 的 'network' 设为 '{net}'，sing-box 只接受 'tcp'/'udp'！ws/grpc 请使用 'transport' 块。")
 
+        # 检查 transport.type 合法性（拦截手改配置中的 xhttp/splithttp/kcp 等不支持传输层）
+        trans = ob.get("transport")
+        if isinstance(trans, dict):
+            ttype = str(trans.get("type") or "").strip().lower()
+            if ttype and ttype not in ("ws", "grpc", "http", "httpupgrade", "quic"):
+                errors.append(f"[非法传输层] outbound[{idx}]({ob_tag}) 的 transport.type '{ttype}' 不受 sing-box 标准传输层支持（仅支持 ws/grpc/http/httpupgrade/quic）！")
+
+        # 检查代理节点端口范围合法性 (1..65535)
+        if ob_type in ("vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls") and "server_port" in ob:
+            sp = ob.get("server_port")
+            if not isinstance(sp, int) or isinstance(sp, bool) or not (1 <= sp <= 65535):
+                errors.append(f"[非法端口] outbound[{idx}]({ob_tag}) 的 server_port '{sp}' 超出合法端口范围 (1-65535)！")
+
     # 4. 检查 inbounds 模块
     for idx, ib in enumerate(inbounds):
         ib_type = ib.get("type", "")

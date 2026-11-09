@@ -215,9 +215,10 @@ if [ "$PORT53_ACTIVE" -eq 1 ]; then
 fi
 [ -z "$DNS_PORT_HOLDER" ] && DNS_PORT_HOLDER="none"
 
-# 检查 Dnsmasq 上游解析配置与潜在回环死锁风险
+# 检查 Dnsmasq 上游解析配置、回环死锁风险与二级路由私网 WAN DNS 旁路风险
 DNSMASQ_UPSTREAM="default"
 DNSMASQ_LOOP_RISK=0
+PRIVATE_WAN_DNS_RISK=0
 if command -v uci >/dev/null 2>&1; then
     DM_SERVERS=$(uci get dhcp.@dnsmasq[0].server 2>/dev/null || true)
     if [ -n "$DM_SERVERS" ]; then
@@ -227,6 +228,12 @@ if command -v uci >/dev/null 2>&1; then
                 DNSMASQ_LOOP_RISK=1
                 ;;
         esac
+    else
+        _R_AUTO="/tmp/resolv.conf.d/resolv.conf.auto"
+        [ ! -f "$_R_AUTO" ] && _R_AUTO="/tmp/resolv.conf.auto"
+        if [ -f "$_R_AUTO" ] && grep -qE "^nameserver[[:space:]]+(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.)" "$_R_AUTO" 2>/dev/null; then
+            PRIVATE_WAN_DNS_RISK=1
+        fi
     fi
 fi
 
@@ -345,6 +352,7 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
     "dns_port_holder": "$(je "$DNS_PORT_HOLDER")",
     "dnsmasq_upstream": "$(je "$DNSMASQ_UPSTREAM")",
     "dnsmasq_loop_risk": $DNSMASQ_LOOP_RISK,
+    "private_wan_dns_risk": $PRIVATE_WAN_DNS_RISK,
     "active_conflicts": "$(je "$CONFLICT_STR")",
     "firewall": "$(je "$FW_TYPE")",
     "software_flow_offload": "$(je "$SW_OFFLOAD")",

@@ -38,7 +38,7 @@ from sub_parser import parse_source, to_dae_nodes
 from check_dae_syntax import check_dae_syntax
 
 
-def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology="main", main_router_ip=None, template_path=None):
+def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology="main", main_router_ip=None, ram_mb=None, template_path=None):
     """读取 openwrt.dae 基准模板，注入清洗后的 node 块、接口与旁路由主网关直连规则，返回完整配置文本。"""
     tpl_file = template_path or TEMPLATE_PATH
     if not os.path.isfile(tpl_file):
@@ -61,6 +61,14 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology=
             merged,
             count=1,
         )
+    if ram_mb is not None and int(ram_mb) > 0:
+        r_mb = int(ram_mb)
+        map_sz = 32768 if r_mb < 256 else (65536 if r_mb < 512 else 131072)
+        merged = re.sub(
+            r"(?m)^(\s*bpf_conn_state_map_size:\s*)\d+",
+            lambda m: f"{m.group(1)}{map_sz}",
+            merged,
+        )
     return merged
 
 
@@ -80,6 +88,7 @@ def main():
     parser.add_argument("--wan-iface", default="auto", help="完整配置模式下的外网接口 (默认: auto)")
     parser.add_argument("--topology", choices=["main", "bypass"], default="main", help="网络拓扑模式 (默认: main，旁路由请指定 bypass)")
     parser.add_argument("--main-router-ip", default=None, help="旁路由模式下的主路由 IP (如 192.168.1.1)")
+    parser.add_argument("--ram-mb", type=int, default=None, help="目标路由器物理内存 MB (低于 512MB 时自动调小 bpf_conn_state_map_size 防 OOM)")
     parser.add_argument("-o", "--out", help="输出文件路径 (不指定则输出到标准输出)")
 
     args = parser.parse_args()
@@ -100,6 +109,7 @@ def main():
             wan_iface=args.wan_iface,
             topology=args.topology,
             main_router_ip=args.main_router_ip,
+            ram_mb=args.ram_mb,
         )
         with tempfile.NamedTemporaryFile("w", suffix=".dae", delete=False, encoding="utf-8") as tf:
             tf.write(out_text)

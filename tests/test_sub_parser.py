@@ -470,5 +470,17 @@ proxies:
         self.assertIn("type=httpupgrade&path=/hu&host=hu.example.com", dae_out)
 
 
+
+    def test_to_dae_nodes_preserves_alpn_and_hy2_mport(self):
+        from parse_node import parse_uri
+        from sub_parser import to_dae_nodes
+        n1 = parse_uri("hysteria2://pw@example.com:443?sni=example.com&mport=20000-30000&alpn=h3#Hy2-Hop")
+        n2 = parse_uri("vless://11111111-2222-3333-4444-555555555555@example.com:443?security=tls&sni=example.com&alpn=h2,http/1.1#VLESS-ALPN")
+        dae_out = to_dae_nodes([n1, n2])
+        self.assertIn("mport=20000-30000", dae_out)
+        self.assertIn("alpn=h3", dae_out)
+        self.assertIn("alpn=h2,http%2F1.1", dae_out)
+
+
 if __name__ == "__main__":
     unittest.main()
