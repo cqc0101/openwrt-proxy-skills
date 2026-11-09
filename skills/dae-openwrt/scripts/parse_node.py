@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 节点 URI 解析与 sing-box outbound 转换器
-支持协议：VLESS (Reality/WS/gRPC), Hysteria 2, Trojan, Shadowsocks, VMess
+支持协议：VLESS (Reality/WS/gRPC), Hysteria 2 (含端口跳跃), Trojan, Shadowsocks (SIP002/Base64), VMess
 注意：sing-box 的 vless/vmess/trojan outbound 中 `network` 字段只接受 "tcp"/"udp"；
       ws / grpc / h2 等传输层必须写入 `transport` 块。
 """
 # [共享脚本] 本文件与 singbox-openwrt/scripts/parse_node.py 完全一致，修改需双份同步！
 
+import re
 import sys
 import json
 import base64
@@ -22,11 +23,12 @@ for _s in (sys.stdout, sys.stderr):
 
 
 def _b64_decode(s: str) -> str:
-    """Base64 解码：自动补 padding，同时接受标准与 urlsafe 字母表。
+    """Base64 解码：自动执行 URL 解码与补齐 padding，同时接受标准与 urlsafe 字母表。
 
     支持 UTF-8 与 GB18030 中文字符集；若两者均非法则抛出 UnicodeDecodeError。
     """
-    s = s.strip()
+    s = urllib.parse.unquote(s.strip())
+    s = re.sub(r"\s+", "", s)
     s += '=' * (-len(s) % 4)
     raw = base64.urlsafe_b64decode(s)
     try:
@@ -75,6 +77,47 @@ def _split_host_port(host_port: str, default_port: int = 443):
     return server, port
 
 
+def _extract_userinfo_password(parsed) -> str:
+    """从 urlparse 结果提取完整密码（保留 user:password 复合格式，兼容 :secret 前导冒号）。"""
+    u = urllib.parse.unquote(parsed.username or "")
+    p = urllib.parse.unquote(parsed.password or "")
+    if u and p:
+        return f"{u}:{p}"
+    return p or u
+
+
+def _safe_port(parsed, default_port: int = 443) -> int:
+    """安全提取端口，防止非数字端口引发 ValueError 崩溃。"""
+    try:
+        return parsed.port or default_port
+    except ValueError:
+        host_port = parsed.netloc.rsplit("@", 1)[-1]
+        _, port = _split_host_port(host_port, default_port=default_port)
+        return port
+
+
+def _normalize_port_ranges(raw_spec: str):
+    """将 Hysteria2 端口跳跃表达式（如 '20000-50000' 或 '443,20000-30000'）转为 sing-box server_ports 列表。"""
+    ranges = []
+    first_port = None
+    for part in str(raw_spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r"^(\d{1,5})\s*[-:]\s*(\d{1,5})$", part)
+        if m:
+            p1, p2 = int(m.group(1)), int(m.group(2))
+            if 1 <= p1 <= 65535 and 1 <= p2 <= 65535 and p1 <= p2:
+                ranges.append(f"{p1}:{p2}")
+                if first_port is None:
+                    first_port = p1
+        elif part.isdigit():
+            p = int(part)
+            if 1 <= p <= 65535 and first_port is None:
+                first_port = p
+    return first_port, ranges
+
+
 def _build_ws_transport(params, default_host=""):
     """由 URI 参数构建 ws transport 块；不存在 ws 参数时返回 None。"""
     path = params.get("path", [""])[0]
@@ -103,9 +146,10 @@ def parse_vless(uri_str):
     server = parsed.hostname
     if not server or not uuid:
         raise ValueError(f"无法解析 VLESS 节点地址 (缺少有效主机或 UUID): {uri_str[:40]}...")
-    port = parsed.port or 443
+    port = _safe_port(parsed, 443)
     params = urllib.parse.parse_qs(parsed.query)
-    tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"vless-{server}"
+    raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
+    tag = raw_frag or f"vless-{server}"
 
     security = params.get("security", [""])[0]
     flow = params.get("flow", [""])[0]
@@ -169,15 +213,31 @@ def parse_vless(uri_str):
 
 def parse_hysteria2(uri_str):
     parsed = urllib.parse.urlparse(uri_str)
-    password = urllib.parse.unquote(parsed.password or parsed.username or "")
+    password = _extract_userinfo_password(parsed)
     server = parsed.hostname
-    if not server:
-        raise ValueError(f"无法解析 Hysteria2 节点地址 (缺少有效主机): {uri_str[:40]}...")
-    port = parsed.port or 443
+    if not server or not password:
+        raise ValueError(f"无法解析 Hysteria2 节点地址 (缺少有效主机或密码): {uri_str[:40]}...")
+
     params = urllib.parse.parse_qs(parsed.query)
-    tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"hy2-{server}"
+    port_ranges = []
+    try:
+        port = parsed.port or 443
+    except ValueError:
+        host_port = parsed.netloc.rsplit("@", 1)[-1]
+        port_spec = host_port.split("]:", 1)[1] if host_port.startswith("[") and "]:" in host_port else (
+            host_port.rsplit(":", 1)[1] if ":" in host_port else ""
+        )
+        first_p, port_ranges = _normalize_port_ranges(port_spec)
+        port = first_p or 443
+
+    mport_spec = params.get("mport", params.get("ports", [""]))[0]
+    if mport_spec and not port_ranges:
+        _, port_ranges = _normalize_port_ranges(mport_spec)
+
+    raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
+    tag = raw_frag or f"hy2-{server}"
     sni = params.get("sni", [server])[0]
-    insecure = params.get("insecure", ["0"])[0] in ["1", "true", "True"]
+    insecure = params.get("insecure", params.get("allowInsecure", ["0"]))[0] in ("1", "true", "True")
 
     outbound = {
         "type": "hysteria2",
@@ -191,6 +251,8 @@ def parse_hysteria2(uri_str):
             "insecure": insecure
         }
     }
+    if port_ranges:
+        outbound["server_ports"] = port_ranges
 
     obfs = params.get("obfs", [""])[0]
     if obfs:
@@ -204,13 +266,14 @@ def parse_hysteria2(uri_str):
 
 def parse_trojan(uri_str):
     parsed = urllib.parse.urlparse(uri_str)
-    password = urllib.parse.unquote(parsed.password or parsed.username or "")
+    password = _extract_userinfo_password(parsed)
     server = parsed.hostname
-    if not server:
-        raise ValueError(f"无法解析 Trojan 节点地址 (缺少有效主机): {uri_str[:40]}...")
-    port = parsed.port or 443
+    if not server or not password:
+        raise ValueError(f"无法解析 Trojan 节点地址 (缺少有效主机或密码): {uri_str[:40]}...")
+    port = _safe_port(parsed, 443)
     params = urllib.parse.parse_qs(parsed.query)
-    tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"trojan-{server}"
+    raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
+    tag = raw_frag or f"trojan-{server}"
     sni = params.get("sni", [server])[0]
     insecure = params.get("allowInsecure", params.get("insecure", ["0"]))[0] in ("1", "true", "True")
     net_type = params.get("type", ["tcp"])[0].lower()
@@ -238,38 +301,45 @@ def parse_trojan(uri_str):
 
 def parse_shadowsocks(uri_str):
     parsed = urllib.parse.urlparse(uri_str)
-    tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else "ss-node"
+    raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
+    tag = raw_frag or "ss-node"
 
     # 三种形态：
     # 1) ss://method:password@host:port          （明文 userinfo）
-    # 2) ss://BASE64(method:password)@host:port  （SIP002，IPv6 需带方括号）
+    # 2) ss://BASE64(method:password)@host:port  （SIP002，支持百分号编码如 %3D）
     # 3) ss://BASE64(method:password@host:port)  （整体 base64）
-    if parsed.password:
+    if parsed.password is not None and parsed.username:
         method = urllib.parse.unquote(parsed.username or "")
         password = urllib.parse.unquote(parsed.password)
         server = parsed.hostname
-        port = parsed.port
+        port = _safe_port(parsed, 8388)
     elif "@" in parsed.netloc:
         encoded_part, host_port = parsed.netloc.rsplit("@", 1)
         decoded = _b64_decode(encoded_part)
+        if ":" not in decoded:
+            raise ValueError(f"Shadowsocks userinfo 缺少 method:password 分隔符: {uri_str[:40]}...")
         method, password = decoded.split(":", 1)
-        server, port = _split_host_port(host_port)
+        server, port = _split_host_port(host_port, default_port=8388)
     else:
         decoded = _b64_decode(parsed.netloc)
         if "#" in decoded:
             decoded, inner_tag = decoded.split("#", 1)
-            if not parsed.fragment and inner_tag:
-                tag = urllib.parse.unquote(inner_tag)
+            if not raw_frag and inner_tag.strip():
+                tag = urllib.parse.unquote(inner_tag.strip())
         if "?" in decoded:
             decoded = decoded.split("?", 1)[0]
         if "/" in decoded:
             decoded = decoded.split("/", 1)[0]
+        if "@" not in decoded:
+            raise ValueError(f"无法解析 Shadowsocks 节点地址: {uri_str[:40]}...")
         cred, host_part = decoded.rsplit("@", 1)
+        if ":" not in cred:
+            raise ValueError(f"Shadowsocks 凭证格式非法: {uri_str[:40]}...")
         method, password = cred.split(":", 1)
-        server, port = _split_host_port(host_part)
+        server, port = _split_host_port(host_part, default_port=8388)
 
-    if not server or port is None:
-        raise ValueError(f"无法解析 Shadowsocks 节点地址: {uri_str[:40]}...")
+    if not server or port is None or not method or not password:
+        raise ValueError(f"无法解析 Shadowsocks 节点地址 (缺少主机、端口、加密方式或密码): {uri_str[:40]}...")
 
     outbound = {
         "type": "shadowsocks",
@@ -283,8 +353,16 @@ def parse_shadowsocks(uri_str):
 
 
 def parse_vmess(uri_str):
-    # 部分订阅会在 base64 后追加原生 #节点名 片段；必须先剥离，否则会污染 base64 解码
-    raw_b64 = uri_str[len("vmess://"):].strip().split("#")[0].strip()
+    # 部分订阅会在 base64 后追加原生 #节点名 片段；先提取片段作为备用节点名再剥离
+    body = uri_str[len("vmess://"):].strip()
+    frag_tag = ""
+    if "#" in body:
+        body, raw_frag = body.split("#", 1)
+        frag_tag = urllib.parse.unquote(raw_frag.strip())
+    raw_b64 = urllib.parse.unquote(body.strip())
+    raw_b64 = re.sub(r"\s+", "", raw_b64)
+    if not raw_b64:
+        raise ValueError("VMess Base64 内容为空")
     missing_padding = len(raw_b64) % 4
     if missing_padding:
         raw_b64 += '=' * (4 - missing_padding)
@@ -294,19 +372,24 @@ def parse_vmess(uri_str):
         raise ValueError(f"VMess Base64 解码失败: {e}")
 
     try:
-        data = json.loads(decoded_bytes.decode('utf-8', errors='ignore'))
+        try:
+            text_json = decoded_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            text_json = decoded_bytes.decode('gb18030', errors='ignore')
+        data = json.loads(text_json)
     except Exception as e:
         raise ValueError(f"VMess JSON 解码失败: {e}")
 
     if not isinstance(data, dict):
         raise ValueError(f"VMess 数据格式非法 (非 JSON 对象): {data!r}")
 
-    server = data.get("add")
-    uuid = data.get("id")
+    server = str(data.get("add") or "").strip()
+    uuid = str(data.get("id") or "").strip()
     if not server or not uuid:
         raise ValueError(f"VMess 缺少必要字段 (add/id): {data!r}")
 
-    tag = data.get("ps", f"vmess-{server}")
+    raw_ps = str(data.get("ps") or "").strip()
+    tag = raw_ps or frag_tag or f"vmess-{server}"
     try:
         port = int(data.get("port", 443))
     except (ValueError, TypeError):
@@ -316,12 +399,13 @@ def parse_vmess(uri_str):
         alter_id = int(data.get("aid", 0))
     except (ValueError, TypeError):
         alter_id = 0
-    security = data.get("scy", "auto") or "auto"
-    net_type = data.get("net", "tcp")
-    host = data.get("host", "")
-    path = data.get("path", "")
-    tls = data.get("tls", "")
-    sni = data.get("sni", host or server)
+    security = str(data.get("scy") or "auto").strip() or "auto"
+    net_type = str(data.get("net") or "tcp").strip().lower()
+    host = str(data.get("host") or "").strip()
+    path = str(data.get("path") or "").strip()
+    tls_val = data.get("tls", "")
+    tls_enabled = (tls_val is True) or (str(tls_val).strip().lower() in ("tls", "true", "1"))
+    sni = str(data.get("sni") or host or server).strip()
 
     outbound = {
         "type": "vmess",
@@ -333,11 +417,13 @@ def parse_vmess(uri_str):
         "alter_id": alter_id
     }
 
-    if tls == "tls":
+    if tls_enabled:
         outbound["tls"] = {
             "enabled": True,
             "server_name": sni
         }
+        if str(data.get("allowInsecure", "")).lower() in ("1", "true") or data.get("verify_cert") is False:
+            outbound["tls"]["insecure"] = True
 
     if net_type == "ws":
         outbound["transport"] = {

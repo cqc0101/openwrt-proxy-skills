@@ -138,8 +138,11 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
     doctor_sh = os.path.join(SB_DIR, "scripts", "doctor.sh")
     with open(diag_sh, "r", encoding="utf-8") as f_d:
         diag_body = f_d.read()
+    with open(doctor_sh, "r", encoding="utf-8") as f_doc:
+        doc_body = f_doc.read()
     rc_diag, out_diag, _ = _exec_remote("sh -s -- --json", diag_body)
-    if os.path.isfile(doctor_sh) and out_diag:
+    rc_doc, out_doc, _ = _exec_remote("sh -s -- sing-box --json", doc_body)
+    if out_diag and out_doc:
         say("PASS", "DNS 深度体检与智能医生 JSON 校验执行通过")
         results.append(("Full Diagnostics (7 steps)", True, "0 Errors"))
     else:

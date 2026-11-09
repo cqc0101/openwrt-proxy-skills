@@ -23,7 +23,7 @@
 ### 3. 单网口旁路由非对称路由丢包 (Asymmetric Routing Drop)
 * **现象**：客户端手动配了旁路由为网关，网页打不开或频繁 TCP RST。
 * **病因**：客户端发送请求经旁路由发往直连主路由，主路由回复报文直接发给客户端，客户端收到未经旁路由 NAT 的源 IP 数据包后直接拒绝。
-* **解法**：在旁路由防火墙 LAN 开启动态伪装：`uci set firewall.@zone[LAN].masquerade='1'`（或运行 `setup_openwrt_network.sh --bypass`）。
+* **解法**：在旁路由防火墙 LAN 开启动态伪装：`uci set firewall.@zone[LAN].masq='1'`（或运行 `setup_openwrt_network.sh --bypass`）。
 
 ### 4. 缺失 nfqueue 内核模块直连自捕获
 * **现象**：出海正常，但国内百度、淘宝直连全部 Connection Reset。
@@ -41,7 +41,7 @@
 
 | 症状特征 | 核心病因 | Agent 自主修复行动 |
 | :--- | :--- | :--- |
-| `sing-box restart` 进程不启动 | procd 服务默认被禁用 | `uci set sing-box.main.enabled='1' && uci commit sing-box` |
+| `sing-box restart` 进程不启动 | procd 服务默认被禁用或非 root 无权建 tun0 | `uci set sing-box.main.enabled='1' && uci set sing-box.main.user='root' && uci commit sing-box` |
 | `sing-box check` 报 schema error | 混用了 1.13 与 1.14 专属字段 | 参照 `architecture-and-schema.md` 修正字段 |
 | 局域网访问 `router.lan` 报 404 | 内网私有域名被 FakeIP 误劫持 | 在 `dns.rules` 中将 `.lan/.local` 送至 `local-dns` |
 | 微信/淘宝国内 App 刷新转圈 | 宽带无 IPv6 但返回了 AAAA 记录 | 运行 `setup_openwrt_network.sh` 开启 `filter_aaaa=1` |

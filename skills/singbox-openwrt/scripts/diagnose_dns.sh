@@ -82,15 +82,16 @@ fail() {
 say "\n${CYAN}[1/7] 探测本地 DNS 监听与宿主进程...${NC}"
 
 PORT53_OPEN=0
-if command -v netstat >/dev/null 2>&1; then
-    if netstat -tuln 2>/dev/null | grep -q ":53 "; then
-        PORT53_OPEN=1
-    fi
+if command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+    PORT53_OPEN=1
+elif command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+    PORT53_OPEN=1
 fi
 
 DNS_HOLDER="unknown"
 if [ "$PORT53_OPEN" -eq 1 ]; then
-    if pidof dnsmasq >/dev/null 2>&1 || pgrep -x "dnsmasq" >/dev/null 2>&1; then
+    DM_PORT=$(uci get dhcp.@dnsmasq[0].port 2>/dev/null || echo "53")
+    if [ "$DM_PORT" = "53" ] && ( pidof dnsmasq >/dev/null 2>&1 || pgrep -x "dnsmasq" >/dev/null 2>&1 ); then
         DNS_HOLDER="Dnsmasq"
     elif pidof sing-box >/dev/null 2>&1 || pgrep -x "sing-box" >/dev/null 2>&1; then
         DNS_HOLDER="sing-box"
@@ -100,6 +101,8 @@ if [ "$PORT53_OPEN" -eq 1 ]; then
         DNS_HOLDER="smartdns"
     elif pidof mosdns >/dev/null 2>&1 || pgrep -x "mosdns" >/dev/null 2>&1; then
         DNS_HOLDER="mosdns"
+    elif pidof dnsmasq >/dev/null 2>&1 || pgrep -x "dnsmasq" >/dev/null 2>&1; then
+        DNS_HOLDER="Dnsmasq"
     else
         DNS_HOLDER="active(port 53)"
     fi
@@ -131,7 +134,7 @@ query_ips() {
     elif [ "$RESOLVE_TOOL" = "dig" ]; then
         _raw=$(dig +short "$_domain" @127.0.0.1 2>/dev/null || dig +short "$_domain" 2>/dev/null || true)
         if [ -n "$_raw" ]; then
-            printf '%s\n' "$_raw"
+            printf '%s\n' "$_raw" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$|^[0-9a-fA-F:]+:[0-9a-fA-F:]+$' || true
             return 0
         fi
     fi
@@ -161,7 +164,7 @@ if [ -n "$CN_IP" ]; then
         198.18.*|198.19.*)
             warn "国内域名 baidu.com 返回了 FakeIP (${CN_IP})！国内分流规则未命中，可能导致国内 CDN 降速。"
             ;;
-        127.*|0.*|10.*|172.16.*|192.168.*)
+        127.*|0.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|192.168.*)
             fail "国内域名 baidu.com 解析返回异常私有 IP: ${CN_IP}！"
             ;;
         *)
@@ -232,7 +235,8 @@ if [ "$RESOLVE_TOOL" = "nslookup" ]; then
         }
     ')
 elif [ "$RESOLVE_TOOL" = "dig" ]; then
-    AAAA_RESP=$(dig +short AAAA google.com @127.0.0.1 2>/dev/null || dig +short AAAA google.com 2>/dev/null || true)
+    AAAA_RAW=$(dig +short AAAA google.com @127.0.0.1 2>/dev/null || dig +short AAAA google.com 2>/dev/null || true)
+    AAAA_RESP=$(printf '%s\n' "$AAAA_RAW" | grep -E '^[0-9a-fA-F:]+:[0-9a-fA-F:]+$' || true)
 fi
 
 if [ -z "$AAAA_RESP" ]; then
@@ -240,7 +244,7 @@ if [ -z "$AAAA_RESP" ]; then
 else
     AAAA_FLAT=$(printf '%s' "$AAAA_RESP" | tr '\n' ' ')
     case "$AAAA_FLAT" in
-        *:::*|*fe80:*|*fc00:*|*fd00:*)
+        *::1*|*fe80:*|*fc[0-9a-fA-F][0-9a-fA-F]:*|*fd[0-9a-fA-F][0-9a-fA-F]:*)
             warn "检测到返回了内网/回环 IPv6 AAAA 响应: ${AAAA_FLAT}"
             ;;
         *)
@@ -260,10 +264,10 @@ LAN_IP=$(printf '%s\n' "$LAN_IPS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' |
 
 if [ -n "$LAN_IP" ]; then
     case "$LAN_IP" in
-        192.168.*|10.*|172.16.*)
+        192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
             pass "局域网域名解析正常 (router.lan/openwrt.lan -> ${LAN_IP})，内网管理直连未受代理干扰。"
             ;;
-        198.18.*)
+        198.18.*|198.19.*)
             warn "局域网域名被 FakeIP 误劫持 (${LAN_IP})！请确认 dns.rules 中 .lan/.local 优先分流至 local-dns。"
             ;;
         *)
@@ -309,15 +313,13 @@ if command -v uci >/dev/null 2>&1; then
             warn "Dnsmasq 配置了本地回环上游 (${DM_SERVERS})，若代理核心 local-dns 又指向 Dnsmasq，可能引发 CPU 100% 递归循环死锁！"
             ;;
         *)
-            pass "Dnsmasq 上游解析配置正常，无回环死锁风险。"
+            if [ "$DM_FILTER_AAAA" = "1" ]; then
+                pass "Dnsmasq 上游解析配置正常，无回环死锁风险，且已开启 filter_aaaa='1' 纯净返回 IPv4！"
+            else
+                warn "Dnsmasq 上游解析配置正常，但未开启 filter_aaaa，若无全局 IPv6 路由，建议运行 setup_openwrt_network.sh 开启以提速。"
+            fi
             ;;
     esac
-
-    if [ "$DM_FILTER_AAAA" = "1" ]; then
-        pass "Dnsmasq 已开启 filter_aaaa='1'，国内域名秒级纯净返回 IPv4，彻底杜绝手机 App 转圈假死！"
-    else
-        warn "Dnsmasq 未开启 filter_aaaa，若无全局 IPv6 路由，建议运行 setup_openwrt_network.sh 开启以提速。"
-    fi
 else
     pass "环境未集成 UCI，跳过 Dnsmasq 专有项静态审计。"
 fi

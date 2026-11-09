@@ -58,17 +58,18 @@
 #### 1. 致命缺陷预防（非对称路由丢包）
 在旁路由拓扑中，客户端发出的请求：`客户端 -> 旁路由 -> 代理出口`；如果请求直连：`旁路由 -> 主路由 -> 客户端`，导致客户端收到未被旁路由 NAT 的源 IP 数据包，客户端操作系统直接 RST 丢弃！
 **Agent 核心决策**：
-1. 必须在 OpenWrt 防火墙 LAN 区域开启 IP 动态伪装（`masquerade: 1`），推荐直接运行最后一公里脚本：
+1. 必须在 OpenWrt 防火墙 LAN 区域开启 IP 动态伪装（`masq='1'`），推荐直接运行最后一公里脚本：
    ```bash
    sh setup_openwrt_network.sh --bypass
    # 或底层动态查找 LAN 区域并开启伪装：
    # LAN_IDX=$(uci show firewall | grep -E "\.name='lan'|\.name='LAN'" | head -n1 | cut -d'.' -f2)
-   # uci set firewall.${LAN_IDX}.masquerade='1' && uci commit firewall && /etc/init.d/firewall reload
+   # uci set firewall.${LAN_IDX}.masq='1' && uci commit firewall && /etc/init.d/firewall reload
    ```
 2. 在 sing-box 的 `route.rules` 首部必须放行到主路由自身 IP 的直连：
    ```json
    {
      "ip_cidr": ["192.168.1.1/32"],
+     "action": "route",
      "outbound": "direct"
    }
    ```
@@ -94,10 +95,12 @@
       },
       {
         "source_ip_cidr": ["192.168.1.50/32", "192.168.1.51/32"],
+        "action": "route",
         "outbound": "direct"
       },
       {
         "source_ip_cidr": ["192.168.1.100/32"],
+        "action": "route",
         "outbound": "proxy"
       }
     ]
@@ -149,5 +152,5 @@
 1. **意图分析**：确定用户网络拓扑（主路由 vs 旁路由，网段是 192.168.1.x 还是其他）；
 2. **积木拼接**：基于基准 Schema 动态组装特定 `inbounds`、`outbounds`、`dns` 与 `route`；
 3. **静态门控验证**：将生成的配置传给 `check_config.py`，必须 0 报错；
-4. **安全推送与部署**：通过 SSH 管道将配置写入远端 `/tmp/config.json.test`，经 `sing-box check` 校验通过后原子替换并重启服务；
+4. **安全推送与部署**：通过 SSH 管道将配置写入远端 `/tmp/config.json.test`，经 `sing-box check` 校验通过后备份并原子替换，随后重启服务；
 5. **最后一公里闭环**：调用 `setup_openwrt_network.sh` 确保系统级防火墙、MSS 钳制与 Dnsmasq 妥善接管。

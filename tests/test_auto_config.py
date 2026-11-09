@@ -257,5 +257,33 @@ class TestCanaryDomainRejection(unittest.TestCase):
         self.assertTrue(canary_route, "生成配置中必须包含 Apple Private Relay Canary 阻断规则")
 
 
+class TestAuditHardeningAutoConfig(unittest.TestCase):
+    def test_dns_cn_doh_passes_check_config_and_cli(self):
+        from check_config import check_config_obj
+        cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_cn="https://dns.alidns.com/dns-query")
+        errs, _ = check_config_obj(cfg)
+        self.assertEqual(errs, [], f"dns_cn DoH 配置不应触发引导死锁错误: {errs}")
+        self.assertEqual(cfg["route"]["default_domain_resolver"], "bootstrap-dns")
+
+    def test_cli_fails_when_all_nodes_invalid(self):
+        r = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "auto_config.py"),
+             "--version", "1.14", "--node", "not-a-valid-uri", "--mirror", "direct"],
+            capture_output=True, text=True, cwd=SCRIPTS
+        )
+        self.assertNotEqual(r.returncode, 0, "所有 --node 均无效时必须非 0 退出，防止静默下发假节点")
+
+    def test_tag_dedup_no_collision_with_existing_suffixed_tag(self):
+        cfg = build_config(
+            version="1.14", dns_mode="fakeip", mirror="direct",
+            node_uris=[
+                "trojan://p@1.1.1.1:443#HK",
+                "trojan://p@2.2.2.2:443#HK-1",
+                "trojan://p@3.3.3.3:443#HK",
+            ]
+        )
+        tags = [o["tag"] for o in cfg["outbounds"] if o["type"] == "trojan"]
+        self.assertEqual(len(tags), len(set(tags)), f"出站标签发生碰撞: {tags}")
+
 if __name__ == "__main__":
     unittest.main()

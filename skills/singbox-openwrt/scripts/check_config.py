@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OpenWrt sing-box 静态合规与防坑深度审计工具 (v3.0)
+OpenWrt sing-box 静态合规与防坑深度审计工具 (v3.1)
 检查内容：
 1. 废弃语法 (inbounds 中的 sniff, inet4_address 等)
-2. 路由防环与防死锁 (auto_detect_interface, default_domain_resolver)
+2. 路由防环与防死锁 (auto_detect_interface, default_domain_resolver 纯 IP 校验)
 3. 闪存磨损保护 (experimental.cache_file.path 必须指向 /tmp 或外部盘)
-4. 引用完整性与悬空检查 (Rule-set, Outbounds, DNS servers, HTTP clients)
-5. 版本字段门控 (1.13 与 1.14 专属字段混用检测)
-6. outbound.network 枚举合法性 (只接受 tcp/udp)
+4. 引用完整性与悬空检查 (Rule-set 含嵌套 logical 规则, Outbounds, route.final, selector.default, DNS servers, HTTP clients)
+5. 全局重复 Tag 冲突检测与空策略组检测
+6. 版本字段门控 (1.13 与 1.14 专属字段混用检测)
+7. outbound.network 枚举合法性 (只接受 tcp/udp)
 
 本模块同时被 auto_config.py 复用：生成配置后先过 check_config_obj，
 有阻断错误绝不输出（保证“一次成功”）。
@@ -17,7 +18,7 @@ OpenWrt sing-box 静态合规与防坑深度审计工具 (v3.0)
 import sys
 import os
 import json
-import re
+import ipaddress
 
 # 中文 Windows 控制台 (cp936) 无法编码 emoji/部分字符，统一重配为 UTF-8 输出
 for _s in (sys.stdout, sys.stderr):
@@ -25,6 +26,29 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+
+def _is_ip_literal(addr: str) -> bool:
+    """使用标准库 ipaddress 严格校验纯 IPv4 / IPv6 字面量，防止 'dns.alidns.com:53' 等带冒号域名绕过。"""
+    s = str(addr or "").strip().strip("[]")
+    if not s:
+        return False
+    try:
+        ipaddress.ip_address(s)
+        return True
+    except ValueError:
+        return False
+
+
+def _iter_rules_recursive(rules):
+    """递归遍历规则列表（包含 type=logical 的嵌套子规则），返回 (top_idx, rule_dict)。"""
+    for idx, r in enumerate(rules or []):
+        if not isinstance(r, dict):
+            continue
+        yield idx, r
+        if r.get("type") == "logical" and isinstance(r.get("rules"), list):
+            for _, sub_r in _iter_rules_recursive(r.get("rules")):
+                yield idx, sub_r
 
 
 def check_config_obj(cfg):
@@ -51,11 +75,25 @@ def check_config_obj(cfg):
     if cfg.get("inbounds") is not None and not isinstance(cfg.get("inbounds"), list):
         errors.append("[数据结构错误] inbounds 模块必须是列表 (list)")
 
-    # 收集全部已定义的各类 Tag，安全过滤非 dict 项与空 tag
-    dns_servers = {s.get("tag") for s in (dns.get("servers") or []) if isinstance(s, dict) and s.get("tag")}
-    all_outbounds = {o.get("tag") for o in outbounds if o.get("tag")}
-    all_rulesets = {r.get("tag") for r in (route.get("rule_set") or []) if isinstance(r, dict) and r.get("tag")}
-    all_http_clients = {c.get("tag") for c in http_clients if c.get("tag")}
+    # 0. 检查各模块是否存在重复 Tag 冲突
+    def _collect_tags(items, module_name):
+        seen = set()
+        for idx, item in enumerate(items or []):
+            if not isinstance(item, dict):
+                continue
+            t = item.get("tag")
+            if t:
+                if t in seen:
+                    errors.append(f"[重复标签] {module_name}[{idx}] 存在重复的 tag: '{t}'！")
+                seen.add(t)
+        return seen
+
+    dns_servers = _collect_tags(dns.get("servers"), "dns.servers")
+    all_outbounds = _collect_tags(outbounds, "outbounds")
+    all_inbounds = _collect_tags(inbounds, "inbounds")
+    all_rulesets = _collect_tags(route.get("rule_set"), "route.rule_set")
+    all_http_clients = _collect_tags(http_clients, "http_clients")
+    _ = all_inbounds
 
     # 1. 检查 route 模块
     if not route:
@@ -75,13 +113,17 @@ def check_config_obj(cfg):
             if resolver_entry:
                 r_server = str(resolver_entry.get("server", "")).strip()
                 r_type = resolver_entry.get("type", "")
-                if r_server and r_type not in ("local", "hosts"):
-                    if not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", r_server) and ":" not in r_server and not r_server.startswith("["):
+                if r_server and r_type not in ("local", "hosts", "fakeip"):
+                    if not _is_ip_literal(r_server):
                         errors.append(f"[致命递归死锁] route.default_domain_resolver 指向的 '{resolver}' 服务器地址为域名 '{r_server}'！引导解析器自身地址必须为纯 IP，否则启动即陷入 DNS 递归死锁！")
 
         http_client = route.get("default_http_client")
         if http_client and http_client not in all_http_clients:
             errors.append(f"[悬空引用] route.default_http_client 声明为 '{http_client}'，但顶级 http_clients 中未找到该 client！")
+
+        final_ob = route.get("final")
+        if final_ob and final_ob not in all_outbounds:
+            errors.append(f"[悬空引用] route.final 指向不存在的 outbound: '{final_ob}'！")
 
         rules = [r for r in (route.get("rules") or []) if isinstance(r, dict)]
         has_sniff = any(r.get("action") == "sniff" for r in rules)
@@ -92,8 +134,8 @@ def check_config_obj(cfg):
         if not has_hijack_dns:
             warnings.append("[DNS 风险] route.rules 中未发现 {'action': 'hijack-dns'} 规则，局域网 DNS 可能无法被截获。")
 
-        # 检查 route.rules 中的 outbound 和 rule_set 引用
-        for idx, r in enumerate(rules):
+        # 检查 route.rules（含嵌套 logical 子规则）中的 outbound 和 rule_set 引用
+        for idx, r in _iter_rules_recursive(rules):
             ob = r.get("outbound")
             if ob and ob not in all_outbounds:
                 errors.append(f"[悬空引用] route.rules[{idx}] 引用了不存在的 outbound: '{ob}'！")
@@ -107,9 +149,9 @@ def check_config_obj(cfg):
                 if rs not in all_rulesets:
                     errors.append(f"[悬空引用] route.rules[{idx}] 引用了未在 route.rule_set 中定义的规则集: '{rs}'！")
 
-    # 2. 检查 dns 模块的引用完整性
+    # 2. 检查 dns 模块的引用完整性（含嵌套 logical 子规则）
     dns_rules = [dr for dr in (dns.get("rules") or []) if isinstance(dr, dict)]
-    for idx, dr in enumerate(dns_rules):
+    for idx, dr in _iter_rules_recursive(dns_rules):
         target_server = dr.get("server")
         if target_server and target_server not in dns_servers and target_server != "hosts":
             errors.append(f"[悬空引用] dns.rules[{idx}] 指向不存在的 DNS server: '{target_server}'！")
@@ -133,26 +175,41 @@ def check_config_obj(cfg):
         s_detour = s.get("detour")
         if s_detour and s_detour not in all_outbounds:
             errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 detour 指向未定义的 outbound: '{s_detour}'！")
+        s_resolver = s.get("domain_resolver")
+        if s_resolver and s_resolver not in dns_servers:
+            errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 指向未定义的 DNS server: '{s_resolver}'！")
 
     # 3. 检查 outbounds 模块及内部引用
     for idx, ob in enumerate(outbounds):
         ob_type = ob.get("type", "")
+        ob_tag = ob.get("tag")
         if ob_type in ["selector", "urltest"]:
-            sub_obs = ob.get("outbounds") or []
-            if isinstance(sub_obs, list):
+            sub_obs = ob.get("outbounds")
+            if not isinstance(sub_obs, list) or len(sub_obs) == 0:
+                errors.append(f"[空策略组] outbound[{idx}]({ob_tag}) 的 outbounds 列表不能为空！")
+            else:
                 for so in sub_obs:
                     if so not in all_outbounds:
-                        errors.append(f"[悬空引用] outbound[{idx}]({ob.get('tag')}) 列表中引用了未定义的 outbound: '{so}'！")
+                        errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 列表中引用了未定义的 outbound: '{so}'！")
+                    elif ob_tag and so == ob_tag:
+                        errors.append(f"[自环引用] outbound[{idx}]({ob_tag}) 列表中不能自引用自身 '{ob_tag}'！")
+                if ob_type == "selector" and ob.get("default"):
+                    def_tag = ob.get("default")
+                    if def_tag not in sub_obs:
+                        errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 default 指向 '{def_tag}'，但该标签不在其 outbounds 列表中！")
 
         # 检查代理链与 detour 引用完整性
         ob_detour = ob.get("detour")
-        if ob_detour and ob_detour not in all_outbounds:
-            errors.append(f"[悬空引用] outbound[{idx}]({ob.get('tag')}) 的 detour 指向未定义的 outbound: '{ob_detour}'！")
+        if ob_detour:
+            if ob_detour not in all_outbounds:
+                errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 detour 指向未定义的 outbound: '{ob_detour}'！")
+            elif ob_tag and ob_detour == ob_tag:
+                errors.append(f"[自环引用] outbound[{idx}]({ob_tag}) 的 detour 不能指向自身！")
 
         # network 字段只接受 tcp/udp；ws/grpc 必须走 transport（常见笔误）
         net = ob.get("network")
         if net and net not in ("tcp", "udp"):
-            errors.append(f"[非法字段] outbound[{idx}]({ob.get('tag')}) 的 'network' 设为 '{net}'，sing-box 只接受 'tcp'/'udp'！ws/grpc 请使用 'transport' 块。")
+            errors.append(f"[非法字段] outbound[{idx}]({ob_tag}) 的 'network' 设为 '{net}'，sing-box 只接受 'tcp'/'udp'！ws/grpc 请使用 'transport' 块。")
 
     # 4. 检查 inbounds 模块
     for idx, ib in enumerate(inbounds):
@@ -220,18 +277,16 @@ def check_config_obj(cfg):
 
     # 7. 节点服务器域名解析防死锁闭环审计 (Bootstrap DNS Check)
     node_domains = set()
-    ipv4_pat = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
     for ob in outbounds:
         if ob.get("type") in ("vless", "hysteria2", "trojan", "shadowsocks", "vmess"):
-            srv = ob.get("server", "")
-            if srv and not ipv4_pat.match(srv) and ":" not in srv and not srv.startswith("["):
+            srv = str(ob.get("server") or "").strip()
+            if srv and not _is_ip_literal(srv):
                 node_domains.add(srv)
 
     if node_domains:
         has_resolver = bool(route.get("default_domain_resolver"))
-        dns_rules = [dr for dr in (dns.get("rules") or []) if isinstance(dr, dict)]
         explicit_domains = set()
-        for dr in dns_rules:
+        for _, dr in _iter_rules_recursive(dns_rules):
             d_field = dr.get("domain", [])
             if isinstance(d_field, str):
                 d_field = [d_field]

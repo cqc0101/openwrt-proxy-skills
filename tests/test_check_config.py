@@ -156,5 +156,59 @@ class TestFuzzAndEdgeCases(unittest.TestCase):
         self.assertTrue(any("致命递归死锁" in e for e in errs), "引导 DNS 自身地址为域名必须被阻断")
 
 
+class TestAuditHardeningCheckConfig(unittest.TestCase):
+    def test_duplicate_outbound_tags_blocked(self):
+        errs, _ = run({
+            "outbounds": [
+                {"type": "direct", "tag": "dup"},
+                {"type": "block", "tag": "dup"},
+            ]
+        })
+        self.assertTrue(any("重复标签" in e for e in errs))
+
+    def test_dangling_route_final_blocked(self):
+        errs, _ = run({
+            "route": {"final": "non-existent-final"},
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("route.final" in e for e in errs))
+
+    def test_dangling_selector_default_and_empty_outbounds_blocked(self):
+        errs1, _ = run({
+            "outbounds": [
+                {"type": "selector", "tag": "proxy", "outbounds": ["direct"], "default": "missing"},
+                {"type": "direct", "tag": "direct"},
+            ]
+        })
+        self.assertTrue(any("default" in e for e in errs1))
+
+        errs2, _ = run({
+            "outbounds": [{"type": "urltest", "tag": "auto", "outbounds": []}]
+        })
+        self.assertTrue(any("空策略组" in e for e in errs2))
+
+    def test_nested_logical_ruleset_dangling_blocked(self):
+        errs, _ = run({
+            "route": {
+                "rules": [{
+                    "type": "logical",
+                    "mode": "and",
+                    "rules": [{"rule_set": "ghost-rs"}],
+                    "action": "route",
+                    "outbound": "direct",
+                }]
+            },
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("ghost-rs" in e for e in errs))
+
+    def test_domain_resolver_with_colon_port_or_url_blocked(self):
+        for bad_srv in ("dns.alidns.com:53", "https://dns.alidns.com/dns-query"):
+            errs, _ = run({
+                "dns": {"servers": [{"tag": "r", "type": "udp", "server": bad_srv}]},
+                "route": {"default_domain_resolver": "r"},
+            })
+            self.assertTrue(any("致命递归死锁" in e for e in errs), f"未拦截非 IP 引导地址: {bad_srv}")
+
 if __name__ == "__main__":
     unittest.main()

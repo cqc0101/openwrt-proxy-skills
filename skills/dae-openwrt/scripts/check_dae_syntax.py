@@ -18,12 +18,25 @@ for _s in (sys.stdout, sys.stderr):
 
 
 def _strip_comments(line: str) -> str:
-    """去掉行首注释与行尾 # 注释，避免误判。"""
-    line = line.strip()
-    if line.startswith("#"):
+    """感知单双引号边界剥离行首与行尾 # 注释，防止误截断节点 URI 中的 #fragment。"""
+    s = line.strip()
+    if s.startswith("#"):
         return ""
-    # dae 用 # 注释；字符串内的 # 极少见，按简单规则处理
-    return line.split("#", 1)[0].strip()
+    in_single = False
+    in_double = False
+    out = []
+    for ch in s:
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            out.append(ch)
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            out.append(ch)
+        elif ch == "#" and not in_single and not in_double:
+            break
+        else:
+            out.append(ch)
+    return "".join(out).strip()
 
 
 def check_dae_syntax(filepath):
@@ -40,7 +53,7 @@ def check_dae_syntax(filepath):
     for idx, line in enumerate(lines, 1):
         if not line:
             continue
-        matches = re.findall(r'(\w+:\s*"[^"]*"|->\s*"[^"]*")', line)
+        matches = re.findall(r'([\w\'\-]+:\s*"[^"]*"|->\s*"[^"]*")', line)
         for m in matches:
             if not m.startswith('ext:'):
                 errors.append(f"第 {idx} 行疑似违反单引号规范: {m}。建议统一使用单引号 '...'（ext:\"file.dat:tag\" 除外）。")
@@ -66,19 +79,16 @@ def check_dae_syntax(filepath):
                         "（如 '!domain(geosite:a, geosite:b) -> proxy'），拆成两行会变成 OR 逻辑，大量流量被误送代理。")
 
     # 5. 检查 DNS 污染重查闭环
-    if "ip(geoip:private)" in content and "!qname(geosite:cn)" in content:
+    if "ip(geoip:private)" in content:
         resp_blocks = re.findall(r'response\s*\{([^}]*)\}', content, flags=re.S)
-        ok = False
         for block in resp_blocks:
-            # 可信上游白名单必须在重查规则之前出现
-            m_accept = re.search(r'upstream\([^)]*\)\s*->\s*accept', block)
-            m_relookup = re.search(r'ip\(geoip:private\)', block)
-            if m_accept and (not m_relookup or m_accept.start() < m_relookup.start()):
-                ok = True
-                break
-        if not ok:
-            errors.append("[DNS 投毒死循环高危] 配置了私网 IP 污染重查，但 response 块中缺少位于其前的"
-                          "可信上游白名单放行（'upstream(...) -> accept'），会导致无限递归重查！")
+            m_relookup = re.search(r'ip\(geoip:private\)[^->\n]*->\s*(?!accept\b|reject\b)\w+', block)
+            if m_relookup:
+                m_accept = re.search(r'upstream\([^)]*\)\s*->\s*accept', block)
+                if not m_accept or m_accept.start() >= m_relookup.start():
+                    errors.append("[DNS 投毒死循环高危] 配置了私网 IP 污染重查，但 response 块中缺少位于其前的"
+                                  "可信上游白名单放行（'upstream(...) -> accept'），会导致无限递归重查！")
+                    break
 
     return errors, warnings
 

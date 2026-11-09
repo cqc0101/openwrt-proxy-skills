@@ -6,6 +6,7 @@
 支持探针探测 (probe)、配置下发 (deploy)、防火墙注入 (fw4) 与 7 步全链路诊断。
 """
 
+import io
 import json
 import os
 import re

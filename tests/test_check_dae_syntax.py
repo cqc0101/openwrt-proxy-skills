@@ -138,5 +138,25 @@ routing { pname(dnsmasq) -> must_direct }
         self.assertTrue(any("lan_interface" in w for w in warnings))
 
 
+    def test_double_quoted_node_with_fragment_flagged(self):
+        errors, _ = check("""
+global {
+    lan_interface: br-lan
+    wan_interface: auto
+}
+node {
+    my_node: "trojan://pw@1.2.3.4:443#MyTag"
+}
+routing {
+    pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct
+}
+""")
+        self.assertTrue(any("单引号" in e for e in errors), f"带 #fragment 的双引号节点未被拦截: {errors}")
+
+    def test_openwrt_dae_has_dns_request_canary_rejection(self):
+        with open(os.path.join(REPO, "skills", "dae-openwrt", "assets", "templates", "openwrt.dae"), encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("qname('use-application-dns.net'", content)
+
 if __name__ == "__main__":
     unittest.main()

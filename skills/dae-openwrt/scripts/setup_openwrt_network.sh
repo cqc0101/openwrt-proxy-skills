@@ -5,7 +5,7 @@
 # 1. 内核转发限制：激活 net.ipv4.ip_forward=1 并持久化
 # 2. 流量分载关闭：关闭 flow_offloading，防止报文绕过 eBPF 挂载点
 # 3. MSS 钳制 (MSS Clamping)：激活 mtu_fix=1
-# 4. 旁路由支持：支持 --bypass 开启 LAN 伪装 (masquerade=1)，消除非对称路由丢包
+# 4. 旁路由支持：支持 --bypass 开启 LAN 伪装 (masq=1)，消除非对称路由丢包
 # 5. Dnsmasq 纯净过滤：激活 filter_aaaa='1' 根治国内手机 App 打开转圈假死
 # 6. 系统性能调优：激活 BBR + fq_codel 算法与扩充连接池
 # 7. 安全回滚支持：支持 --revert 一键无损还原原始网络基线
@@ -43,16 +43,24 @@ run_dae_hardening() {
 
     if [ "$ACTION_FLAG" = "--revert" ]; then
         say "${YELLOW}[REVERT] 正在撤销 dae 网络加固并还原基线...${NC}"
+        if [ -f /etc/dae/.flow_offload.bak ]; then
+            . /etc/dae/.flow_offload.bak
+            [ -n "${ORIG_SW_OFFLOAD:-}" ] && uci set "firewall.@defaults[0].flow_offloading=${ORIG_SW_OFFLOAD}" 2>/dev/null || uci delete firewall.@defaults[0].flow_offloading 2>/dev/null || true
+            [ -n "${ORIG_HW_OFFLOAD:-}" ] && uci set "firewall.@defaults[0].flow_offloading_hw=${ORIG_HW_OFFLOAD}" 2>/dev/null || uci delete firewall.@defaults[0].flow_offloading_hw 2>/dev/null || true
+            rm -f /etc/dae/.flow_offload.bak
+        fi
         if [ -n "$LAN_INDEX" ]; then
             uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
             uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
-            uci commit firewall 2>/dev/null || true
-            /etc/init.d/firewall reload 2>/dev/null || true
+            uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
         fi
+        uci commit firewall 2>/dev/null || true
+        /etc/init.d/firewall reload 2>/dev/null || true
         rm -f /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
         uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         uci commit dhcp 2>/dev/null || true
         /etc/init.d/dnsmasq reload 2>/dev/null || true
+        /etc/init.d/sysctl restart 2>/dev/null || sysctl -p 2>/dev/null || true
         say "${GREEN}[OK] 基线还原完成！${NC}"
         return 0
     fi
@@ -83,6 +91,12 @@ SYSCTL_EOF
 
     say "${BLUE}[2/5] 关闭流量分载 (Flow Offloading，防止报文跳过 eBPF 探针)...${NC}"
     if command -v uci >/dev/null 2>&1; then
+        if [ ! -f /etc/dae/.flow_offload.bak ]; then
+            mkdir -p /etc/dae
+            _sw=$(uci get firewall.@defaults[0].flow_offloading 2>/dev/null || echo "")
+            _hw=$(uci get firewall.@defaults[0].flow_offloading_hw 2>/dev/null || echo "")
+            printf "ORIG_SW_OFFLOAD='%s'\nORIG_HW_OFFLOAD='%s'\n" "$_sw" "$_hw" > /etc/dae/.flow_offload.bak
+        fi
         uci set firewall.@defaults[0].flow_offloading='0' 2>/dev/null || true
         uci set firewall.@defaults[0].flow_offloading_hw='0' 2>/dev/null || true
         uci commit firewall 2>/dev/null || true
@@ -97,10 +111,10 @@ SYSCTL_EOF
     fi
 
     if [ "$ACTION_FLAG" = "--bypass" ]; then
-        say "${YELLOW}[旁路由] 检测到 --bypass 参数，激活 LAN 区域动态伪装 (masq/masquerade=1，消除非对称丢包)...${NC}"
+        say "${YELLOW}[旁路由] 检测到 --bypass 参数，激活 LAN 区域动态伪装 (masq=1，消除非对称丢包)...${NC}"
         if [ -n "$LAN_INDEX" ]; then
             uci set firewall.@zone[${LAN_INDEX}].masq='1' 2>/dev/null || true
-            uci set firewall.@zone[${LAN_INDEX}].masquerade='1' 2>/dev/null || true
+            uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
             uci commit firewall 2>/dev/null || true
             /etc/init.d/firewall reload 2>/dev/null || true
         fi
@@ -136,16 +150,22 @@ else
                 EXTRA_FLAG="$1"
                 ;;
             -u|--user)
+                [ $# -ge 2 ] || { say "${RED}[ERROR] 参数 $1 缺少用户名取值${NC}"; exit 1; }
                 shift
                 SSH_USER="${1:-root}"
+                SSH_USER_SET=1
                 ;;
             -p|--port)
+                [ $# -ge 2 ] || { say "${RED}[ERROR] 参数 $1 缺少端口号取值${NC}"; exit 1; }
                 shift
                 SSH_PORT="${1:-22}"
+                SSH_PORT_SET=1
                 ;;
             -i|--key)
+                [ $# -ge 2 ] || { say "${RED}[ERROR] 参数 $1 缺少密钥文件路径${NC}"; exit 1; }
                 shift
                 SSH_KEY="${1:-}"
+                SSH_KEY_SET=1
                 ;;
             *)
                 if [ -z "$SSH_USER_SET" ]; then
@@ -163,13 +183,30 @@ else
         shift
     done
 
-    KEY_OPTS=""
+    case "$ROUTER_IP" in
+        -*|*[[:space:]]*|"")
+            say "${RED}[ERROR] 非法的目标路由器地址: $ROUTER_IP${NC}"
+            exit 1
+            ;;
+    esac
+    case "$SSH_USER" in
+        -*|*[[:space:]]*|"")
+            say "${RED}[ERROR] 非法的 SSH 用户名: $SSH_USER${NC}"
+            exit 1
+            ;;
+    esac
+    case "$SSH_PORT" in
+        *[!0-9]*|"")
+            say "${RED}[ERROR] 非法的 SSH 端口: $SSH_PORT${NC}"
+            exit 1
+            ;;
+    esac
+
+    say "${BLUE}[INFO]${NC} 正在连接路由器 ${SSH_USER}@${ROUTER_IP}:${SSH_PORT} 执行 dae 网络加固..."
     if [ -n "$SSH_KEY" ]; then
         [ -f "$SSH_KEY" ] || { say "${RED}指定的 SSH 密钥文件不存在: $SSH_KEY${NC}"; exit 1; }
-        KEY_OPTS="-i ${SSH_KEY}"
+        ssh -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
+    else
+        ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
     fi
-
-    SSH_CMD="ssh ${KEY_OPTS} -p ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${SSH_USER}@${ROUTER_IP}"
-    say "${BLUE}[INFO]${NC} 正在连接路由器 ${SSH_USER}@${ROUTER_IP}:${SSH_PORT} 执行 dae 网络加固..."
-    cat "$0" | $SSH_CMD "sh -s -- ${EXTRA_FLAG}"
 fi

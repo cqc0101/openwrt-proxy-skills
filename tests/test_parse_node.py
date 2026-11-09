@@ -250,5 +250,35 @@ class TestSplitHostPortAndB64(unittest.TestCase):
         self.assertEqual(p, 8888)
 
 
+class TestAuditHardeningParseNode(unittest.TestCase):
+    def test_sip002_urlencoded_base64(self):
+        import urllib.parse
+        raw = "aes-256-gcm:my_secret_pass"
+        b64_urlencoded = urllib.parse.quote(base64.b64encode(raw.encode()).decode())
+        ob = parse_shadowsocks(f"ss://{b64_urlencoded}@1.2.3.4:8388#TestSS")
+        self.assertEqual(ob["password"], "my_secret_pass")
+
+    def test_hysteria2_user_password_auth(self):
+        ob = parse_hysteria2("hysteria2://myuser:mypass@1.2.3.4:443#TestHY2")
+        self.assertEqual(ob["password"], "myuser:mypass")
+
+    def test_hysteria2_port_hopping(self):
+        ob = parse_hysteria2("hysteria2://pass@1.2.3.4:20000-50000?sni=example.com#HY2")
+        self.assertEqual(ob["server_port"], 20000)
+        self.assertEqual(ob["server_ports"], ["20000:50000"])
+
+    def test_shadowsocks_plain_default_port(self):
+        ob = parse_shadowsocks("ss://aes-256-gcm:pass@1.2.3.4#SSNoPort")
+        self.assertEqual(ob["server_port"], 8388)
+
+    def test_vmess_empty_ps_fallback_to_fragment_or_server(self):
+        import json
+        vm = {"v": "2", "ps": "", "add": "1.2.3.4", "port": "443", "id": "11111111-2222-3333-4444-555555555555"}
+        b64 = base64.b64encode(json.dumps(vm).encode()).decode()
+        ob1 = parse_vmess(f"vmess://{b64}#FragName")
+        self.assertEqual(ob1["tag"], "FragName")
+        ob2 = parse_vmess(f"vmess://{b64}")
+        self.assertEqual(ob2["tag"], "vmess-1.2.3.4")
+
 if __name__ == "__main__":
     unittest.main()

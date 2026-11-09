@@ -4,7 +4,7 @@
 # 纯 POSIX /bin/sh 编写，智能解析 sing-box / dae 运行日志并提供针对性解法
 # 支持标准输出 (带颜色) 或机器可读 JSON 输出 (-j / --json)
 # ==============================================================================
-# [共享脚本] 本文件与 dae-openwrt/scripts/doctor.sh 完全一致，修改需双份同步！
+# [共享脚本] 本文件与 singbox-openwrt/scripts/doctor.sh 完全一致，修改需双份同步！
 
 OUTPUT_JSON=0
 SERVICE_NAME="all"
@@ -79,8 +79,10 @@ if ip link show tun0 >/dev/null 2>&1; then
     TUN_EXISTS=1
 fi
 
-if command -v netstat >/dev/null 2>&1; then
-    netstat -tuln 2>/dev/null | grep -q ":53 " && PORT53_OPEN=1
+if command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+    PORT53_OPEN=1
+elif command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+    PORT53_OPEN=1
 fi
 
 FW_TUN_OK=0
@@ -169,7 +171,7 @@ say "${BOLD}================================================================${NC
 # 进程与接口状态检测
 if [ "$SERVICE_NAME" = "sing-box" ]; then
     if [ "$SINGBOX_RUNNING" -eq 0 ]; then
-        add_issue "service_stopped" "error" "sing-box 进程未运行" "sing-box 服务处于停止或异常退出状态" "/etc/init.d/sing-box restart"
+        add_issue "service_stopped" "error" "sing-box 进程未运行" "sing-box 服务处于停止或异常退出状态" "uci set sing-box.main.enabled='1' 2>/dev/null; uci set sing-box.main.user='root' 2>/dev/null; uci commit sing-box 2>/dev/null; /etc/init.d/sing-box restart"
     fi
     if [ "$TUN_EXISTS" -eq 0 ]; then
         add_issue "tun_missing" "warning" "tun0 虚拟网卡未就绪" "系统未检测到 tun0 网卡接口，流量无法通过 TUN 转发" "sh /etc/sing-box/setup_openwrt_network.sh"
@@ -178,7 +180,9 @@ if [ "$SERVICE_NAME" = "sing-box" ]; then
     fi
 elif [ "$SERVICE_NAME" = "dae" ]; then
     if [ "$DAE_RUNNING" -eq 0 ]; then
-        add_issue "service_stopped" "error" "dae 进程未运行" "dae / daed 服务处于停止状态" "/etc/init.d/dae restart"
+        DAE_INIT_CMD="/etc/init.d/dae restart"
+        [ -x /etc/init.d/daed ] && [ ! -x /etc/init.d/dae ] && DAE_INIT_CMD="/etc/init.d/daed restart"
+        add_issue "service_stopped" "error" "dae 进程未运行" "dae / daed 服务处于停止状态" "$DAE_INIT_CMD"
     fi
 fi
 
@@ -189,13 +193,13 @@ if [ -n "$RAW_LOGS" ]; then
         add_issue "tls_clock_skew" "error" "TLS 证书与时间同步异常" "系统时钟未对齐 (如停留在 1970 年)，导致 TLS 握手被拒" "ntpd -q -p ntp.aliyun.com"
     fi
 
-    # 特征 2: 上游 DNS 递归死锁或解析超时
+    # 特征 2: 上游 DNS 递归死锁或解析超时（严禁将 Dnsmasq server 指向未监听的 本地死端口 避免全网断网）
     if echo "$RAW_LOGS" | grep -qiE "temporary failure in name resolution|lookup .* i/o timeout|server failure"; then
-        add_issue "dns_lookup_timeout" "error" "DNS 解析超时与自环死锁风险" "无法解析节点 VPS 域名或规则集，可能上游 DNS 递归死锁" "uci set dhcp.@dnsmasq[0].server='127.0.0.1#5335' && uci commit dhcp && /etc/init.d/dnsmasq restart"
+        add_issue "dns_lookup_timeout" "error" "DNS 解析超时与自环死锁风险" "无法解析节点 VPS 域名或规则集，可能上游 DNS 递归死锁" "uci delete dhcp.@dnsmasq[0].server 2>/dev/null; uci commit dhcp && /etc/init.d/dnsmasq restart"
     fi
 
     # 特征 3: 规则集下载被阻断 (冷启动死锁)
-    if echo "$RAW_LOGS" | grep -qiE "download rule-set|rule.?set.*(download|fetch|error|timeout|deadline|failed|context deadline exceeded)|raw\.githubusercontent\.com|githubusercontent\.com"; then
+    if echo "$RAW_LOGS" | grep -qiE "download rule-set.*(error|fail|timeout|deadline)|rule.?set.*(download|fetch|error|timeout|deadline|failed|context deadline exceeded)|(raw\.githubusercontent\.com|githubusercontent\.com).*(error|fail|timeout|deadline|refused|reset)"; then
         add_issue "ruleset_download_blocked" "error" "规则集下载被 GFW 阻断 (冷启动死锁)" "sing-box 启动时拉取 remote .srs 超时导致服务卡死" "重新生成配置并指定国内 CDN 镜像加速 (--mirror jsdelivr)，切勿显式配置 download_detour: direct (启动必崩)"
     fi
 

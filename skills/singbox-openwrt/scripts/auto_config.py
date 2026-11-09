@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OpenWrt sing-box 智能内核版本探测与专属配置生成器 (v2.0)
+OpenWrt sing-box 智能内核版本探测与专属配置生成器 (v2.1)
 功能：
 1. SSH 远程探测目标软路由的 sing-box 真实版本 (v1.13 / v1.14+)
 2. 根据版本自适应加载经过裁剪强化的 OpenWrt 专属模板 (FakeIP / RealIP)
@@ -14,6 +14,7 @@ import os
 import sys
 import json
 import re
+import ipaddress
 import argparse
 import subprocess
 
@@ -33,6 +34,18 @@ if SCRIPT_DIR not in sys.path:
 from parse_node import parse_uri
 from sub_parser import parse_source, extract_node_domains
 
+
+def _is_ip_literal(addr: str) -> bool:
+    s = str(addr or "").strip().strip("[]")
+    if not s:
+        return False
+    try:
+        ipaddress.ip_address(s)
+        return True
+    except ValueError:
+        return False
+
+
 def version_ge(major_minor: str, min_major: int, min_minor: int) -> bool:
     """按主/次版本号做数值比较，避免 float('1.20') < 1.14 之类的坑。"""
     try:
@@ -45,17 +58,25 @@ def version_ge(major_minor: str, min_major: int, min_minor: int) -> bool:
 
 
 def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
-    """通过 SSH 远程执行 sing-box version 探测版本"""
+    """通过 SSH 远程执行 sing-box version 探测版本（含参数注入防护）"""
+    host_str = str(host or "").strip()
+    user_str = str(user or "root").strip()
+    if not host_str or host_str.startswith("-") or re.search(r"\s", host_str):
+        raise ValueError(f"非法的目标主机地址: {host!r}")
+    if not user_str or user_str.startswith("-") or re.search(r"\s", user_str):
+        raise ValueError(f"非法的 SSH 用户名: {user!r}")
+
     ssh_cmd = [
         "ssh",
         "-o", "StrictHostKeyChecking=accept-new",
-        "-o", f"ConnectTimeout={timeout}",
-        "-p", str(port),
+        "-o", f"ConnectTimeout={int(timeout)}",
+        "-p", str(int(port)),
     ]
     if key_path:
-        ssh_cmd.extend(["-i", key_path])
+        ssh_cmd.extend(["-i", str(key_path)])
     ssh_cmd.extend([
-        f"{user}@{host}",
+        "--",
+        f"{user_str}@{host_str}",
         "sing-box version 2>&1 | head -n 1"
     ])
     try:
@@ -76,6 +97,7 @@ def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
         print(f"[!] 无法探测远程版本 ({e})，默认降级使用 1.13 稳定规范", file=sys.stderr)
         return "1.13", "Fallback-1.13"
 
+
 def apply_cdn_mirror(config, mirror_type="jsdelivr"):
     """为 remote rule_set 注入国内可访问的 CDN 镜像源，解决国内冷启动死锁"""
     if mirror_type == "direct":
@@ -87,7 +109,6 @@ def apply_cdn_mirror(config, mirror_type="jsdelivr"):
         if "raw.githubusercontent.com" in url:
             if mirror_type == "jsdelivr":
                 # 将 raw.githubusercontent.com/USER/REPO/BRANCH/PATH 转换为 testingcf.jsdelivr.net/gh/USER/REPO@BRANCH/PATH
-                # 例如: raw.githubusercontent.com/SagerNet/sing-ruleset/ruleset/geoip-cn.srs
                 m = re.match(r"https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(.*)", url)
                 if m:
                     user, repo, branch, path = m.groups()
@@ -101,7 +122,8 @@ def apply_cdn_mirror(config, mirror_type="jsdelivr"):
                     rs["url"] = f"https://fastly.jsdelivr.net/gh/{user}/{repo}@{branch}/{path}"
     return config
 
-def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15, wan_iface=None, dns_cn="alidns", dns_remote="google-dns", topology="main", main_router_ip=None):
+
+def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15, wan_iface=None, dns_cn="alidns", dns_remote="google-dns", topology="main", main_router_ip=None, clash_secret=None, strict_nodes=False):
     template_file = f"openwrt-{version}-tun-{dns_mode}.json"
     template_path = os.path.join(TEMPLATES_DIR, template_file)
 
@@ -131,6 +153,8 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
         config["experimental"]["clash_api"] = {}
     config["experimental"]["clash_api"]["external_controller"] = "0.0.0.0:9090"
     config["experimental"]["clash_api"].pop("external_ui", None)
+    if clash_secret is not None:
+        config["experimental"]["clash_api"]["secret"] = str(clash_secret)
 
     # 纯净 TUN 模式保护：禁用 auto_redirect 杜绝缺少 nfqueue 模块时的流量自环
     for ib in config.get("inbounds", []):
@@ -189,6 +213,19 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
             "114.114.114.114": ("114.114.114.114", "udp"),
         })
 
+    # 若国内 DNS (alidns) 被配置为域名型 DoH/DoT，自动注入纯 IP 引导解析器以消除自环死锁
+    bootstrap_resolver_tag = "alidns"
+    if cn_server_entry and not _is_ip_literal(cn_server_entry.get("server", "")):
+        bootstrap_resolver_tag = "bootstrap-dns"
+        if not any(s.get("tag") == bootstrap_resolver_tag for s in dns_servers):
+            dns_servers.append({
+                "tag": bootstrap_resolver_tag,
+                "type": "udp",
+                "server": "223.5.5.5"
+            })
+        cn_server_entry["domain_resolver"] = bootstrap_resolver_tag
+        config["route"]["default_domain_resolver"] = bootstrap_resolver_tag
+
     remote_server_entry = next((s for s in dns_servers if s.get("tag") == "google-dns"), None)
     if remote_server_entry and dns_remote:
         _configure_dns_server(remote_server_entry, dns_remote, {
@@ -201,6 +238,8 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
             "quad9": ("9.9.9.9", "https"),
             "9.9.9.9": ("9.9.9.9", "https"),
         }, detour="proxy")
+        if not _is_ip_literal(remote_server_entry.get("server", "")):
+            remote_server_entry["domain_resolver"] = bootstrap_resolver_tag
 
     # 2. 注入规则集国内镜像源（防冷启动死锁）
     if mirror and mirror != "direct":
@@ -226,19 +265,26 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
         except Exception as e:
             print(f"[!] 解析订阅源失败: {e}", file=sys.stderr)
 
+    if strict_nodes and (node_uris or sub_source) and not parsed_outbounds:
+        print("[FATAL] 未能从指定的 --node 或 --sub 中解析出任何有效节点！已中止生成以防止下发占位假节点导致断网。", file=sys.stderr)
+        sys.exit(1)
+
     # 4. 组装节点与策略组
     if parsed_outbounds:
-        # 与模板内置出站重名的节点标签必须避让，否则节点会被去重逻辑丢弃，
-        # 而 urltest/selector 里仍引用同名内置出站（如 direct/auto），造成错误路由或自引用
+        # 与模板内置出站重名的节点标签必须避让，且全局去重防止产生重复 tag
         reserved = {"proxy", "auto", "ai", "direct", "block"}
         clean_obs = []
         seen_tags = set()
         for o in parsed_outbounds:
-            tag = o.get("tag", "node")
+            raw_tag = str(o.get("tag") or "").strip()
+            tag = raw_tag or f"{o.get('type', 'node')}-{o.get('server', 'unknown')}"
             if tag in reserved:
                 tag = f"{tag}-node"
-            if tag in seen_tags:
-                tag = f"{tag}-{len(seen_tags)}"
+            base_tag = tag
+            suffix = 1
+            while tag in seen_tags:
+                tag = f"{base_tag}-{suffix}"
+                suffix += 1
             o["tag"] = tag
             seen_tags.add(tag)
             clean_obs.append(o)
@@ -251,14 +297,14 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
         if node_domains:
             for n in clean_obs:
                 if n.get("server") in node_domains:
-                    n["domain_resolver"] = "alidns"
+                    n["domain_resolver"] = bootstrap_resolver_tag
 
             dns_rules = config.get("dns", {}).get("rules", [])
             dns_insert_idx = 1 if dns_rules and dns_rules[0].get("server") == "hosts" else 0
             dns_rules.insert(dns_insert_idx, {
                 "action": "route",
                 "domain": node_domains,
-                "server": "alidns"
+                "server": bootstrap_resolver_tag
             })
             config["dns"]["rules"] = dns_rules
 
@@ -291,14 +337,12 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
                     ob["outbounds"] = ["proxy"] + node_tags
             
             # 将新节点保持正序插入到 direct / block 之前
-            # 找到 direct 或 block 的位置作为插入锚点
             insert_idx = len(outbounds)
             for i, o in enumerate(outbounds):
                 if o.get("tag") in ["direct", "block"]:
                     insert_idx = i
                     break
 
-            # 过滤掉已存在的同 tag 节点后插入
             existing_tags = {o.get("tag") for o in outbounds}
             nodes_to_insert = [n for n in clean_obs if n["tag"] not in existing_tags]
             outbounds[insert_idx:insert_idx] = nodes_to_insert
@@ -322,8 +366,9 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
 
     return config
 
+
 def main():
-    parser = argparse.ArgumentParser(description="OpenWrt sing-box 智能版本探测与配置生成器 (v2.0)")
+    parser = argparse.ArgumentParser(description="OpenWrt sing-box 智能版本探测与配置生成器 (v2.1)")
     parser.add_argument("--router", help="软路由 IP (指定后将自动 SSH 探测其安装的 sing-box 版本)")
     parser.add_argument("--user", default="root", help="SSH 用户名 (默认: root)")
     parser.add_argument("--port", type=int, default=22, help="SSH 端口 (默认: 22)")
@@ -339,6 +384,7 @@ def main():
     parser.add_argument("--dns-remote", default="google-dns", help="海外/被墙防污染 DNS 解析上游 (支持: google-dns / cloudflare / quad9 或自定义 IP/URL，默认: google-dns)")
     parser.add_argument("--topology", choices=["main", "bypass"], default="main", help="网络拓扑模式 (默认: main，旁路由模式请指定 bypass)")
     parser.add_argument("--main-router-ip", default=None, help="主路由 IP 地址 (旁路由模式下显式指定直连放行，如 192.168.1.1)")
+    parser.add_argument("--clash-secret", default=None, help="Clash API 访问口令 (可选，加固 9090 端口防止局域网未授权篡改)")
     parser.add_argument("-o", "--out", help="输出配置文件路径 (不指定则输出到标准输出)")
 
     args = parser.parse_args()
@@ -364,7 +410,9 @@ def main():
         dns_cn=args.dns_cn,
         dns_remote=args.dns_remote,
         topology=args.topology,
-        main_router_ip=args.main_router_ip
+        main_router_ip=args.main_router_ip,
+        clash_secret=args.clash_secret,
+        strict_nodes=True,
     )
 
     # 生成后自动静态审计：存在任何阻断错误绝不输出（“一次成功”保障）
@@ -385,6 +433,7 @@ def main():
         print(f"[+] 专属配置已生成并保存至: {args.out}", file=sys.stderr)
     else:
         print(out_json)
+
 
 if __name__ == "__main__":
     main()

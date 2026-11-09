@@ -15,7 +15,7 @@ description: >-
 
 ## 🚨 强制执行红线（任何任务开始前必读）
 
-1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒，经远端 `sing-box check` 通过后再原子替换，并保留快照备份用于自动回滚。
+1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒，经远端 `sing-box check` 通过后再备份原配置并原子替换，用于异常时自动回滚。
 2. **硬件保护红线**：`experimental.cache_file.path` 必须指向 `/tmp/sing-box-cache.db`（防闪存磨损）；TUN 模式必须放行 `tun0`（fw4）；`route.auto_detect_interface: true` 防自环；`route.default_domain_resolver` 防规则集下载死锁；dropbear/sshd 需做 OOM 保护。
 3. **绝不盲目猜测**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh --json` 诊断，再进行针对性修复。
 
@@ -56,10 +56,10 @@ description: >-
 [步骤 4: 静态门禁与沙盒预审] check_config.py (引用完整性/版本门控/闪存写保护锁定)
        │
        ▼
-[步骤 5: Agent 自主部署与回滚] SSH 管道原子发布 (沙盒 sing-box check -> mv 替换 -> 服务重启)
+[步骤 5: Agent 自主部署与回滚] SSH 管道原子发布 (沙盒 sing-box check -> 快照备份与 mv 替换 -> UCI 赋权重启)
        │
        ▼
-[步骤 6: 最后一公里网关接管] setup_openwrt_network.sh (内核转发 / tun0信任 / MSS钳制 / 53接管 / BBR调优)
+[步骤 6: 最后一公里网关接管] setup_openwrt_network.sh (内核转发 / tun0信任 / MSS钳制 / DNS路径清理 / BBR调优)
        │
        ▼
 [步骤 7: 结构化自愈诊断] doctor.sh --json + diagnose_dns.sh --json (解析错误码与自愈命令)
@@ -80,7 +80,7 @@ ssh root@192.168.1.1 "sh -s -- -j" < scripts/probe.sh
 1. **发行版与包管理器**：精准识别 OpenWrt 原版、ImmortalWrt 还是 iStoreOS；判断包管理器是经典 `opkg` 还是新系列 `apk`。
 2. **内核与 BTF 符号**：检测内核主次版本与 BTF 文件（`/sys/kernel/btf/vmlinux`）。
 3. **硬件资源评估**：精确区分 x86_64、aarch64、armv7、mips/mipsel 大小端；检测空闲 RAM 与 ROM，ROM 小于 15MB 自动警示并锁定 `/tmp` 缓存。
-4. **端口与冲突扫描**：检测 53 端口占用者，深度扫描是否有 PassWall、OpenClash、HomeProxy 等遗留插件未关闭。
+4. **端口与冲突扫描**：检测 53 端口占用者，深度扫描是否有 PassWall、OpenClash、HomeProxy、Nikki 等遗留插件未关闭。
 
 ---
 
@@ -104,10 +104,10 @@ python scripts/auto_config.py --version 1.14 --dns-mode fakeip --sub ./airport_c
 2. **规则与语法自动降级/升级**：
    - 若探测为 **v1.13**：自动选用 `openwrt-1.13-tun-fakeip.json`（默认）或 `--dns-mode realip` 的 `openwrt-1.13-tun-realip.json`，启用 `store_rdrc: true` 与 `independent_cache: true`（注：远程规则集严禁显式配置 `download_detour: "direct"`，不设即默认直连，否则启动即崩）。
    - 若探测为 **v1.14+**：自动选用 `openwrt-1.14-tun-fakeip.json`（默认）或 `--dns-mode realip` 的 `openwrt-1.14-tun-realip.json`，启用 `optimistic: true`、`store_dns: true` 及 `default_http_client`，彻底剔除已废弃的旧字段。
-3. **生成后自动静态审计（“一次成功”保障）**：`auto_config.py` 输出前会内置跑一遍 `check_config`——存在悬空引用、非法字段等阻断错误时**绝不输出文件**，先修再发。
+3. **生成后自动静态审计（“一次成功”保障）**：`auto_config.py` 输出前会内置跑一遍 `check_config`——存在悬空引用、重复标签、非法字段等阻断错误时**绝不输出文件**，先修再发。
 4. **国内首启动冷启动死锁消除 (`--mirror jsdelivr`)**：自动将 GitHub 原始链接替换为国内直接秒拉的 jsDelivr CDN 镜像，根除“未翻墙无法下载规则，无规则无法翻墙”的死锁问题。
 5. **机场广告过滤与节点上限保护 (`--max-nodes 15`)**：自动剔除垃圾公告节点，去重并限制节点数，彻底杜绝上百个节点冲垮低配路由器 256MB/512MB 内存。
-6. **强制注入 OpenWrt 物理网关防御**：不论哪个版本，一律强制注入 `/tmp/sing-box-cache.db` 闪存保护、`auto_detect_interface: true` 防环、`default_domain_resolver: "alidns"` 防规则集死锁及 `0.0.0.0:9090` Clash API 局域网控制。
+6. **强制注入 OpenWrt 物理网关防御**：不论哪个版本，一律强制注入 `/tmp/sing-box-cache.db` 闪存保护、`auto_detect_interface: true` 防环、`default_domain_resolver` 纯 IP 引导防死锁及 `0.0.0.0:9090` Clash API 局域网控制。
 
 ---
 
@@ -135,21 +135,21 @@ OpenWrt SPI 闪存擦写寿命极为脆弱，`experimental.cache_file.path` **�
 }
 ```
 * `auto_detect_interface: true`：自动将节点出站连接绑定到物理 WAN 口，彻底杜绝 TUN 流量自环。
-* `default_domain_resolver`：指定国内直连 DNS（如阿里 DNS `223.5.5.5`），确保启动初期拉取远程 `.srs` 规则集与解析 VPS 域名时不会死锁。
+* `default_domain_resolver`：指定国内直连纯 IP DNS（如阿里 DNS `223.5.5.5`），确保启动初期拉取远程 `.srs` 规则集与解析 VPS 域名时不会死锁。
 * **纯净 TUN 入站防自环**：TUN 入站严禁开启 `auto_redirect: true`（缺少 `kmod-nft-queue` 内核会导致 nfqueue 崩溃并退化为端口重定向自环死锁），统一使用纯净 L3 原生 TUN（`auto_redirect: false`）。
 
 ### 3. OpenWrt 原生网络接管闭环 (`setup_openwrt_network.sh`)
-自 OpenWrt 22.03 起（fw4 / nftables），任何未在防火墙中声明的虚拟网卡流量转发均被默认丢弃（DROP），且 Dnsmasq 占着 53 端口。必须直接在路由器上调用原生网络闭环脚本：
+自 OpenWrt 22.03 起（fw4 / nftables），任何未在防火墙中声明的虚拟网卡流量转发均被默认丢弃（DROP）。必须直接在路由器上调用原生网络闭环脚本：
 ```bash
 # 在软路由上直接执行闭环接管：
 sh /etc/sing-box/setup_openwrt_network.sh
-# 若为单网口旁路由，追加 --bypass 开启局域网 NAT 伪装：
+# 若为单网口旁路由，追加 --bypass 开启局域网 NAT 伪装 (masq='1')：
 sh /etc/sing-box/setup_openwrt_network.sh --bypass
 ```
 **闭环接管执行 5 大核心动作：**
 1. **精准定位 LAN Zone**：动态查询 `uci get firewall.@zone[i].name`，严禁硬编码 `@zone[0]`，将 `tun0` 安全注入 lan zone 并开启 `forward=ACCEPT`。
 2. **MSS 钳制 (MTU Clamping)**：开启 `mtu_fix='1'`，杜绝因 PPPoE MTU 1492 引起的大包握手卡死。
-3. **DNAT 53 端口强制重定向**：将局域网非本机 DNS 请求强制重定向至本机 53 端口。
+3. **DNS 转发路径清理**：清理遗留的本机 53 端口 DNAT 重定向规则，确保三层 `tun0` 的 `hijack-dns` 不被本机重定向短路。
 4. **Dnsmasq 接管与 AAAA 纯净过滤**：开启 `filter_aaaa='1'`，纯净返回 IPv4，根除手机 App 转圈假死。
 5. **系统内核网络调优**：写入 `/etc/sysctl.d/99-singbox.conf`，激活 BBR 拥塞控制与 65536 连接池。
 
@@ -196,8 +196,8 @@ ssh root@192.168.1.1 "cat > /tmp/config.json.test" < /tmp/config.json
 # 2. 远端沙盒严格语法与依赖校验
 ssh root@192.168.1.1 "sing-box check -c /tmp/config.json.test"
 
-# 3. 校验通过后原子替换生产配置并平滑重启服务
-ssh root@192.168.1.1 "mv /tmp/config.json.test /etc/sing-box/config.json && uci set sing-box.main.enabled='1' 2>/dev/null; /etc/init.d/sing-box restart"
+# 3. 校验通过后备份快照、原子替换生产配置、修正 UCI root 权限与内存工作目录并平滑重启
+ssh root@192.168.1.1 "[ -f /etc/sing-box/config.json ] && cp /etc/sing-box/config.json /tmp/config.json.bak; mv /tmp/config.json.test /etc/sing-box/config.json && uci set sing-box.main.enabled='1' 2>/dev/null && uci set sing-box.main.user='root' 2>/dev/null && uci set sing-box.main.workdir='/tmp/sing-box' 2>/dev/null && uci commit sing-box 2>/dev/null; /etc/init.d/sing-box restart"
 
 # 4. 执行网络闭环接管脚本
 ssh root@192.168.1.1 "sh -s" < scripts/setup_openwrt_network.sh

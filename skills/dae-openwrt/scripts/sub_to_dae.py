@@ -47,12 +47,12 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", template_
         tpl_text = f.read()
 
     node_block = to_dae_nodes(nodes)
-    # 替换模板中的 node { ... } 块
-    merged = re.sub(r"(?m)^node\s*\{[^}]*\}", lambda _: node_block, tpl_text, count=1)
+    # 替换模板中的 node { ... } 块（锚定行首闭括号，防止注释或密码中的 } 提前截断）
+    merged = re.sub(r"(?ms)^node\s*\{.*?^\}", lambda _: node_block, tpl_text, count=1)
     if lan_iface and lan_iface != "br-lan":
-        merged = re.sub(r"(?m)^(\s*lan_interface:\s*)\S+", f"\\g<1>{lan_iface}", merged)
+        merged = re.sub(r"(?m)^(\s*lan_interface:\s*)\S+", lambda m: f"{m.group(1)}{lan_iface}", merged)
     if wan_iface and wan_iface != "auto":
-        merged = re.sub(r"(?m)^(\s*wan_interface:\s*)\S+", f"\\g<1>{wan_iface}", merged)
+        merged = re.sub(r"(?m)^(\s*wan_interface:\s*)\S+", lambda m: f"{m.group(1)}{wan_iface}", merged)
     return merged
 
 

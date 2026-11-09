@@ -38,21 +38,25 @@ fi
 DISTRO="OpenWrt"
 DISTRO_VER="Unknown"
 DISTRO_TARGET="Unknown"
+DISTRO_DESC=""
 
 if [ -f /etc/openwrt_release ]; then
     . /etc/openwrt_release
     DISTRO="${DISTRIB_ID:-OpenWrt}"
     DISTRO_VER="${DISTRIB_RELEASE:-Unknown}"
     DISTRO_TARGET="${DISTRIB_TARGET:-Unknown}"
+    DISTRO_DESC="${DISTRIB_DESCRIPTION:-} ${DISTRIB_REVISION:-}"
 elif [ -f /etc/os-release ]; then
     DISTRO=$(grep "^NAME=" /etc/os-release | cut -d'=' -f2 | tr -d '"')
     DISTRO_VER=$(grep "^VERSION_ID=" /etc/os-release | cut -d'=' -f2 | tr -d '"')
+    DISTRO_DESC=$(grep "^PRETTY_NAME=" /etc/os-release | cut -d'=' -f2 | tr -d '"')
 fi
 
 # 判断具体变体 (iStoreOS / ImmortalWrt / 原版)
-if [ -f /etc/istoreos_release ] || echo "$DISTRO" | grep -qi "iStoreOS"; then
+# 真机 iStoreOS 的 DISTRIB_ID 常为 OpenWrt，需结合 DISTRIB_DESCRIPTION 与 /etc/os-release 综合识别
+if [ -f /etc/istoreos_release ] || echo "${DISTRO} ${DISTRO_DESC}" | grep -qi "iStoreOS" || grep -qi "iStoreOS" /etc/os-release 2>/dev/null; then
     DISTRO="iStoreOS"
-elif echo "$DISTRO" | grep -qi "ImmortalWrt"; then
+elif echo "${DISTRO} ${DISTRO_DESC}" | grep -qi "ImmortalWrt" || grep -qi "ImmortalWrt" /etc/os-release 2>/dev/null; then
     DISTRO="ImmortalWrt"
 else
     DISTRO="OpenWrt"
@@ -132,11 +136,13 @@ FREE_ROM=$(echo "$FREE_ROM" | tr -cd '0-9')
 # 3. 内核与 eBPF (BTF) 能力探测
 # ------------------------------------------------------------------------------
 KERNEL_VER=$(uname -r)
-KMAJOR=$(echo "$KERNEL_VER" | cut -d. -f1)
-KMINOR=$(echo "$KERNEL_VER" | cut -d. -f2)
+KMAJOR=$(echo "$KERNEL_VER" | cut -d. -f1 | tr -cd '0-9')
+KMINOR=$(echo "$KERNEL_VER" | cut -d. -f2 | tr -cd '0-9')
+[ -z "$KMAJOR" ] && KMAJOR=0
+[ -z "$KMINOR" ] && KMINOR=0
 
 KERNEL_GE_515=0
-if [ "$KMAJOR" -gt 5 ] || ([ "$KMAJOR" -eq 5 ] && [ "$KMINOR" -ge 15 ]); then
+if [ "$KMAJOR" -gt 5 ] || ( [ "$KMAJOR" -eq 5 ] && [ "$KMINOR" -ge 15 ] ); then
     KERNEL_GE_515=1
 fi
 
@@ -180,23 +186,31 @@ SINGBOX_CAPABLE=1 # sing-box TUN 适配全版本 Linux
 # ------------------------------------------------------------------------------
 # 4. 端口占用与冲突插件扫描
 # ------------------------------------------------------------------------------
-# 检查 53 端口占用者 (BusyBox netstat 通常不支持 -p，通过组合方式精准探测)
+# 检查 53 端口占用者 (兼容 netstat 与 ss，并检查 dnsmasq port 配置防止 DHCP-only 模式误判)
 DNS_PORT_HOLDER="unknown"
-if command -v netstat >/dev/null 2>&1; then
-    if netstat -tuln 2>/dev/null | grep -q ":53 "; then
-        if pidof dnsmasq >/dev/null 2>&1 || pgrep -x "dnsmasq" >/dev/null 2>&1; then
-            DNS_PORT_HOLDER="dnsmasq"
-        elif pidof smartdns >/dev/null 2>&1 || pgrep -x "smartdns" >/dev/null 2>&1; then
-            DNS_PORT_HOLDER="smartdns"
-        elif pidof AdGuardHome >/dev/null 2>&1 || pgrep -x "AdGuardHome" >/dev/null 2>&1 || pgrep -x "adguardhome" >/dev/null 2>&1; then
-            DNS_PORT_HOLDER="AdGuardHome"
-        elif pidof mosdns >/dev/null 2>&1 || pgrep -x "mosdns" >/dev/null 2>&1; then
-            DNS_PORT_HOLDER="mosdns"
-        elif pidof sing-box >/dev/null 2>&1 || pgrep -x "sing-box" >/dev/null 2>&1; then
-            DNS_PORT_HOLDER="sing-box"
-        else
-            DNS_PORT_HOLDER="active(53)"
-        fi
+PORT53_ACTIVE=0
+if command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+    PORT53_ACTIVE=1
+elif command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+    PORT53_ACTIVE=1
+fi
+
+if [ "$PORT53_ACTIVE" -eq 1 ]; then
+    DM_PORT=$(uci get dhcp.@dnsmasq[0].port 2>/dev/null || echo "53")
+    if [ "$DM_PORT" = "53" ] && ( pidof dnsmasq >/dev/null 2>&1 || pgrep -x "dnsmasq" >/dev/null 2>&1 ); then
+        DNS_PORT_HOLDER="dnsmasq"
+    elif pidof smartdns >/dev/null 2>&1 || pgrep -x "smartdns" >/dev/null 2>&1; then
+        DNS_PORT_HOLDER="smartdns"
+    elif pidof AdGuardHome >/dev/null 2>&1 || pgrep -x "AdGuardHome" >/dev/null 2>&1 || pgrep -x "adguardhome" >/dev/null 2>&1; then
+        DNS_PORT_HOLDER="AdGuardHome"
+    elif pidof mosdns >/dev/null 2>&1 || pgrep -x "mosdns" >/dev/null 2>&1; then
+        DNS_PORT_HOLDER="mosdns"
+    elif pidof sing-box >/dev/null 2>&1 || pgrep -x "sing-box" >/dev/null 2>&1; then
+        DNS_PORT_HOLDER="sing-box"
+    elif pidof dnsmasq >/dev/null 2>&1 || pgrep -x "dnsmasq" >/dev/null 2>&1; then
+        DNS_PORT_HOLDER="dnsmasq"
+    else
+        DNS_PORT_HOLDER="active(53)"
     fi
 fi
 [ -z "$DNS_PORT_HOLDER" ] && DNS_PORT_HOLDER="none"
@@ -216,17 +230,31 @@ if command -v uci >/dev/null 2>&1; then
     fi
 fi
 
-# 检查冲突插件运行状态
+# 检查冲突插件运行状态（使用精确进程名、procd 状态与真实 UCI 键，杜绝 pgrep -f 误伤命令行参数）
 CONFLICT_PLUGINS=""
 check_conflict() {
     pname="$1"
-    if pgrep -f "$pname" >/dev/null 2>&1 || ( [ -f "/etc/init.d/$pname" ] && /etc/init.d/"$pname" status 2>/dev/null | grep -qi "running" ) || ( command -v uci >/dev/null 2>&1 && [ "$(uci get ${pname}.@global[0].enabled 2>/dev/null)" = "1" ] ); then
+    is_active=0
+    if pidof "$pname" >/dev/null 2>&1 || pgrep -x "$pname" >/dev/null 2>&1; then
+        is_active=1
+    elif [ -f "/etc/init.d/$pname" ] && /etc/init.d/"$pname" status 2>/dev/null | grep -qi "running"; then
+        is_active=1
+    elif command -v uci >/dev/null 2>&1; then
+        if [ "$(uci get "${pname}.@global[0].enabled" 2>/dev/null)" = "1" ] || \
+           [ "$(uci get "${pname}.config.enable" 2>/dev/null)" = "1" ] || \
+           [ "$(uci get "${pname}.config.enabled" 2>/dev/null)" = "1" ]; then
+            is_active=1
+        fi
+    fi
+    if [ "$is_active" -eq 1 ]; then
         CONFLICT_PLUGINS="${CONFLICT_PLUGINS}${pname} "
     fi
 }
 check_conflict "passwall"
+check_conflict "passwall2"
 check_conflict "openclash"
 check_conflict "homeproxy"
+check_conflict "nikki"
 check_conflict "shadowsocksr"
 check_conflict "ssrplus"
 check_conflict "clash"

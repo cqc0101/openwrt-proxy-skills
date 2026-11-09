@@ -5,10 +5,10 @@
 # 1. 内核转发限制：激活 net.ipv4.ip_forward=1 并持久化
 # 2. 防火墙拦截：精准定位 LAN 区域注入 tun0，放行转发 (forward=ACCEPT)
 # 3. MSS 钳制 (MSS Clamping)：激活 mtu_fix=1，彻底根治 TLS 大报文黑洞与分片卡死
-# 4. 局域网 DNS 劫持：配置 LAN 53 端口重定向至代理核心，防止 DNS 泄漏与绕过
+# 4. 局域网 DNS 路径清理：移除遗留的本机 53 DNAT 重定向，确保三层 tun0 hijack-dns 正常截获
 # 5. Dnsmasq 纯净过滤：激活 filter_aaaa='1' 彻底根治国内手机 App 打开转圈假死
 # 6. 系统网络性能调优：自动检测并激活 BBR + fq_codel 算法与扩充连接池
-# 7. 旁路由自适应：支持 --bypass 自动配置 LAN 区域 masquerade 防非对称路由丢包
+# 7. 旁路由自适应：支持 --bypass 自动配置 LAN 区域 masq='1' 防非对称路由丢包
 # 8. 安全回滚支持：支持 --revert 一键无损还原原始网络基线
 #
 # 运行方式：
@@ -26,6 +26,16 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 say() { printf '%b\n' "$1"; }
+
+# 逆序清理名为 Redirect-DNS-Proxy 的防火墙 redirect 规则，防止正序删除时匿名节索引前移漏删
+clean_dns_redirects() {
+    for r_idx in $(uci show firewall 2>/dev/null | grep -E "=redirect$" | cut -d. -f2 | cut -d= -f1 | awk '{lines[NR]=$0} END {for(i=NR;i>=1;i--) print lines[i]}'); do
+        r_name=$(uci get "firewall.${r_idx}.name" 2>/dev/null || true)
+        if [ "$r_name" = "Redirect-DNS-Proxy" ]; then
+            uci delete "firewall.${r_idx}" 2>/dev/null || true
+        fi
+    done
+}
 
 # 核心路由器端本地加固逻辑
 run_router_hardening() {
@@ -53,20 +63,15 @@ run_router_hardening() {
         uci del_list firewall.@zone[${LAN_INDEX}].device='tun0' 2>/dev/null || true
         uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
         uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
-        # 查找并删除 DNS 劫持规则
-        for r_idx in $(uci show firewall | grep -E "=redirect$" | cut -d. -f2 | cut -d= -f1); do
-            r_name=$(uci get firewall.${r_idx}.name 2>/dev/null || true)
-            if [ "$r_name" = "Redirect-DNS-Proxy" ]; then
-                uci delete firewall.${r_idx} 2>/dev/null || true
-            fi
-        done
+        uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+        clean_dns_redirects
         rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-proxy-tuning.conf
         uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         uci commit dhcp 2>/dev/null || true
         uci commit firewall
         /etc/init.d/dnsmasq reload 2>/dev/null || true
         /etc/init.d/firewall reload 2>/dev/null || true
-        sysctl -p 2>/dev/null || true
+        /etc/init.d/sysctl restart 2>/dev/null || sysctl -p 2>/dev/null || true
         say "${GREEN}[OK] 网络配置已无损还原至初始状态！${NC}"
         return 0
     fi
@@ -110,18 +115,13 @@ SYSCTL_EOF
     uci set firewall.@zone[${LAN_INDEX}].mtu_fix='1'
 
     if [ "$ACTION_FLAG" = "--bypass" ]; then
-        say "${YELLOW}[旁路由] 检测到 --bypass 参数，激活 LAN 区域动态伪装 (masq/masquerade=1，消除非对称丢包)...${NC}"
+        say "${YELLOW}[旁路由] 检测到 --bypass 参数，激活 LAN 区域动态伪装 (masq=1，消除非对称丢包)...${NC}"
         uci set firewall.@zone[${LAN_INDEX}].masq='1' 2>/dev/null || true
-        uci set firewall.@zone[${LAN_INDEX}].masquerade='1' 2>/dev/null || true
+        uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
     fi
 
     say "${BLUE}[4/5] 校验局域网 DNS 转发路径 (确保三层 tun0 hijack-dns 不被本机 53 DNAT 短路)...${NC}"
-    for r_idx in $(uci show firewall | grep -E "=redirect$" | cut -d. -f2 | cut -d= -f1); do
-        r_name=$(uci get firewall.${r_idx}.name 2>/dev/null || true)
-        if [ "$r_name" = "Redirect-DNS-Proxy" ]; then
-            uci delete firewall.${r_idx} 2>/dev/null || true
-        fi
-    done
+    clean_dns_redirects
 
     uci commit firewall
     /etc/init.d/firewall reload 2>/dev/null || true
@@ -133,7 +133,7 @@ SYSCTL_EOF
         /etc/init.d/dnsmasq reload 2>/dev/null || true
     fi
 
-    say "${GREEN}[OK] 最后一公里网络闭环加固完成！tun0 放行、MSS 钳制、IP 转发、BBR、DNS 劫持全部生效。${NC}"
+    say "${GREEN}[OK] 最后一公里网络闭环加固完成！tun0 放行、MSS 钳制、IP 转发、BBR、DNS 路径清理全部生效。${NC}"
 }
 
 # 模式判断：本地执行还是远程 SSH 调度
@@ -159,16 +159,22 @@ else
                 EXTRA_FLAG="$1"
                 ;;
             -u|--user)
+                [ $# -ge 2 ] || { say "${RED}[ERROR] 参数 $1 缺少用户名取值${NC}"; exit 1; }
                 shift
                 SSH_USER="${1:-root}"
+                SSH_USER_SET=1
                 ;;
             -p|--port)
+                [ $# -ge 2 ] || { say "${RED}[ERROR] 参数 $1 缺少端口号取值${NC}"; exit 1; }
                 shift
                 SSH_PORT="${1:-22}"
+                SSH_PORT_SET=1
                 ;;
             -i|--key)
+                [ $# -ge 2 ] || { say "${RED}[ERROR] 参数 $1 缺少密钥文件路径${NC}"; exit 1; }
                 shift
                 SSH_KEY="${1:-}"
+                SSH_KEY_SET=1
                 ;;
             *)
                 if [ -z "$SSH_USER_SET" ]; then
@@ -186,14 +192,30 @@ else
         shift
     done
 
-    KEY_OPTS=""
+    case "$ROUTER_IP" in
+        -*|*[[:space:]]*|"")
+            say "${RED}[ERROR] 非法的目标路由器地址: $ROUTER_IP${NC}"
+            exit 1
+            ;;
+    esac
+    case "$SSH_USER" in
+        -*|*[[:space:]]*|"")
+            say "${RED}[ERROR] 非法的 SSH 用户名: $SSH_USER${NC}"
+            exit 1
+            ;;
+    esac
+    case "$SSH_PORT" in
+        *[!0-9]*|"")
+            say "${RED}[ERROR] 非法的 SSH 端口: $SSH_PORT${NC}"
+            exit 1
+            ;;
+    esac
+
+    say "${BLUE}[INFO]${NC} 正在连接路由器 ${SSH_USER}@${ROUTER_IP}:${SSH_PORT} 执行最后一公里网络闭环加固..."
     if [ -n "$SSH_KEY" ]; then
         [ -f "$SSH_KEY" ] || { say "${RED}指定的 SSH 密钥文件不存在: $SSH_KEY${NC}"; exit 1; }
-        KEY_OPTS="-i ${SSH_KEY}"
+        ssh -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
+    else
+        ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
     fi
-
-    SSH_CMD="ssh ${KEY_OPTS} -p ${SSH_PORT} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${SSH_USER}@${ROUTER_IP}"
-    say "${BLUE}[INFO]${NC} 正在连接路由器 ${SSH_USER}@${ROUTER_IP}:${SSH_PORT} 执行最后一公里网络闭环加固..."
-    
-    cat "$0" | $SSH_CMD "sh -s -- ${EXTRA_FLAG}"
 fi

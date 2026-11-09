@@ -110,5 +110,15 @@ class TestSharedScriptsConsistency(unittest.TestCase):
                 self.fail(f"{name} 行数不一致：singbox {len(la)} 行 vs dae {len(lb)} 行")
 
 
+    def test_doctor_no_dead_port_5335_loop_suggestion(self):
+        for base in (SINGBOX, DAE):
+            text = _read(os.path.join(base, "doctor.sh"))
+            self.assertNotIn("127.0.0.1#5335", text, "doctor.sh 严禁建议将 Dnsmasq 指向未监听的 127.0.0.1#5335")
+
+    def test_probe_istoreos_description_detection(self):
+        for base in (SINGBOX, DAE):
+            text = _read(os.path.join(base, "probe.sh"))
+            self.assertIn("DISTRIB_DESCRIPTION", text, "probe.sh 必须结合 DISTRIB_DESCRIPTION 识别真机 iStoreOS")
+
 if __name__ == "__main__":
     unittest.main()

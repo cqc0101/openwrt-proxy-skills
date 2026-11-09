@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(REPO, "skills", "singbox-openwrt", "scripts"))
 from sub_parser import (  # noqa: E402
     parse_source, parse_subscription_text, parse_clash_proxy,
     filter_nodes, to_dae_nodes, safe_b64decode, _decompress,
-    extract_node_domains,
+    extract_node_domains, HAS_YAML,
 )
 
 
@@ -364,6 +364,67 @@ class TestSubParserFuzzAndEdgeCases(unittest.TestCase):
         self.assertNotIn("'bad1'", out)
         self.assertNotIn("'bad2'", out)
 
+
+class TestAuditHardeningSubParser(unittest.TestCase):
+    def test_urlsafe_b64_chinese_subscription_not_corrupted(self):
+        sub_raw = (
+            "vless://uuid@1.2.3.4:443#新加坡-01\n"
+            "trojan://pw@5.6.7.8:443#新加坡-02\n"
+            "trojan://pw@8.8.8.8:443#新加坡-03\n"
+            "trojan://pw@9.9.9.9:443#新加坡-04"
+        )
+        b64_url = base64.urlsafe_b64encode(sub_raw.encode("utf-8")).decode("ascii")
+        nodes = parse_subscription_text(b64_url)
+        self.assertEqual(len(nodes), 4)
+        self.assertEqual(nodes[0]["tag"], "新加坡-01")
+
+    def test_filter_nodes_no_secondary_collision(self):
+        nodes = [
+            {"type": "trojan", "tag": "HK", "server": "1.1.1.1", "server_port": 443, "password": "p"},
+            {"type": "trojan", "tag": "HK", "server": "2.2.2.2", "server_port": 443, "password": "p"},
+            {"type": "trojan", "tag": "HK 2", "server": "3.3.3.3", "server_port": 443, "password": "p"},
+        ]
+        cleaned = filter_nodes(nodes)
+        tags = [n["tag"] for n in cleaned]
+        self.assertEqual(len(tags), len(set(tags)), f"存在重复标签碰撞: {tags}")
+
+    def test_to_dae_nodes_escapes_special_chars_in_password(self):
+        nodes = [{
+            "type": "trojan", "tag": "TestTr", "server": "1.2.3.4",
+            "server_port": 443, "password": "p@ss#word?1",
+            "tls": {"enabled": True, "server_name": "a.com"}
+        }]
+        out = to_dae_nodes(nodes)
+        self.assertIn("trojan://p%40ss%23word%3F1@1.2.3.4:443", out)
+
+    @unittest.skipIf(not HAS_YAML, "PyYAML 未安装，跳过 Clash YAML 解析测试")
+    def test_clash_yaml_single_bad_node_isolated(self):
+        yaml_sub = """
+proxies:
+  - name: Good-Node-1
+    type: trojan
+    server: 1.2.3.4
+    port: 443
+    password: secret
+  - name: Bad-VMess
+    type: vmess
+    server: 2.3.4.5
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    alterId: null
+  - name: Good-Node-2
+    type: trojan
+    server: 5.6.7.8
+    port: 443
+    password: secret
+"""
+        nodes = parse_subscription_text(yaml_sub)
+        self.assertGreaterEqual(len(nodes), 2)
+
+    def test_decompress_size_limit(self):
+        payload = gzip.compress(b"A" * 2048)
+        with self.assertRaises(ValueError):
+            _decompress(payload, "gzip", max_bytes=512)
 
 if __name__ == "__main__":
     unittest.main()

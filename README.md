@@ -9,16 +9,16 @@
 | 技能 | 引擎 | 说明 |
 | :--- | :--- | :--- |
 | [`singbox-openwrt`](skills/singbox-openwrt/SKILL.md) | sing-box 1.13 / 1.14+（TUN，FakeIP / RealIP） | 对内核与固件版本要求较低，作为默认方案 |
-| [`dae-openwrt`](skills/dae-openwrt/SKILL.md) | dae / daed（eBPF） | 需要 Linux 5.15+ 与 BTF，适用于满足条件的固件 |
+| [`dae-openwrt`](skills/dae-openwrt/SKILL.md) | dae（eBPF） | 需要 Linux 5.15+ 与 BTF，适用于满足条件的固件 |
 
 技能按 `skills/<技能名>/SKILL.md` 组织，符合常见 Agent Skills 分发约定（`npx skills add`、anthropics/skills）。
 
 ## 工作流
 
-1. **环境探针**（`probe.sh -j`）：发行版、包管理器（实际检测 opkg 或 apk）、内核与 BTF、内存与存储空间、冲突插件，输出机器可读 JSON。
+1. **环境探针**（`probe.sh -j`）：发行版（精准识别 OpenWrt、ImmortalWrt、iStoreOS）、包管理器（实际检测 opkg 或 apk）、内核与 BTF、内存与存储空间、冲突插件，输出机器可读 JSON。
 2. **配置生成与积木拼装**（`auto_config.py`、`sub_parser.py`、`assets/mixins/`）：通用订阅清洗、自适应版本模板选择、Mixins 积木拼装、CDN 规则集镜像、生成后内置静态审计。
-3. **Agent 自主原子部署**（标准 SSH 管道）：远端沙盒语法与依赖校验（`sing-box check` / `dae validate -c`）、原子替换、平滑重启或无感热重载。
-4. **最后一公里网络闭环**（`setup_openwrt_network.sh`）：LAN 区域动态定位并注入 `tun0` 放行、开启 forward=ACCEPT、MSS 钳制 (`mtu_fix=1`)、DNAT 53 劫持重定向、Dnsmasq `filter_aaaa=1` 过滤、内核 BBR 调优；支持 `--bypass` 自动开启旁路由 masquerade 伪装。
+3. **Agent 自主原子部署**（标准 SSH 管道）：远端沙盒语法与依赖校验（`sing-box check` / `dae validate`）、保留快照备份、原子替换、平滑重启或无感热重载。
+4. **最后一公里网络闭环**（`setup_openwrt_network.sh`）：LAN 区域动态定位并注入 `tun0` 放行、开启 forward=ACCEPT、MSS 钳制 (`mtu_fix=1`)、清理干扰三层 `hijack-dns` 的本机 53 DNAT 重定向、Dnsmasq `filter_aaaa=1` 过滤、内核 BBR 调优；支持 `--bypass` 自动开启旁路由动态伪装 (`masq=1`)。
 5. **结构化自愈诊断**（`doctor.sh --json`、`diagnose_dns.sh --json`）：机器可读 JSON 诊断输出，包含状态码、问题特征与自愈执行命令。
 
 ## 参考文档

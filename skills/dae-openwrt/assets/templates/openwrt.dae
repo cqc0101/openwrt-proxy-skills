@@ -76,6 +76,8 @@ dns {
         request {
             # 广告域名拦截
             qname(geosite:category-ads-all) -> reject
+            # DoH 与 Apple 私密代理 Canary 域名阻断（DNS 查询层返回 NXDOMAIN/REJECT，强制终端遵循网关分流）
+            qname('use-application-dns.net', 'mask.icloud.com', 'mask-h2.icloud.com') -> reject
             # 国内域名解析走阿里 DNS 直连
             qname(geosite:cn) -> alidns
             # 默认兜底上游
@@ -85,7 +87,7 @@ dns {
         response {
             # [铁律 5: DNS 防污染闭环] 第一行必须为白名单放行，防止重查死循环！
             upstream(googledns) -> accept
-            # 若非国内域名返回了私网保留地址，判定为被投毒，强制由可信上游重查
+            # 若直连上游对非国内域名返回了私网保留地址，判定为被投毒，强制由可信上游重查
             ip(geoip:private) && !qname(geosite:cn) -> googledns
             fallback: accept
         }

@@ -91,4 +91,4 @@ routing {
     fallback: proxy
 }
 ```
-> **旁路由防火墙配套**：必须在 OpenWrt LAN 区域执行 `uci set firewall.@zone[LAN].masquerade='1'`（或运行 `setup_openwrt_network.sh --bypass`）消除非对称路由丢包。
+> **旁路由防火墙配套**：必须在 OpenWrt LAN 区域执行 `uci set firewall.@zone[LAN].masq='1'`（或运行 `setup_openwrt_network.sh --bypass`）消除非对称路由丢包。

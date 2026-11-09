@@ -1,26 +1,26 @@
 ---
 name: dae-openwrt
 description: >-
-  为 OpenWrt / ImmortalWrt / iStoreOS 软路由生成、修改、排查原生 dae / daed (Linux 内核级 eBPF 高性能透明代理) 配置文件与服务管理。
-  当用户提及以下任意场景时必须触发：dae/daed配置与管理、软路由eBPF出海代理、br-lan/wan网卡绑定、dae 5条拓扑与语法铁律、
+  为 OpenWrt / ImmortalWrt / iStoreOS 软路由生成、修改、排查原生 dae (Linux 内核级 eBPF 高性能透明代理) 配置文件与服务管理。
+  当用户提及以下任意场景时必须触发：dae配置与管理、软路由eBPF出海代理、br-lan/wan网卡绑定、dae 5条拓扑与语法铁律、
   dae规则编写(routing/dns/group)、软路由测试节点与订阅导入、无感平滑热重载(dae reload)、排查dae断网与DNS死循环、或寻找比TUN模式吞吐更高更省CPU的代理方案。
 ---
 
 # dae OpenWrt eBPF 透明代理架构器
 
-本技能专为 **OpenWrt**、**ImmortalWrt**、**iStoreOS** 软路由网关设计，指导原生 **dae / daed (Linux 内核级 eBPF 高性能透明代理)** 的规则编写、接口绑定约束、DNS 防环防御与生产级平滑热重载。
+本技能专为 **OpenWrt**、**ImmortalWrt**、**iStoreOS** 软路由网关设计，指导原生 **dae (Linux 内核级 eBPF 高性能透明代理)** 的规则编写、接口绑定约束、DNS 防环防御与生产级平滑热重载。
 
-> **支持边界**：本技能管理**原生 dae**（`dae` 二进制 + `/etc/dae/config.dae`）。eBPF 需要 Linux 5.15+ 与 BTF 支持，若固件不满足条件，探针会自动拦截并建议改用 `singbox-openwrt`。
+> **支持边界**：本技能管理**原生 dae**（`dae` 二进制 / procd `dae` 服务 + `/etc/dae/config.dae`，注意：Web 面板版 `daed` 使用 `/etc/daed/daed.db` 数据库，不读取 `/etc/dae/config.dae`）。eBPF 需要 Linux 5.15+ 与 BTF 支持，若固件不满足条件，探针会自动拦截并建议改用 `singbox-openwrt`。
 
 ---
 
 ## 🚨 强制执行红线（任何任务开始前必读）
 
-1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒，经远端 `dae validate <file>` 通过后再原子替换，并保留快照备份用于自动回滚。
+1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒并执行 `chmod 600`（`dae` 强制要求配置文件权限不宽于 `0600`/`0640`），经远端 `dae validate <file>` 通过后再备份原配置并原子替换。
 2. **硬件保护红线**：`global` 中 `lan_interface: br-lan` + `wan_interface: auto` + `auto_config_kernel_parameter: true`；部署前关闭流量分载（Flow Offloading，否则报文绕过 eBPF）；dropbear/sshd 需做 OOM 保护。
 3. **绝不盲目猜测**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh dae --json` 诊断，再进行针对性修复。
 4. **dae validate 语法说明**：dae 官方 CLI 不支持 `-c` 参数（`-c` 是 sing-box 的参数），正确格式为 `dae validate /path/to/config.dae`。
-5. **procd 托管区分**：ImmortalWrt 官方源的 `daed` 包由 procd 管理，热重载使用 `/etc/init.d/daed reload`；若使用官方二进制裸运行，热重载使用 `dae reload`。
+5. **procd 托管与 daed 区分**：ImmortalWrt 官方源的原生 `dae` 包由 procd 管理，启用与热重载使用 `uci set dae.config.enabled='1' && uci commit dae && /etc/init.d/dae reload`（裸二进制模式使用 `dae reload`）；而 `daed` 是 Web 面板独立包，不读取 `/etc/dae/config.dae`。
 
 ---
 
@@ -45,13 +45,13 @@ description: >-
 [步骤 2: 底层硬件感知] probe.sh -j (探测 BTF 文件 / 网卡名 / 冲突代理插件)
        │
        ▼
-[步骤 3: 原子订阅解析] sub_to_dae.py (清洗节点 / 剥离不兼容协议 / 生成 dae link)
+[步骤 3: 原子订阅解析] sub_to_dae.py (清洗节点 / 密码特殊字符安全转义 / 生成 dae link)
        │
        ▼
 [步骤 4: 规则积木灵活装配] dae-rules-and-syntax.md (宿主组件 must_direct / 设备 MAC 分流 / 大陆双向直连)
        │
        ▼
-[步骤 5: Agent 自主部署与热重载] SSH 管道原子发布 (沙盒 dae validate -> mv 替换 -> dae reload)
+[步骤 5: Agent 自主部署与热重载] SSH 管道原子发布 (chmod 600 -> 沙盒 dae validate -> 快照与 mv -> reload)
        │
        ▼
 [步骤 6: 软路由网络闭环接管] setup_openwrt_network.sh (关闭 Flow Offloading / 开启 filter_aaaa / MSS 钳制)
@@ -157,18 +157,16 @@ python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 --
 dae 的优势在于重载配置时**无需重启内核 eBPF 程序**，已有连接完全不断流。Agent 自主执行标准发布命令：
 
 ```bash
-# 1. 上传配置到 /tmp 临时沙盒
-ssh root@192.168.1.1 "cat > /tmp/config.dae.test" < /tmp/config.dae
+# 1. 上传配置到 /tmp 临时沙盒并锁定 0600 权限（dae 强制要求配置文件权限不宽于 0640/0600）
+ssh root@192.168.1.1 "cat > /tmp/config.dae.test && chmod 600 /tmp/config.dae.test" < /tmp/config.dae
 
 # 2. 远端沙盒严格语法校验（注意：dae 不支持 -c 参数，直接传文件路径）
 ssh root@192.168.1.1 "dae validate /tmp/config.dae.test"
 
-# 3. 校验通过后原子替换配置并执行无感平滑热重载
-# - 官方二进制（非 procd 管理）：使用 dae reload
-# - OpenWrt procd 管理（daed 包）：使用 /etc/init.d/daed reload
-ssh root@192.168.1.1 "mv /tmp/config.dae.test /etc/dae/config.dae && dae reload"
-# 若为 procd 管理模式（ImmortalWrt 官方源的 daed 包）：
-# ssh root@192.168.1.1 "mv /tmp/config.dae.test /etc/dae/config.dae && /etc/init.d/daed reload"
+# 3. 校验通过后备份快照、原子替换配置并执行无感平滑热重载
+# - OpenWrt/ImmortalWrt procd 管理（原生 dae 包）：使用 /etc/init.d/dae reload
+# - 官方裸二进制（非 procd 管理）：使用 dae reload
+ssh root@192.168.1.1 "[ -f /etc/dae/config.dae ] && cp /etc/dae/config.dae /tmp/config.dae.bak; mv /tmp/config.dae.test /etc/dae/config.dae && chmod 600 /etc/dae/config.dae && ( [ -x /etc/init.d/dae ] && uci set dae.config.enabled='1' 2>/dev/null && uci commit dae 2>/dev/null && /etc/init.d/dae reload || dae reload )"
 
 # 4. 执行软路由网络闭环脚本 (关闭 flow offloading，设置 filter_aaaa 与 MSS 钳制)
 ssh root@192.168.1.1 "sh -s" < scripts/setup_openwrt_network.sh

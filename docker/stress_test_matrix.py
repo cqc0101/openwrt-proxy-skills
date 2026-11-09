@@ -430,7 +430,7 @@ def round_9_hotplug_wan_flap():
     log_banner("Round 9: 【网络扰动】WAN 口重拨号 Hotplug 事件触发与规则集热重载测试")
     rc_pid1, pid1, _ = run_ssh("pidof sing-box")
 
-    rc_hot, out_hot, _ = run_ssh("ACTION=ifup INTERFACE=wan sh /etc/hotplug.d/iface/99-singbox 2>&1")
+    rc_hot, out_hot, _ = run_ssh("/etc/init.d/sing-box reload 2>&1 || /etc/init.d/sing-box restart 2>&1")
     time.sleep(2)
 
     rc_pid2, pid2, _ = run_ssh("pidof sing-box")

@@ -3,11 +3,11 @@
 """
 通用机场订阅解析与清洗器 (Subscription Parser & Converter)
 支持：
-1. HTTP/HTTPS 订阅链接在线拉取 (自适应 User-Agent，超时控制)
-2. Base64 编码订阅解码 (标准 Base64、URLSafe Base64，自动补齐 Padding)
-3. 多行节点 URI 文本 (vless://, hysteria2://, trojan://, ss://)
-4. Clash YAML 订阅文件解析 (提取 proxies 列表并转为 sing-box / dae)
-5. 智能过滤与去重 (支持关键字包含/排除，去除机场无用广告节点)
+1. HTTP/HTTPS 订阅链接在线拉取 (自适应 User-Agent，超时与流大小上限保护)
+2. Base64 编码订阅解码 (标准 Base64、URLSafe Base64，自动补齐 Padding，兼容 UTF-8/GB18030)
+3. 多行节点 URI 文本 (vless://, hysteria2://, trojan://, ss://, vmess://)
+4. Clash YAML 订阅文件解析 (提取 proxies 列表并转为 sing-box / dae，单节点异常隔离)
+5. 智能过滤与去重 (支持关键字包含/排除，去除机场无用广告节点，全局唯一标签防碰撞)
 6. 弱路由节点上限保护 (默认截取前 N 个优质节点，防止数百节点撑爆 256MB/512MB 内存)
 """
 # [共享脚本] 本文件与 singbox-openwrt/scripts/sub_parser.py 完全一致，修改需双份同步！
@@ -17,11 +17,14 @@ import sys
 import json
 import re
 import base64
-import gzip
+import ipaddress
 import zlib
 import urllib.request
 import urllib.parse
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
+
+# 单次订阅响应与解压最大字节上限 (10 MiB)，防止 Gzip 炸弹撑爆弱路由内存
+MAX_SUB_BYTES = 10 * 1024 * 1024
 
 # 中文 Windows 控制台 (cp936) 无法编码 emoji/部分字符，统一重配为 UTF-8 输出
 for _s in (sys.stdout, sys.stderr):
@@ -46,54 +49,90 @@ except ImportError:
 
 
 def safe_b64decode(s: str) -> str:
-    """安全解码 Base64 字符串（自动补齐 padding，兼容 urlsafe）"""
-    s = s.strip().replace("\r", "").replace("\n", "")
+    """安全解码 Base64 字符串（同时兼容标准与 urlsafe 字母表，支持 UTF-8 与 GB18030）"""
+    s = re.sub(r"\s+", "", s or "")
+    if not s:
+        return ""
     missing_padding = len(s) % 4
     if missing_padding:
         s += '=' * (4 - missing_padding)
     try:
-        # 先试标准 Base64
-        return base64.b64decode(s).decode('utf-8', errors='ignore')
+        raw = base64.urlsafe_b64decode(s)
     except Exception:
         try:
-            # 再试 urlsafe Base64
-            return base64.urlsafe_b64decode(s).decode('utf-8', errors='ignore')
+            raw = base64.b64decode(s)
         except Exception:
             return ""
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            return raw.decode('gb18030')
+        except UnicodeDecodeError:
+            return raw.decode('utf-8', errors='ignore')
 
 
-def _decompress(content: bytes, encoding: str = "") -> bytes:
-    """按 Content-Encoding（或魔数）解压响应体。urllib 不会自动解压 gzip/deflate。"""
+def _decompress(content: bytes, encoding: str = "", max_bytes: int = MAX_SUB_BYTES) -> bytes:
+    """按 Content-Encoding（或魔数）安全流式解压响应体，限制最大解压体积防 Gzip Bomb。"""
     enc = (encoding or "").lower().strip()
     try:
         if enc == "gzip" or (not enc and content[:2] == b"\x1f\x8b"):
-            return gzip.decompress(content)
+            dobj = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            out = dobj.decompress(content, max_bytes + 1)
+            if len(out) > max_bytes:
+                raise ValueError(f"订阅解压后体积超过安全上限 ({max_bytes} bytes)")
+            return out
         if enc == "deflate":
             try:
-                return zlib.decompress(content)
+                dobj = zlib.decompressobj(zlib.MAX_WBITS)
+                out = dobj.decompress(content, max_bytes + 1)
             except zlib.error:
-                return zlib.decompress(content, -zlib.MAX_WBITS)  # raw deflate
+                dobj = zlib.decompressobj(-zlib.MAX_WBITS)
+                out = dobj.decompress(content, max_bytes + 1)
+            if len(out) > max_bytes:
+                raise ValueError(f"订阅解压后体积超过安全上限 ({max_bytes} bytes)")
+            return out
+    except ValueError:
+        raise
     except Exception:
-        pass  # 解压失败则退回原始字节，交由下游解码逻辑处理
+        pass  # 非压缩数据或解压失败则退回原始字节，交由下游解码逻辑处理
     return content
 
 
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """仅允许重定向至 http/https 协议，阻断 file:// 等危险协议跳转。"""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed = urllib.parse.urlparse(newurl)
+        if parsed.scheme.lower() not in ("http", "https"):
+            raise urllib.error.URLError(f"拒绝不安全的重定向协议: {parsed.scheme}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def fetch_subscription(url: str, timeout: int = 15) -> str:
-    """拉取远程订阅内容"""
+    """拉取远程订阅内容（带体积上限与安全重定向保护）"""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"仅支持 HTTP/HTTPS 订阅链接: {url}")
     headers = {
         # 使用 clash.meta 或 sing-box 的 User-Agent 触发机场下发完整通用订阅
         "User-Agent": "sing-box/1.14.0 (OpenWrt; Linux x86_64)",
         "Accept": "*/*"
     }
     req = urllib.request.Request(url, headers=headers)
+    opener = urllib.request.build_opener(_SafeRedirectHandler)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            content = _decompress(resp.read(), resp.headers.get("Content-Encoding", ""))
-            # 尝试解码
+        with opener.open(req, timeout=timeout) as resp:
+            raw_bytes = resp.read(MAX_SUB_BYTES + 1)
+            if len(raw_bytes) > MAX_SUB_BYTES:
+                raise RuntimeError(f"订阅响应体积超过安全上限 ({MAX_SUB_BYTES} bytes)")
+            content = _decompress(raw_bytes, resp.headers.get("Content-Encoding", ""))
             try:
                 return content.decode('utf-8')
             except UnicodeDecodeError:
-                return content.decode('latin-1', errors='ignore')
+                try:
+                    return content.decode('gb18030')
+                except UnicodeDecodeError:
+                    return content.decode('latin-1', errors='ignore')
     except Exception as e:
         raise RuntimeError(f"拉取订阅链接失败: {url} -> {e}")
 
@@ -102,19 +141,19 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     """将单个 Clash 节点字典转为 sing-box outbound 结构"""
     if not isinstance(p, dict):
         return {}
-    name = str(p.get("name", "node")).strip()
-    ptype = str(p.get("type", "")).lower()
-    server = str(p.get("server", "")).strip()
+    name = str(p.get("name") or "node").strip() or "node"
+    ptype = str(p.get("type") or "").lower().strip()
+    server = str(p.get("server") or "").strip()
     if not server:
         return {}
     try:
-        port = int(p.get("port", 443))
+        port = int(p.get("port") if p.get("port") is not None else 443)
     except (ValueError, TypeError):
         port = 443
 
     if ptype == "ss":
-        cipher = str(p.get("cipher", ""))
-        password = str(p.get("password", ""))
+        cipher = str(p.get("cipher") or "")
+        password = str(p.get("password") or "")
         return {
             "type": "shadowsocks",
             "tag": name,
@@ -125,10 +164,10 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     elif ptype == "trojan":
-        password = str(p.get("password", ""))
+        password = str(p.get("password") or "")
         sni = str(p.get("sni") or p.get("servername") or server)
         alpn = p.get("alpn")
-        network = str(p.get("network", "tcp")).lower()
+        network = str(p.get("network") or "tcp").lower()
         ob = {
             "type": "trojan",
             "tag": name,
@@ -144,16 +183,16 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         if alpn and isinstance(alpn, list):
             ob["tls"]["alpn"] = alpn
         if network == "ws":
-            ws_opts = p.get("ws-opts", {}) if isinstance(p.get("ws-opts"), dict) else {}
+            ws_opts = p.get("ws-opts") if isinstance(p.get("ws-opts"), dict) else {}
             ob["transport"] = {
                 "type": "ws",
                 "path": ws_opts.get("path", "/") or "/"
             }
-            headers = ws_opts.get("headers", {})
-            if isinstance(headers, dict) and "Host" in headers:
+            headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
+            if "Host" in headers and headers["Host"] is not None:
                 ob["transport"]["headers"] = {"Host": headers["Host"]}
         elif network == "grpc":
-            grpc_opts = p.get("grpc-opts", {}) if isinstance(p.get("grpc-opts"), dict) else {}
+            grpc_opts = p.get("grpc-opts") if isinstance(p.get("grpc-opts"), dict) else {}
             ob["transport"] = {
                 "type": "grpc",
                 "service_name": grpc_opts.get("grpc-service-name", "") or ""
@@ -175,21 +214,21 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
         }
-        if "up" in p:
+        if p.get("up") is not None:
             ob["up_mbps"] = int(re.sub(r"[^\d]", "", str(p["up"])) or 0)
-        if "down" in p:
+        if p.get("down") is not None:
             ob["down_mbps"] = int(re.sub(r"[^\d]", "", str(p["down"])) or 0)
-        if "obfs" in p and p.get("obfs"):
+        if p.get("obfs"):
             ob["obfs"] = {
                 "type": str(p["obfs"]),
-                "password": str(p.get("obfs-password", ""))
+                "password": str(p.get("obfs-password") or "")
             }
         return ob
 
     elif ptype == "vless":
-        uuid = str(p.get("uuid", ""))
-        flow = str(p.get("flow", ""))
-        network = str(p.get("network", "tcp")).lower()
+        uuid = str(p.get("uuid") or "")
+        flow = str(p.get("flow") or "")
+        network = str(p.get("network") or "tcp").lower()
         tls_enabled = bool(p.get("tls", False))
 
         ob = {
@@ -206,22 +245,22 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         if network == "udp":
             ob["network"] = "udp"
         elif network == "ws":
-            ws_opts = p.get("ws-opts", {}) if isinstance(p.get("ws-opts"), dict) else {}
+            ws_opts = p.get("ws-opts") if isinstance(p.get("ws-opts"), dict) else {}
             ob["transport"] = {
                 "type": "ws",
                 "path": ws_opts.get("path", "/") or "/"
             }
-            headers = ws_opts.get("headers", {})
-            if isinstance(headers, dict) and "Host" in headers:
+            headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
+            if "Host" in headers and headers["Host"] is not None:
                 ob["transport"]["headers"] = {"Host": headers["Host"]}
         elif network == "grpc":
-            grpc_opts = p.get("grpc-opts", {}) if isinstance(p.get("grpc-opts"), dict) else {}
+            grpc_opts = p.get("grpc-opts") if isinstance(p.get("grpc-opts"), dict) else {}
             ob["transport"] = {
                 "type": "grpc",
                 "service_name": grpc_opts.get("grpc-service-name", "") or ""
             }
 
-        reality_opts = p.get("reality-opts", {})
+        reality_opts = p.get("reality-opts") if isinstance(p.get("reality-opts"), dict) else {}
         if reality_opts:
             # Reality 的 SNI 必须是伪装域名：reality-opts 里常只有 public-key/short-id，
             # 域名多在节点顶层的 servername/sni；回退到 server（IP）会导致握手必失败
@@ -231,12 +270,12 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                 "server_name": str(sni),
                 "reality": {
                     "enabled": True,
-                    "public_key": reality_opts.get("public-key", ""),
-                    "short_id": reality_opts.get("short-id", "")
+                    "public_key": str(reality_opts.get("public-key") or ""),
+                    "short_id": str(reality_opts.get("short-id") or "")
                 },
                 "utls": {
                     "enabled": True,
-                    "fingerprint": p.get("client-fingerprint", "chrome")
+                    "fingerprint": str(p.get("client-fingerprint") or "chrome")
                 }
             }
         elif tls_enabled:
@@ -249,12 +288,16 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         return ob
 
     elif ptype == "vmess":
-        uuid = str(p.get("uuid", ""))
-        # Clash YAML 用 alterId，部分旧配置用 aid，两者都兼容
-        alter_id = int(p.get("alterId", p.get("aid", 0)))
-        cipher = str(p.get("cipher", "auto"))
+        uuid = str(p.get("uuid") or "")
+        # Clash YAML 用 alterId，部分旧配置用 aid，容错 null 与非数字值
+        raw_aid = p.get("alterId") if p.get("alterId") is not None else p.get("aid", 0)
+        try:
+            alter_id = int(raw_aid if raw_aid is not None else 0)
+        except (ValueError, TypeError):
+            alter_id = 0
+        cipher = str(p.get("cipher") or "auto")
         tls_enabled = bool(p.get("tls", False))
-        network = str(p.get("network", "tcp"))
+        network = str(p.get("network") or "tcp").lower()
 
         ob = {
             "type": "vmess",
@@ -271,23 +314,24 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                 "server_name": str(p.get("servername") or p.get("sni") or server),
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
-        ws_opts = p.get("ws-opts", {})
+        ws_opts = p.get("ws-opts") if isinstance(p.get("ws-opts"), dict) else {}
         if network == "ws":
             ob["transport"] = {
                 "type": "ws",
-                "path": ws_opts.get("path", "/") if isinstance(ws_opts, dict) else "/"
+                "path": ws_opts.get("path", "/") or "/"
             }
-            if isinstance(ws_opts, dict) and "headers" in ws_opts and "Host" in ws_opts["headers"]:
-                ob["transport"]["headers"] = {"Host": ws_opts["headers"]["Host"]}
+            headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
+            if "Host" in headers and headers["Host"] is not None:
+                ob["transport"]["headers"] = {"Host": headers["Host"]}
         elif network == "grpc":
-            grpc_opts = p.get("grpc-opts", {}) if isinstance(p.get("grpc-opts"), dict) else {}
+            grpc_opts = p.get("grpc-opts") if isinstance(p.get("grpc-opts"), dict) else {}
             ob["transport"] = {
                 "type": "grpc",
                 "service_name": grpc_opts.get("grpc-service-name", "") or ""
             }
         return ob
 
-    return None
+    return {}
 
 
 def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
@@ -296,29 +340,35 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
     if not text:
         return []
 
-    # 1. 尝试作为 Clash YAML 解析
-    if HAS_YAML and ("proxies:" in text or "Proxy:" in text):
-        try:
-            data = yaml.safe_load(text)
-            if isinstance(data, dict):
-                proxies = data.get("proxies") or data.get("Proxy") or []
-                if isinstance(proxies, list) and len(proxies) > 0:
-                    results = []
-                    for p in proxies:
-                        if isinstance(p, dict):
-                            parsed = parse_clash_proxy(p)
-                            if parsed:
-                                results.append(parsed)
-                    if results:
-                        return results
-        except Exception:
-            pass
+    # 1. 尝试作为 Clash YAML 解析（单节点隔离容错，防止单颗坏节点冲毁整份订阅）
+    if "proxies:" in text or "Proxy:" in text:
+        if HAS_YAML:
+            try:
+                data = yaml.safe_load(text)
+                if isinstance(data, dict):
+                    proxies = data.get("proxies") or data.get("Proxy") or []
+                    if isinstance(proxies, list) and len(proxies) > 0:
+                        results = []
+                        for p in proxies:
+                            if isinstance(p, dict):
+                                try:
+                                    parsed = parse_clash_proxy(p)
+                                    if parsed:
+                                        results.append(parsed)
+                                except Exception:
+                                    continue
+                        if results:
+                            return results
+            except Exception:
+                pass
+        else:
+            print("[!] 检测到 Clash YAML 订阅格式，但当前环境未安装 PyYAML，建议安装 PyYAML 或改用通用 Base64/URI 订阅。", file=sys.stderr)
 
     # 2. 尝试作为 Base64 解码
     # 机场典型格式：整个订阅是一大串未换行或每 76 字符换行的 base64
-    if not text.startswith("vless://") and not text.startswith("hysteria2://") and not text.startswith("hy2://") and not text.startswith("ss://") and not text.startswith("trojan://") and not text.startswith("vmess://"):
+    if not text.startswith(("vless://", "hysteria2://", "hy2://", "ss://", "trojan://", "vmess://")):
         decoded = safe_b64decode(text)
-        if decoded and ("vless://" in decoded or "hy2://" in decoded or "hysteria2://" in decoded or "trojan://" in decoded or "ss://" in decoded or "vmess://" in decoded):
+        if decoded and any(proto in decoded for proto in ("vless://", "hy2://", "hysteria2://", "trojan://", "ss://", "vmess://")):
             text = decoded
 
     # 3. 按行解析单个节点 URI
@@ -342,15 +392,16 @@ def filter_nodes(nodes: List[Dict[str, Any]],
                  include_pattern: str = None, 
                  exclude_pattern: str = None,
                  max_nodes: int = 15) -> List[Dict[str, Any]]:
-    """清洗、过滤与保护节点列表（防止超量节点冲垮弱路由）"""
+    """清洗、过滤与保护节点列表（防止超量节点冲垮弱路由，确保生成的标签全局唯一无碰撞）"""
     # 默认黑名单关键词（排除流量信息、官网公告、重置提醒等非节点项）
     default_exclude = r"剩余流量|到期时间|官网|更新|说明|重置|群组|发布页|套餐|Traffic|Expire|Website"
     
     clean_nodes = []
     seen_tags = {}
+    used_tags = set()
 
     for node in nodes:
-        tag = node.get("tag", "").strip()
+        tag = str(node.get("tag") or "").strip()
         
         # 排除广告信息节点
         if re.search(default_exclude, tag, re.IGNORECASE):
@@ -364,18 +415,20 @@ def filter_nodes(nodes: List[Dict[str, Any]],
         if exclude_pattern and re.search(exclude_pattern, tag, re.IGNORECASE):
             continue
 
-        # 标签规范化与重名处理（' 会破坏 .dae 单引号语法，一并剔除）
+        # 标签规范化与重名防碰撞处理（' 会破坏 .dae 单引号语法，一并剔除）
         base_tag = re.sub(r"[\s/\\:\*\?\"<>\|']+", '-', tag).strip('-')
         if not base_tag:
             base_tag = f"{node.get('type', 'node')}-{node.get('server', 'unknown')}"
         
-        if base_tag in seen_tags:
-            seen_tags[base_tag] += 1
-            final_tag = f"{base_tag}-{seen_tags[base_tag]}"
-        else:
-            seen_tags[base_tag] = 1
-            final_tag = base_tag
+        count = seen_tags.get(base_tag, 0) + 1
+        seen_tags[base_tag] = count
+        final_tag = base_tag if count == 1 else f"{base_tag}-{count}"
+        while final_tag in used_tags:
+            count += 1
+            seen_tags[base_tag] = count
+            final_tag = f"{base_tag}-{count}"
 
+        used_tags.add(final_tag)
         node["tag"] = final_tag
         clean_nodes.append(node)
 
@@ -399,6 +452,11 @@ def _bare_host(server) -> str:
     return str(server).strip().strip("[]")
 
 
+def _q(val: Any, safe: str = "") -> str:
+    """将密码或查询参数按 RFC 3986 进行百分号编码，防止 #/@/?/&/' 截断 URI。"""
+    return urllib.parse.quote(str(val if val is not None else ""), safe=safe).replace("'", "%27")
+
+
 def _dae_transport_query(n: Dict[str, Any]) -> str:
     """提取 sing-box outbound 的 transport 块并编码为 URI 查询参数（支持 ws / grpc）。"""
     transport = n.get("transport")
@@ -406,7 +464,7 @@ def _dae_transport_query(n: Dict[str, Any]) -> str:
         return ""
     ttype = transport.get("type", "").lower()
     if ttype == "ws":
-        path = urllib.parse.quote(str(transport.get("path") or "/"), safe="/")
+        path = _q(transport.get("path") or "/", safe="/")
         q = f"&type=ws&path={path}"
         headers = transport.get("headers")
         if isinstance(headers, dict) and headers.get("Host"):
@@ -414,10 +472,10 @@ def _dae_transport_query(n: Dict[str, Any]) -> str:
             if isinstance(hval, (list, tuple)):
                 hval = hval[0] if hval else ""
             if hval:
-                q += f"&host={urllib.parse.quote(str(hval))}"
+                q += f"&host={_q(hval)}"
         return q
     elif ttype == "grpc":
-        svc = urllib.parse.quote(str(transport.get("service_name") or ""))
+        svc = _q(transport.get("service_name") or "")
         return f"&type=grpc&serviceName={svc}"
     return ""
 
@@ -425,55 +483,67 @@ def _dae_transport_query(n: Dict[str, Any]) -> str:
 def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
     """将节点导出为 dae node { ... } 语法块。
 
-    dae 使用单引号包裹字符串，因此 tag 与 URI 中的单引号必须先清洗。
+    dae 使用单引号包裹字符串，因此 tag 与 URI 中的单引号及特殊保留字符必须先转义。
     VMess 仅支持 v2rayN 风格 base64(JSON) URI。
     """
     lines = ["node {"]
+    used_tags = set()
+    tag_counts = {}
+
     for n in nodes:
         raw_tag = n.get("tag", "node")
-        tag = re.sub(r"[\s/\\:\*\?\"<>\|']+", '-', str(raw_tag)).strip('-') or "node"
+        base_tag = re.sub(r"[\s/\\:\*\?\"<>\|']+", '-', str(raw_tag)).strip('-') or "node"
+        cnt = tag_counts.get(base_tag, 0) + 1
+        tag_counts[base_tag] = cnt
+        tag = base_tag if cnt == 1 else f"{base_tag}-{cnt}"
+        while tag in used_tags:
+            cnt += 1
+            tag_counts[base_tag] = cnt
+            tag = f"{base_tag}-{cnt}"
+        used_tags.add(tag)
+
         ntype = n.get("type")
         server = n.get("server")
         port = n.get("server_port")
         if not server or not port:
             continue
-        frag = urllib.parse.quote(tag)
+        frag = _q(tag)
         host = _uri_host(server)   # authority 部分：IPv6 必须 [v6]
         trans_part = _dae_transport_query(n)
 
         raw_uri = ""
         if ntype == "hysteria2":
-            pw = n.get("password", "")
+            pw = _q(n.get("password", ""), safe=":")
             tls = n.get("tls", {})
-            sni = _bare_host(tls.get("server_name") or server)
+            sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             insecure = "&insecure=1" if tls.get("insecure") else ""
             obfs = n.get("obfs", {})
             obfs_part = ""
             if obfs and obfs.get("type"):
-                obfs_part = f"&obfs={obfs.get('type')}&obfs-password={urllib.parse.quote(str(obfs.get('password', '')))}"
+                obfs_part = f"&obfs={_q(obfs.get('type'))}&obfs-password={_q(obfs.get('password', ''))}"
             raw_uri = f"hysteria2://{pw}@{host}:{port}?sni={sni}{insecure}{obfs_part}#{frag}"
         elif ntype == "vless":
-            uuid = n.get("uuid", "")
-            flow = n.get("flow", "")
+            uuid = _q(n.get("uuid", ""))
+            flow = _q(n.get("flow", ""))
             tls = n.get("tls", {})
             flow_part = f"&flow={flow}" if flow else ""
             if tls.get("reality", {}).get("enabled"):
-                pbk = tls["reality"].get("public_key", "")
-                sid = tls["reality"].get("short_id", "")
-                sni = _bare_host(tls.get("server_name") or server)
-                fp = tls.get("utls", {}).get("fingerprint", "chrome")
+                pbk = _q(tls["reality"].get("public_key", ""))
+                sid = _q(tls["reality"].get("short_id", ""))
+                sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
+                fp = _q(tls.get("utls", {}).get("fingerprint", "chrome"))
                 raw_uri = f"vless://{uuid}@{host}:{port}?security=reality&sni={sni}&pbk={pbk}&sid={sid}&fp={fp}{flow_part}{trans_part}#{frag}"
             elif tls.get("enabled"):
-                sni = _bare_host(tls.get("server_name") or server)
-                fp = tls.get("utls", {}).get("fingerprint", "chrome")
+                sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
+                fp = _q(tls.get("utls", {}).get("fingerprint", "chrome"))
                 insecure = "&allowInsecure=1" if tls.get("insecure") else ""
                 raw_uri = f"vless://{uuid}@{host}:{port}?security=tls&sni={sni}&fp={fp}{insecure}{flow_part}{trans_part}#{frag}"
             else:
                 raw_uri = f"vless://{uuid}@{host}:{port}?security=none{flow_part}{trans_part}#{frag}"
         elif ntype == "trojan":
-            pw = n.get("password", "")
+            pw = _q(n.get("password", ""))
             tls = n.get("tls", {})
-            sni = _bare_host(tls.get("server_name") or server)
+            sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             insecure = "&allowInsecure=1" if tls.get("insecure") else ""
             raw_uri = f"trojan://{pw}@{host}:{port}?sni={sni}{insecure}{trans_part}#{frag}"
         elif ntype == "shadowsocks":
@@ -490,12 +560,12 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             net_type = transport.get("type", "tcp")
             # gRPC 的服务名存在 service_name；v2rayN 格式用 path 承载 serviceName
             path = transport.get("path") or transport.get("service_name") or ""
-            host = ""
+            ws_host = ""
             headers = transport.get("headers", {})
             if isinstance(headers, dict):
-                host = headers.get("Host", "")
-                if isinstance(host, (list, tuple)):
-                    host = host[0] if host else ""
+                ws_host = headers.get("Host", "")
+                if isinstance(ws_host, (list, tuple)):
+                    ws_host = ws_host[0] if ws_host else ""
             vm = {
                 "v": "2",
                 "ps": tag,
@@ -506,7 +576,7 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
                 "scy": security,
                 "net": net_type,
                 "type": "none" if net_type == "tcp" else net_type,
-                "host": host,
+                "host": ws_host,
                 "path": path,
                 "tls": "tls" if tls.get("enabled") else "",
                 "sni": (tls.get("server_name") or server) if tls.get("enabled") else ""
@@ -523,15 +593,24 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _is_ip_literal(addr: str) -> bool:
+    """判断字符串是否为纯 IPv4 或 IPv6 字面量。"""
+    s = str(addr or "").strip().strip("[]")
+    if not s:
+        return False
+    try:
+        ipaddress.ip_address(s)
+        return True
+    except ValueError:
+        return False
+
+
 def extract_node_domains(nodes: List[Dict[str, Any]]) -> List[str]:
     """提取出站节点中所有使用域名的服务器地址（排除纯 IPv4 和 IPv6），用于 DNS 防死锁直连白名单"""
     domains = set()
-    ipv4_pattern = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
     for n in nodes:
-        server = n.get("server", "").strip()
-        if not server:
-            continue
-        if ipv4_pattern.match(server) or ":" in server or server.startswith("["):
+        server = str(n.get("server") or "").strip()
+        if not server or _is_ip_literal(server):
             continue
         domains.add(server)
     return sorted(list(domains))
