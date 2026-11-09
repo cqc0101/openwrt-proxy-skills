@@ -372,10 +372,17 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     parsed_outbounds = []
     
     # 3.1 单节点收集
+    _deprecated_ss = {
+        "aes-256-cfb", "aes-128-cfb", "aes-192-cfb", "rc4", "rc4-md5",
+        "bf-cfb", "cast5-cfb", "des-cfb", "idea-cfb", "rc2-cfb", "seed-cfb",
+        "salsa20", "chacha20", "table",
+    }
     if node_uris:
         for u in node_uris:
             try:
                 ob = parse_uri(u)
+                if ob.get("type") == "shadowsocks" and str(ob.get("method") or "").strip().lower() in _deprecated_ss:
+                    raise ValueError(f"Shadowsocks 加密方式已废弃不受 sing-box 支持: {ob.get('method')!r}")
                 parsed_outbounds.append(ob)
             except Exception as e:
                 print(f"[!] 忽略无效节点 URI: {e}", file=sys.stderr)

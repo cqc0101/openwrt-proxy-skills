@@ -57,5 +57,13 @@ class TestDnsDoctorScripts(unittest.TestCase):
         self.assertIn("timeout 3 nslookup", content, "nslookup 必须支持 timeout 包装防挂起")
 
 
+
+    def test_ipv6_colon_not_stripped_by_awk(self):
+        sh_path = os.path.join(SINGBOX_SCRIPTS, "diagnose_dns.sh")
+        with open(sh_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertNotIn('sub(/[#:].*/, "", tok)', content, "严禁使用 [#:] 剥离冒号导致 IPv6 地址被截断")
+
+
 if __name__ == "__main__":
     unittest.main()

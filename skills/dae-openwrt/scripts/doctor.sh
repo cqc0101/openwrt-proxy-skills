@@ -71,7 +71,13 @@ if pidof sing-box >/dev/null 2>&1 || pgrep -x "sing-box" >/dev/null 2>&1; then
     SINGBOX_RUNNING=1
 fi
 
-if pidof daed >/dev/null 2>&1 || pidof dae >/dev/null 2>&1 || pgrep -x "daed" >/dev/null 2>&1 || pgrep -x "dae" >/dev/null 2>&1; then
+DAED_RUNNING=0
+if pidof daed >/dev/null 2>&1 || pgrep -x "daed" >/dev/null 2>&1; then
+    DAED_RUNNING=1
+elif [ -f /etc/init.d/daed ] && /etc/init.d/daed status 2>/dev/null | grep -qi "running"; then
+    DAED_RUNNING=1
+fi
+if pidof dae >/dev/null 2>&1 || pgrep -x "dae" >/dev/null 2>&1; then
     DAE_RUNNING=1
 fi
 
@@ -168,9 +174,9 @@ say "${BOLD}================================================================${NC
 say "${BOLD}       OpenWrt 科学上网智能日志诊断医生 (Smart Log Doctor)       ${NC}"
 say "${BOLD}================================================================${NC}"
 
-    if pidof daed >/dev/null 2>&1 || pgrep -x daed >/dev/null 2>&1 || [ -f /etc/daed/wing.db ]; then
-        add_issue "daed_conflict" "error" "检测到正在运行 Web 面板版 daed (与原生 dae 互斥)" "原生 dae 配置文件 (/etc/dae/config.dae) 会被 Web 版 daed 忽略，两者同时启动将发生 eBPF 钩子争抢" "/etc/init.d/daed stop && /etc/init.d/daed disable && /etc/init.d/dae enable && /etc/init.d/dae start"
-    fi
+if [ "$SERVICE_NAME" != "sing-box" ] && [ "$DAED_RUNNING" -eq 1 ]; then
+    add_issue "daed_conflict" "error" "检测到正在运行 Web 面板版 daed (与原生 dae 互斥)" "原生 dae 配置文件 (/etc/dae/config.dae) 会被 Web 版 daed 忽略，两者同时启动将发生 eBPF 钩子争抢" "/etc/init.d/daed stop && /etc/init.d/daed disable && /etc/init.d/dae enable && /etc/init.d/dae start"
+fi
 
 # 进程与接口状态检测 (兼容显式指定 sing-box / dae 与默认 all 自动识别模式)
 if [ "$SERVICE_NAME" = "sing-box" ]; then

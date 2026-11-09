@@ -121,12 +121,13 @@ fi
 SWAP_KB=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
 TOTAL_SWAP=$(( ${SWAP_KB:-0} / 1024 ))
 
-# 闪存/存储评估 (MB)
+# 闪存/存储评估 (MB)：兼容 /overlay 独立挂载与挂载于 / 根分区两种形态
 FREE_ROM=0
 if df -m /overlay >/dev/null 2>&1; then
-    FREE_ROM=$(df -m /overlay | awk '$NF=="/overlay" {print $(NF-2)}' | tail -n 1)
-elif df -m / >/dev/null 2>&1; then
-    FREE_ROM=$(df -m / | awk '$NF=="/" {print $(NF-2)}' | tail -n 1)
+    FREE_ROM=$(df -m /overlay 2>/dev/null | awk 'NR>1 && NF>=4 {print $(NF-2)}' | tail -n 1)
+fi
+if [ -z "$FREE_ROM" ] && df -m / >/dev/null 2>&1; then
+    FREE_ROM=$(df -m / 2>/dev/null | awk 'NR>1 && NF>=4 {print $(NF-2)}' | tail -n 1)
 fi
 # 移除非纯数字字符（例如某些 BusyBox df 带 M 或空值），彻底杜绝 bad number
 FREE_ROM=$(echo "$FREE_ROM" | tr -cd '0-9')
@@ -270,7 +271,11 @@ check_conflict "v2ray"
 check_conflict "xray"
 check_conflict "daed"
 DAED_RUNNING=0
-if pidof daed >/dev/null 2>&1 || pgrep -x daed >/dev/null 2>&1 || [ -f /etc/daed/wing.db ]; then
+if pidof daed >/dev/null 2>&1 || pgrep -x "daed" >/dev/null 2>&1; then
+    DAED_RUNNING=1
+elif [ -f /etc/init.d/daed ] && /etc/init.d/daed status 2>/dev/null | grep -qi "running"; then
+    DAED_RUNNING=1
+elif command -v uci >/dev/null 2>&1 && [ "$(uci get daed.config.enabled 2>/dev/null)" = "1" ]; then
     DAED_RUNNING=1
 fi
 

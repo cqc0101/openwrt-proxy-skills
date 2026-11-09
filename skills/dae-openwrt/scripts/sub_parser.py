@@ -234,9 +234,14 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         return {}
 
     if ptype == "ss":
-        cipher = str(p.get("cipher") or "")
+        cipher = str(p.get("cipher") or "").strip()
         password = str(p.get("password") or "")
-        if not cipher or not password:
+        deprecated_ciphers = {
+            "aes-256-cfb", "aes-128-cfb", "aes-192-cfb", "rc4", "rc4-md5",
+            "bf-cfb", "cast5-cfb", "des-cfb", "idea-cfb", "rc2-cfb", "seed-cfb",
+            "salsa20", "chacha20", "table",
+        }
+        if not cipher or not password or cipher.lower() in deprecated_ciphers:
             return {}
         ob = {
             "type": "shadowsocks",
@@ -452,67 +457,158 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
+def _strip_yaml_comment(line: str) -> str:
+    """引号感知剥离 YAML 行内注释（仅当 # 位于行首或紧跟空白字符且不在单双引号内时剥离）。"""
+    in_sq = False
+    in_dq = False
+    out = []
+    for idx, ch in enumerate(line):
+        if ch == "'" and not in_dq:
+            in_sq = not in_sq
+            out.append(ch)
+        elif ch == '"' and not in_sq:
+            in_dq = not in_dq
+            out.append(ch)
+        elif ch == "#" and not in_sq and not in_dq and (idx == 0 or line[idx - 1] in (" ", "\t")):
+            break
+        else:
+            out.append(ch)
+    return "".join(out).rstrip()
+
+
+def _split_yaml_flow(s: str, sep: str = ",") -> List[str]:
+    """按顶层分隔符拆分 YAML 流式表达式，严格感知 {}、[] 与单双引号嵌套边界。"""
+    parts = []
+    curr = []
+    brace_depth = 0
+    bracket_depth = 0
+    in_sq = False
+    in_dq = False
+    for ch in s:
+        if ch == "'" and not in_dq:
+            in_sq = not in_sq
+            curr.append(ch)
+        elif ch == '"' and not in_sq:
+            in_dq = not in_dq
+            curr.append(ch)
+        elif not in_sq and not in_dq:
+            if ch == "{":
+                brace_depth += 1
+                curr.append(ch)
+            elif ch == "}":
+                brace_depth = max(0, brace_depth - 1)
+                curr.append(ch)
+            elif ch == "[":
+                bracket_depth += 1
+                curr.append(ch)
+            elif ch == "]":
+                bracket_depth = max(0, bracket_depth - 1)
+                curr.append(ch)
+            elif ch == sep and brace_depth == 0 and bracket_depth == 0:
+                parts.append("".join(curr).strip())
+                curr = []
+            else:
+                curr.append(ch)
+        else:
+            curr.append(ch)
+    if curr or s.endswith(sep):
+        tail = "".join(curr).strip()
+        if tail:
+            parts.append(tail)
+    return parts
+
+
+def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Dict[str, Any]]) -> Any:
+    """解析 YAML 标量、内联列表 [...] 或内联字典 {...}（递归支持嵌套与锚点引用）。"""
+    v = val_str.strip()
+    if not v:
+        return ""
+    if v.startswith("{") and v.endswith("}"):
+        return _parse_yaml_flow_map(v[1:-1], anchors)
+    if v.startswith("[") and v.endswith("]"):
+        inner = v[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_yaml_scalar_or_flow(x, anchors) for x in _split_yaml_flow(inner, ",")]
+    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+        return v[1:-1]
+    vl = v.lower()
+    if vl in ("null", "~"):
+        return None
+    if vl == "true":
+        return True
+    if vl == "false":
+        return False
+    if re.match(r"^-?\d+$", v):
+        try:
+            return int(v)
+        except ValueError:
+            return v
+    return v
+
+
+def _parse_yaml_flow_map(inner: str, anchors: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """解析花括号内部 k: v 列表，支持嵌套字典/列表与 <<: *anchor 继承（显式字段优先于锚点默认值）。"""
+    res: Dict[str, Any] = {}
+    explicit: Dict[str, Any] = {}
+    for part in _split_yaml_flow(inner, ","):
+        if ":" not in part:
+            continue
+        k, v = part.split(":", 1)
+        k_s = k.strip().strip("\"'")
+        v_s = v.strip()
+        if k_s == "<<" and v_s.startswith("*"):
+            ref = v_s[1:].strip()
+            if ref in anchors:
+                for ak, av in anchors[ref].items():
+                    res[ak] = av
+        else:
+            explicit[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
+    res.update(explicit)
+    return res
+
+
 def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
-    """在无 PyYAML 环境下，以纯 Python 标准库解析 Clash YAML 订阅中的 proxies 列表，
-    并完整支持 YAML 锚点定义 (&anchor) 与引用别名合并 (<<: *anchor)。
+    """在无 PyYAML 环境下，以纯 Python 标准库解析 Clash YAML 订阅中的 proxies 列表。
+    支持：
+    1. 流式与块式 YAML 锚点定义 (&anchor) 与引用合并 (<<: *anchor)
+    2. 行内注释剥离 (# ...)
+    3. 嵌套流式字典 (- {name: ..., ws-opts: {path: /ws, headers: {Host: a.com}}})
+    4. 多级缩进块式字典与列表 (ws-opts -> headers -> Host 及 alpn 多行列表)
     """
-    lines = text.splitlines()
+    clean_lines = [_strip_yaml_comment(raw_l) for raw_l in text.splitlines()]
     anchors: Dict[str, Dict[str, Any]] = {}
 
-    # 1. 扫描内联流式锚点: key: &anchor { k: v, ... }
-    for m in re.finditer(r'(?m)^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*\{([^}]+)\}', text):
-        a_name = m.group(2)
-        inner = m.group(3)
-        props: Dict[str, Any] = {}
-        for part in re.split(r'[,;]\s*', inner):
-            if ':' in part:
-                k, v = part.split(':', 1)
-                k_s = k.strip().strip('"\'')
-                v_s = v.strip().strip('"\'')
-                if v_s.lower() == 'true':
-                    val = True
-                elif v_s.lower() == 'false':
-                    val = False
-                elif v_s.isdigit():
-                    val = int(v_s)
-                else:
-                    val = v_s
-                props[k_s] = val
-        anchors[a_name] = props
+    # 1. 扫描流式锚点: key: &anchor { k: v, ... }
+    for l in clean_lines:
+        m = re.match(r"^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*\{(.*)\}\s*$", l)
+        if m:
+            anchors[m.group(2)] = _parse_yaml_flow_map(m.group(3), anchors)
 
-    # 2. 扫描缩进块式锚点:
-    # key: &anchor
-    #   sub_key: val
+    # 2. 扫描缩进块式锚点: key: &anchor
     i = 0
-    while i < len(lines):
-        line = lines[i]
-        m = re.match(r'^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*$', line)
+    while i < len(clean_lines):
+        line = clean_lines[i]
+        m = re.match(r"^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*$", line)
         if m:
             a_name = m.group(2)
             base_indent = len(line) - len(line.lstrip())
-            props = {}
+            props: Dict[str, Any] = {}
             i += 1
-            while i < len(lines):
-                sub_line = lines[i]
-                if not sub_line.strip() or sub_line.strip().startswith('#'):
+            while i < len(clean_lines):
+                sub_line = clean_lines[i]
+                if not sub_line.strip():
                     i += 1
                     continue
                 sub_indent = len(sub_line) - len(sub_line.lstrip())
                 if sub_indent <= base_indent:
                     break
-                if ':' in sub_line:
-                    k, v = sub_line.split(':', 1)
-                    k_s = k.strip().strip('"\'')
-                    v_s = v.strip().strip('"\'')
-                    if v_s.lower() == 'true':
-                        val = True
-                    elif v_s.lower() == 'false':
-                        val = False
-                    elif v_s.isdigit():
-                        val = int(v_s)
-                    else:
-                        val = v_s
-                    props[k_s] = val
+                if ":" in sub_line:
+                    k, v = sub_line.split(":", 1)
+                    k_s = k.strip().strip("\"'")
+                    v_s = v.strip()
+                    if v_s:
+                        props[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
                 i += 1
             anchors[a_name] = props
             continue
@@ -520,115 +616,113 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
 
     # 3. 定位 proxies / Proxy 节点块起始行
     proxies_idx = -1
-    for idx, l in enumerate(lines):
-        if re.match(r'^(?:proxies|Proxy)\s*:', l.strip()):
+    proxies_base_indent = 0
+    for idx, l in enumerate(clean_lines):
+        if re.match(r"^(?:proxies|Proxy)\s*:", l.strip()):
             proxies_idx = idx
+            proxies_base_indent = len(l) - len(l.lstrip())
             break
 
     if proxies_idx == -1:
         return []
 
-    # 4. 抽取 proxies 下所有节点行块
+    # 4. 抽取 proxies 下所有顶层节点行块（区分顶层节点 `- ` 与属性内部子列表 `- h2`）
     raw_items: List[List[str]] = []
     curr_item: List[str] = []
+    item_dash_indent = None
 
-    for l in lines[proxies_idx + 1:]:
+    for l in clean_lines[proxies_idx + 1:]:
         stripped = l.strip()
-        if not stripped or stripped.startswith('#'):
+        if not stripped:
             continue
         indent = len(l) - len(l.lstrip())
 
-        # 若遇到无缩进且不是以 '-' 开头的顶层键（如 rules:），说明已退出 proxies 块
-        if indent == 0 and not stripped.startswith('-') and ':' in stripped:
+        if indent <= proxies_base_indent and not stripped.startswith("-") and ":" in stripped:
             break
 
-        if stripped.startswith('-'):
-            if curr_item:
-                raw_items.append(curr_item)
-            curr_item = [l]
+        if stripped.startswith("-"):
+            if item_dash_indent is None or indent <= item_dash_indent:
+                item_dash_indent = indent
+                if curr_item:
+                    raw_items.append(curr_item)
+                curr_item = [l]
+            else:
+                if curr_item:
+                    curr_item.append(l)
         else:
             if curr_item:
                 curr_item.append(l)
     if curr_item:
         raw_items.append(curr_item)
 
-    # 5. 解析每个 proxy 节点并应用锚点合并
+    # 5. 解析每个 proxy 节点并应用多级嵌套与锚点合并
     parsed_proxies: List[Dict[str, Any]] = []
     for item_lines in raw_items:
         first = item_lines[0].strip()
-        # 情况 A: 单行内联 - { ... }
-        inline_m = re.match(r'^-\s*\{([^}]+)\}', first)
+        # 情况 A: 单行内联 - { ... }（支持嵌套花括号）
+        inline_m = re.match(r"^-\s*\{(.*)\}\s*$", first)
         if inline_m:
-            p_dict: Dict[str, Any] = {}
-            for part in re.split(r'[,;]\s*', inline_m.group(1)):
-                if ':' in part:
-                    k, v = part.split(':', 1)
-                    k_s = k.strip().strip('"\'')
-                    v_s = v.strip().strip('"\'')
-                    if k_s == '<<' and v_s.startswith('*'):
-                        ref = v_s[1:]
-                        if ref in anchors:
-                            p_dict.update(anchors[ref])
-                    else:
-                        if v_s.lower() == 'true':
-                            val = True
-                        elif v_s.lower() == 'false':
-                            val = False
-                        elif v_s.isdigit():
-                            val = int(v_s)
-                        else:
-                            val = v_s
-                        p_dict[k_s] = val
+            p_dict = _parse_yaml_flow_map(inline_m.group(1), anchors)
             if p_dict:
                 parsed_proxies.append(p_dict)
             continue
 
-        # 情况 B: 多行缩进块 - name: ...
+        # 情况 B: 多行缩进块 - name: ...（使用缩进栈支持多层嵌套字典与列表）
         p_dict = {}
-        parent_indent = 0
-        current_sub_dict = None
+        first_indent = len(item_lines[0]) - len(item_lines[0].lstrip())
+        stack: List[Any] = [(first_indent, p_dict, None)]  # (indent, container_dict, last_empty_key)
 
-        for l in item_lines:
+        for idx_l, l in enumerate(item_lines):
             s = l.strip()
             indent = len(l) - len(l.lstrip())
-            if s.startswith('-'):
+            if idx_l == 0 and s.startswith("-"):
                 s = s[1:].strip()
-                parent_indent = indent
-                current_sub_dict = None
-            if not s or s.startswith('#'):
+                indent = first_indent + 2
+                stack = [(first_indent, p_dict, None)]
+            if not s:
                 continue
 
-            if ':' in s:
-                k, v = s.split(':', 1)
-                k_s = k.strip().strip('"\'')
-                v_s = v.strip().strip('"\'')
+            while len(stack) > 1 and indent <= stack[-1][0]:
+                stack.pop()
+
+            cur_indent, cur_container, pending_key = stack[-1]
+
+            # 处理多行 YAML 列表项 (例如 alpn: 下的 - h2)
+            if s.startswith("-") and (idx_l > 0):
+                list_val = _parse_yaml_scalar_or_flow(s[1:].strip(), anchors)
+                if pending_key is not None and isinstance(cur_container, dict):
+                    existing = cur_container.get(pending_key)
+                    if not isinstance(existing, list):
+                        cur_container[pending_key] = [list_val]
+                    else:
+                        existing.append(list_val)
+                continue
+
+            if ":" in s:
+                k, v = s.split(":", 1)
+                k_s = k.strip().strip("\"'")
+                v_s = v.strip()
+
+                # 若前一个同级或父级 pending_key 是空字典占位，进入子字典层级
+                if pending_key is not None and indent > cur_indent and isinstance(cur_container.get(pending_key), dict):
+                    cur_container = cur_container[pending_key]
+                    cur_indent = indent
+                    stack.append((cur_indent, cur_container, None))
 
                 if not v_s:
                     sub_d: Dict[str, Any] = {}
-                    p_dict[k_s] = sub_d
-                    current_sub_dict = sub_d
+                    cur_container[k_s] = sub_d
+                    stack[-1] = (cur_indent, cur_container, k_s)
                     continue
 
-                if k_s == '<<' and v_s.startswith('*'):
-                    ref = v_s[1:]
+                if k_s == "<<" and v_s.startswith("*"):
+                    ref = v_s[1:].strip()
                     if ref in anchors:
                         for ak, av in anchors[ref].items():
-                            p_dict.setdefault(ak, av)
+                            cur_container.setdefault(ak, av)
                 else:
-                    if v_s.lower() == 'true':
-                        val = True
-                    elif v_s.lower() == 'false':
-                        val = False
-                    elif v_s.isdigit():
-                        val = int(v_s)
-                    else:
-                        val = v_s
-
-                    if indent > parent_indent and current_sub_dict is not None:
-                        current_sub_dict[k_s] = val
-                    else:
-                        p_dict[k_s] = val
-                        current_sub_dict = None
+                    cur_container[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
+                    stack[-1] = (cur_indent, cur_container, None)
 
         if p_dict:
             parsed_proxies.append(p_dict)
@@ -636,56 +730,64 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
     return parsed_proxies
 
 
+def _extract_clash_proxies(text: str) -> List[Dict[str, Any]]:
+    """从 Clash YAML 文本提取并转换节点列表（优先 PyYAML，无依赖或失败时回退内置解析器）。"""
+    results = []
+    if HAS_YAML:
+        try:
+            data = yaml.safe_load(text)
+            if isinstance(data, dict):
+                proxies = data.get("proxies") or data.get("Proxy") or []
+                if isinstance(proxies, list) and len(proxies) > 0:
+                    for p in proxies:
+                        if isinstance(p, dict):
+                            try:
+                                parsed = parse_clash_proxy(p)
+                                if parsed:
+                                    results.append(parsed)
+                            except Exception:
+                                continue
+        except Exception:
+            results = []
+
+    if not results:
+        try:
+            pure_proxies = parse_clash_yaml_pure_python(text)
+            for p in pure_proxies:
+                if isinstance(p, dict):
+                    try:
+                        parsed = parse_clash_proxy(p)
+                        if parsed:
+                            results.append(parsed)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+    return results
+
+
 def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
-    """智能解析订阅纯文本（支持 Base64、Clash YAML、多行 URI）"""
+    """智能解析订阅纯文本（支持 Base64、Clash YAML、Base64 包裹的 Clash YAML、多行 URI）"""
     text = text.strip()
     if not text:
         return []
 
-    # 1. 尝试作为 Clash YAML 解析（单节点隔离容错，防止单颗坏节点冲毁整份订阅）
+    # 1. 尝试直接作为 Clash YAML 解析（单节点隔离容错，防止单颗坏节点冲毁整份订阅）
     if "proxies:" in text or "Proxy:" in text:
-        results = []
-        if HAS_YAML:
-            try:
-                data = yaml.safe_load(text)
-                if isinstance(data, dict):
-                    proxies = data.get("proxies") or data.get("Proxy") or []
-                    if isinstance(proxies, list) and len(proxies) > 0:
-                        for p in proxies:
-                            if isinstance(p, dict):
-                                try:
-                                    parsed = parse_clash_proxy(p)
-                                    if parsed:
-                                        results.append(parsed)
-                                except Exception:
-                                    continue
-            except Exception:
-                results = []
-
-        # 若未安装 PyYAML 或 PyYAML 解析为空，启动内置纯 Python YAML 解析器（支持 &anchor 锚点与 <<: *anchor 别名继承）
-        if not results:
-            try:
-                pure_proxies = parse_clash_yaml_pure_python(text)
-                for p in pure_proxies:
-                    if isinstance(p, dict):
-                        try:
-                            parsed = parse_clash_proxy(p)
-                            if parsed:
-                                results.append(parsed)
-                        except Exception:
-                            continue
-            except Exception:
-                pass
-
+        results = _extract_clash_proxies(text)
         if results:
             return results
 
-    # 2. 尝试作为 Base64 解码
-    # 机场典型格式：整个订阅是一大串未换行或每 76 字符换行的 base64
+    # 2. 尝试作为 Base64 解码（兼容 Base64 包裹的节点列表或 Base64 包裹的 Clash YAML）
     if not text.startswith(("vless://", "hysteria2://", "hy2://", "ss://", "trojan://", "vmess://", "tuic://", "anytls://")):
         decoded = safe_b64decode(text)
-        if decoded and any(proto in decoded for proto in ("vless://", "hy2://", "hysteria2://", "trojan://", "ss://", "vmess://", "tuic://", "anytls://")):
-            text = decoded
+        if decoded:
+            if "proxies:" in decoded or "Proxy:" in decoded:
+                results = _extract_clash_proxies(decoded)
+                if results:
+                    return results
+            if any(proto in decoded for proto in ("vless://", "hy2://", "hysteria2://", "trojan://", "ss://", "vmess://", "tuic://", "anytls://")):
+                text = decoded
 
     # 3. 按行解析单个节点 URI
     results = []
@@ -716,7 +818,14 @@ def filter_nodes(nodes: List[Dict[str, Any]],
     seen_tags = {}
     used_tags = set()
 
+    deprecated_ciphers = {
+        "aes-256-cfb", "aes-128-cfb", "aes-192-cfb", "rc4", "rc4-md5",
+        "bf-cfb", "cast5-cfb", "des-cfb", "idea-cfb", "rc2-cfb", "seed-cfb",
+        "salsa20", "chacha20", "table",
+    }
     for node in nodes:
+        if node.get("type") == "shadowsocks" and str(node.get("method") or "").strip().lower() in deprecated_ciphers:
+            continue
         tag = str(node.get("tag") or "").strip()
         
         # 排除广告信息节点

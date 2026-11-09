@@ -52,13 +52,17 @@ run_dae_hardening() {
     ACTION_FLAG="${1:-}"
 
     # 检查因突发断电/内核崩溃遗留的闪存启动哨兵，执行启动即时自愈 (防 /tmp 挥发性失效)
-    if [ -f /etc/dae/.boot_guard ]; then
-        say "${RED}[BOOT GUARD] 检测到前序部署未确认且系统发生过硬重启，正在从闪存快照强力恢复配置与网络...${NC}"
-        [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
-        rm -f /etc/dae/.boot_guard 2>/dev/null || true
-        ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
-        run_dae_hardening "--revert" 2>/dev/null || true
-        return 0
+    # 关键判定：仅当闪存 .boot_guard 存在且内存盘 /tmp/proxy_watchdog.token 已挥发丢失时，
+    # 才说明系统在看门狗期间发生过硬重启；正常部署中 (token 尚在) 绝不误拦截后续网络配置与 --confirm！
+    if [ "$ACTION_FLAG" != "--confirm" ] && [ "$ACTION_FLAG" != "--revert" ] && [ "$ACTION_FLAG" != "--watchdog" ]; then
+        if [ -f /etc/dae/.boot_guard ] && [ ! -f /tmp/proxy_watchdog.token ]; then
+            say "${RED}[BOOT GUARD] 检测到前序部署未确认且系统发生过硬重启 (/tmp 已挥发)，正在从闪存快照强力恢复配置与网络...${NC}"
+            [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
+            rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
+            ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
+            run_dae_hardening "--revert" 2>/dev/null || true
+            return 0
+        fi
     fi
 
     # 定位 LAN zone 索引
@@ -81,7 +85,7 @@ run_dae_hardening() {
     if [ "$ACTION_FLAG" = "--confirm" ]; then
         touch /tmp/proxy_deploy_confirmed
         kill_active_watchdog
-        rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback 2>/dev/null || true
+        rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
         say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗与闪存启动哨兵已解除并清理。${NC}"
         return 0
     fi
@@ -92,12 +96,22 @@ run_dae_hardening() {
         _wd_token="wd_$$_$(date +%s 2>/dev/null || echo 1)"
         echo "$_wd_token" > /tmp/proxy_watchdog.token 2>/dev/null || true
 
-        # 闪存持久化防失联哨兵 (根治因突发内核 Panic / 硬件断电导致 /tmp 内存盘挥发失效的边界死穴)
-        mkdir -p /etc/dae 2>/dev/null || true
+        # 闪存持久化防失联哨兵 + OpenWrt uci-defaults 开机自动恢复钩子
+        # (根治因突发内核 Panic / 硬件断电导致 /tmp 内存盘挥发失效的边界死穴)
+        mkdir -p /etc/dae /etc/uci-defaults 2>/dev/null || true
         if [ -f /etc/dae/config.dae ] && [ ! -f /etc/dae/.config.dae.rollback ]; then
             cp -f /etc/dae/config.dae /etc/dae/.config.dae.rollback 2>/dev/null || true
         fi
         echo "$_wd_token" > /etc/dae/.boot_guard 2>/dev/null || true
+        cat << 'BOOTGUARD_EOF' > /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
+#!/bin/sh
+if [ -f /etc/dae/.boot_guard ] && [ ! -f /tmp/proxy_watchdog.token ]; then
+    [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
+    rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback 2>/dev/null || true
+    ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
+fi
+exit 0
+BOOTGUARD_EOF
 
         say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (含闪存启动哨兵防死机)...${NC}"
         (
@@ -106,7 +120,7 @@ run_dae_hardening() {
             if [ ! -f /tmp/proxy_deploy_confirmed ] && [ "$_cur_token" = "$_wd_token" ]; then
                 [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
                 [ -f /tmp/config.dae.bak ] && cp -f /tmp/config.dae.bak /etc/dae/config.dae 2>/dev/null || true
-                rm -f /etc/dae/.boot_guard 2>/dev/null || true
+                rm -f /etc/dae/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
                 ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
                 run_dae_hardening "--revert" 2>/dev/null || true
             fi
@@ -126,7 +140,7 @@ run_dae_hardening() {
             cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
             rm -f /etc/dae/.config.dae.rollback 2>/dev/null || true
         fi
-        rm -f /etc/dae/.boot_guard 2>/dev/null || true
+        rm -f /etc/dae/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
         if [ -f /etc/dae/.flow_offload.bak ]; then
             . /etc/dae/.flow_offload.bak
             if [ -n "${ORIG_SW_OFFLOAD:-}" ]; then

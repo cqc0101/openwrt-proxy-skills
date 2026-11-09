@@ -153,10 +153,14 @@ query_ips() {
         in_ans && /Address/ {
             for (i = 1; i <= NF; i++) {
                 tok = $i
-                sub(/[#:].*/, "", tok)
+                sub(/#.*/, "", tok)
+                sub(/:$/, "", tok)
+                if (tok ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) {
+                    sub(/:[0-9]+$/, "", tok)
+                }
                 if (tok ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
                     print tok
-                } else if (tok ~ /^[0-9a-fA-F:]+:[0-9a-fA-F:]+$/) {
+                } else if (tok ~ /^[0-9a-fA-F:]*:[0-9a-fA-F:]+$/) {
                     print tok
                 }
             }
@@ -236,8 +240,9 @@ if [ "$RESOLVE_TOOL" = "nslookup" ]; then
         in_ans && /Address/ {
             for (i = 1; i <= NF; i++) {
                 tok = $i
-                sub(/[#:].*/, "", tok)
-                if (tok ~ /^[0-9a-fA-F:]+:[0-9a-fA-F:]+$/) {
+                sub(/#.*/, "", tok)
+                sub(/:$/, "", tok)
+                if (tok ~ /^[0-9a-fA-F:]*:[0-9a-fA-F:]+$/) {
                     print tok
                 }
             }
@@ -267,8 +272,13 @@ fi
 # ------------------------------------------------------------------------------
 say "\n${CYAN}[5/7] 验证局域网域名与内网主机名防劫持 (.lan / .local)...${NC}"
 
-LAN_IPS=$(query_ips "router.lan")
+_CUR_HN=$(uname -n 2>/dev/null | tr -cd '0-9a-zA-Z_-' || true)
+LAN_IPS=""
+[ -n "$_CUR_HN" ] && LAN_IPS=$(query_ips "${_CUR_HN}.lan")
+[ -z "$LAN_IPS" ] && LAN_IPS=$(query_ips "router.lan")
 [ -z "$LAN_IPS" ] && LAN_IPS=$(query_ips "openwrt.lan")
+[ -z "$LAN_IPS" ] && LAN_IPS=$(query_ips "immortalwrt.lan")
+[ -z "$LAN_IPS" ] && LAN_IPS=$(query_ips "istoreos.lan")
 LAN_IP=$(printf '%s\n' "$LAN_IPS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
 
 if [ -n "$LAN_IP" ]; then

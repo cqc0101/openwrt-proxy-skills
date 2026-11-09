@@ -338,5 +338,20 @@ class TestAuditHardeningAutoConfig(unittest.TestCase):
         self.assertLess(idx_canary, idx_global, "Canary 域名阻断必须位于 clash_mode: Global 之前")
 
 
+
+    def test_deprecated_ss_cipher_isolated_in_auto_config(self):
+        cfg = build_config(
+            version="1.14", dns_mode="fakeip", mirror="direct",
+            node_uris=[
+                "ss://aes-256-cfb:pass@1.2.3.4:8388#OldCFB",
+                "trojan://pw@5.6.7.8:443?sni=b.com#GoodTrojan",
+            ],
+            strict_nodes=True,
+        )
+        tags = [o.get("tag") for o in cfg["outbounds"]]
+        self.assertNotIn("OldCFB", tags)
+        self.assertIn("GoodTrojan", tags)
+
+
 if __name__ == "__main__":
     unittest.main()

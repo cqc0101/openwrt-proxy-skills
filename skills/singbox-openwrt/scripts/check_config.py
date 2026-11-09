@@ -200,6 +200,8 @@ def check_config_obj(cfg):
                     def_tag = ob.get("default")
                     if def_tag not in sub_obs:
                         errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 default 指向 '{def_tag}'，但该标签不在其 outbounds 列表中！")
+                elif ob_type == "urltest" and "default" in ob:
+                    errors.append(f"[非法字段] outbound[{idx}]({ob_tag}) 类型为 urltest，不支持 'default' 字段（仅 selector 支持）！")
 
         # 检查代理链与 detour 引用完整性
         ob_detour = ob.get("detour")
@@ -255,6 +257,18 @@ def check_config_obj(cfg):
         if ib_type == "tun":
             if "inet4_address" in ib or "inet6_address" in ib:
                 errors.append(f"inbounds[{idx}](tun) 包含已废弃的 'inet4_address'/'inet6_address'，请合并至 'address' 数组。")
+            addr_field = ib.get("address")
+            if addr_field is not None:
+                addr_list = [addr_field] if isinstance(addr_field, str) else (addr_field if isinstance(addr_field, list) else [])
+                for a_item in addr_list:
+                    a_str = str(a_item or "").strip()
+                    if "/" not in a_str:
+                        errors.append(f"[非法 TUN 地址] inbounds[{idx}](tun) 的 address '{a_str}' 缺少 CIDR 掩码前缀（如 '/30'）！")
+                    else:
+                        try:
+                            ipaddress.ip_interface(a_str)
+                        except ValueError:
+                            errors.append(f"[非法 TUN 地址] inbounds[{idx}](tun) 的 address '{a_str}' 不是合法的 IP CIDR！")
             if ib.get("stack") is not None:
                 warnings.append(f"inbounds[{idx}](tun) 显式设置了 'stack'，该选项自 sing-box 1.15 起已废弃，建议删除以使用默认值。")
             if ib.get("auto_redirect") is True:

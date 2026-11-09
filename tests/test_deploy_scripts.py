@@ -193,5 +193,18 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             self.assertIn("daed_conflict", doc_txt, "doctor.sh 必须针对 daed 运行给出错误诊断与禁用方案")
 
 
+
+    def test_boot_guard_does_not_self_rollback_when_watchdog_token_exists(self):
+        for base in (SINGBOX, DAE):
+            net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
+            self.assertIn("[ ! -f /tmp/proxy_watchdog.token ]", net_txt,
+                          "boot_guard 必须校验 /tmp/proxy_watchdog.token 已挥发丢失，严禁在正常部署期间自杀式回滚")
+            self.assertIn('[ "$ACTION_FLAG" != "--confirm" ]', net_txt,
+                          "boot_guard 绝不能拦截 --confirm 分支")
+            probe_txt = _read(os.path.join(base, "probe.sh"))
+            self.assertNotIn("[ -f /etc/daed/wing.db ]", probe_txt,
+                             "probe.sh 不得仅凭静态文件 wing.db 永久判定 daed_running=1")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -270,5 +270,22 @@ class TestAuditHardeningCheckConfig(unittest.TestCase):
         self.assertTrue(any("废弃加密" in e for e in errs), errs)
 
 
+
+    def test_invalid_tun_address_cidr_and_urltest_default_blocked(self):
+        errs1, _ = run({
+            "inbounds": [{"type": "tun", "tag": "tun-in", "address": "172.19.0.1"}],
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("缺少 CIDR 掩码前缀" in e for e in errs1), errs1)
+
+        errs2, _ = run({
+            "outbounds": [
+                {"type": "urltest", "tag": "auto", "outbounds": ["direct"], "default": "direct"},
+                {"type": "direct", "tag": "direct"},
+            ]
+        })
+        self.assertTrue(any("不支持 'default' 字段" in e for e in errs2), errs2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -583,5 +583,53 @@ proxies:
         self.assertIn("SG-Trojan", tags)
 
 
+
+    def test_pure_python_yaml_nested_flow_multiline_list_comments_and_b64_yaml(self):
+        from sub_parser import parse_clash_yaml_pure_python, parse_subscription_text
+        yaml_complex = '''
+common_ws: &common_ws {type: vless, port: 8443, tls: true, network: ws}
+
+proxies:
+  # 1. 内联嵌套字典 (ws-opts -> headers -> Host) + 锚点 + 显式字段覆盖锚点默认端口 + 行内注释
+  - {name: "HK,Inline-WS", <<: *common_ws, server: 1.2.3.4, port: 443, uuid: u-1, servername: ws.a.com, alpn: [h2, http/1.1], ws-opts: {path: /ws, headers: {Host: cdn.a.com}}} # inline comment
+  # 2. 多级缩进块字典 (ws-opts -> headers -> Host) + 多行 YAML 列表 (alpn) + null 容错
+  - name: "SG-Block-WS" # comment
+    type: vmess
+    server: 5.6.7.8 # server comment
+    port: 443
+    uuid: u-2
+    alterId: null
+    cipher: auto
+    tls: true
+    servername: sni.b.com
+    alpn:
+      - h2
+      - http/1.1
+    network: ws
+    ws-opts:
+      path: /v2ws
+      headers:
+        Host: host.b.com
+  # 3. 含废弃加密的 SS 节点应被自动过滤隔离，不影响正常节点
+  - {name: "Old-SS-CFB", type: ss, server: 9.9.9.9, port: 8388, cipher: aes-256-cfb, password: pw}
+'''
+        raw_items = parse_clash_yaml_pure_python(yaml_complex)
+        self.assertEqual(len(raw_items), 3)
+        self.assertEqual(raw_items[0]["name"], "HK,Inline-WS")
+        self.assertEqual(raw_items[0]["port"], 443)  # 显式字段不被 <<: *common_ws 覆盖为 8443
+        self.assertEqual(raw_items[0]["ws-opts"]["headers"]["Host"], "cdn.a.com")
+        self.assertEqual(raw_items[0]["alpn"], ["h2", "http/1.1"])
+        self.assertEqual(raw_items[1]["ws-opts"]["headers"]["Host"], "host.b.com")
+        self.assertEqual(raw_items[1]["alpn"], ["h2", "http/1.1"])
+        self.assertIsNone(raw_items[1]["alterId"])
+
+        # Base64 包裹的 Clash YAML 订阅端到端解析
+        b64_yaml = base64.b64encode(yaml_complex.encode("utf-8")).decode("ascii")
+        nodes = parse_subscription_text(b64_yaml)
+        self.assertEqual(len(nodes), 2)
+        self.assertEqual(nodes[0]["transport"]["headers"]["Host"], "cdn.a.com")
+        self.assertEqual(nodes[1]["transport"]["headers"]["Host"], "host.b.com")
+
+
 if __name__ == "__main__":
     unittest.main()
