@@ -41,6 +41,28 @@ class TestDaeSelfContained(unittest.TestCase):
         self.assertEqual(r.returncode, 0, f"stderr:\n{r.stderr}\nstdout:\n{r.stdout}")
         self.assertIn("SELF_CONTAINED_OK", r.stdout)
 
+    def test_sub_to_dae_full_config_generation_and_self_check(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            sub_file = os.path.join(td, "sub.txt")
+            out_dae = os.path.join(td, "config.dae")
+            with open(sub_file, "w", encoding="utf-8") as f:
+                f.write("trojan://pw@5.6.7.8:443?sni=b.com&type=ws&path=/ws&host=b.com#JP-WS\n")
+            env = dict(os.environ)
+            env["PYTHONIOENCODING"] = "utf-8"
+            r = subprocess.run(
+                [sys.executable, os.path.join(DAE_SCRIPTS, "sub_to_dae.py"),
+                 sub_file, "--full", "--lan-iface", "br-lan", "--out", out_dae],
+                capture_output=True, text=True, env=env, cwd=DAE_SCRIPTS
+            )
+            self.assertEqual(r.returncode, 0, f"sub_to_dae --full 失败:\n{r.stderr}\n{r.stdout}")
+            with open(out_dae, "r", encoding="utf-8") as f:
+                dae_text = f.read()
+            self.assertIn("global {", dae_text)
+            self.assertIn("routing {", dae_text)
+            self.assertIn("'JP-WS': 'trojan://", dae_text)
+            self.assertIn("type=ws&path=/ws&host=b.com", dae_text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,7 @@ class TestNetworkSetupScripts(unittest.TestCase):
         for base in (SINGBOX, DAE):
             text = _read(os.path.join(base, "setup_openwrt_network.sh"))
             self.assertIn("while [ $# -gt 0 ]; do", text, "必须使用参数循环解析避免位置参数错位")
+            self.assertIn("oom_score_adj", text, "必须包含 dropbear/sshd 的 OOM 豁免保护")
             self.assertIn("--revert)", text)
             self.assertNotIn('SSH_USER="${2:-root}"', text, "严禁将 $2 直接硬编码作为 SSH_USER")
 
@@ -70,6 +71,8 @@ class TestNetworkSetupScripts(unittest.TestCase):
         self.assertIn("certificate", text)
         self.assertIn("out of memory", text)
         self.assertIn("bind: address already in use", text)
+        self.assertIn('"fw_tun_ok":', text)
+        self.assertIn('"outbound_ok":', text)
 
     def test_doctor_ruleset_regex_does_not_catch_bare_context_deadline(self):
         """防止普通的 Go 链接超时 (context deadline exceeded) 误报为规则集阻断。"""

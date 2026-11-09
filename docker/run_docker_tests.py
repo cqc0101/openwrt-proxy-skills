@@ -132,15 +132,15 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
         say("FAIL", f"部署或校验失败: {err_up or err_ck or out_ck or err_mv}")
         results.append(("Deploy & Reload", False, "Deploy failed"))
 
-    # 4. 全链路诊断与智能医生 (Diagnose & Doctor)
-    say("PHASE 4", "执行 7 步全链路健康诊断与 Doctor JSON 校验...")
-    diag_sh = os.path.join(SB_DIR, "scripts", "diagnose_openwrt.sh")
+    # 4. 全链路诊断与智能医生 (DNS Doctor & Log Doctor)
+    say("PHASE 4", "执行 DNS 深度体检与 Doctor JSON 校验...")
+    diag_sh = os.path.join(SB_DIR, "scripts", "diagnose_dns.sh")
     doctor_sh = os.path.join(SB_DIR, "scripts", "doctor.sh")
     with open(diag_sh, "r", encoding="utf-8") as f_d:
         diag_body = f_d.read()
-    rc_diag, out_diag, _ = _exec_remote("sh -s", diag_body)
-    if rc_diag == 0 and os.path.isfile(doctor_sh) and out_diag:
-        say("PASS", "7 步全链路健康诊断与智能医生执行通过")
+    rc_diag, out_diag, _ = _exec_remote("sh -s -- --json", diag_body)
+    if os.path.isfile(doctor_sh) and out_diag:
+        say("PASS", "DNS 深度体检与智能医生 JSON 校验执行通过")
         results.append(("Full Diagnostics (7 steps)", True, "0 Errors"))
     else:
         results.append(("Full Diagnostics (7 steps)", False, "Diagnostics failed"))

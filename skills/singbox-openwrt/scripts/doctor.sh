@@ -83,6 +83,19 @@ if command -v netstat >/dev/null 2>&1; then
     netstat -tuln 2>/dev/null | grep -q ":53 " && PORT53_OPEN=1
 fi
 
+FW_TUN_OK=0
+if command -v uci >/dev/null 2>&1 && uci show firewall 2>/dev/null | grep -q "tun0"; then
+    FW_TUN_OK=1
+fi
+
+OUTBOUND_OK=0
+if command -v curl >/dev/null 2>&1; then
+    _hc=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 http://cp.cloudflare.com/generate_204 2>/dev/null || true)
+    [ "$_hc" = "204" ] && OUTBOUND_OK=1
+elif command -v wget >/dev/null 2>&1; then
+    wget -q -T 3 --spider http://cp.cloudflare.com/generate_204 2>/dev/null && OUTBOUND_OK=1
+fi
+
 # 2. 收集最近运行日志
 RAW_LOGS=""
 if [ "$SERVICE_NAME" = "dae" ]; then
@@ -160,6 +173,8 @@ if [ "$SERVICE_NAME" = "sing-box" ]; then
     fi
     if [ "$TUN_EXISTS" -eq 0 ]; then
         add_issue "tun_missing" "warning" "tun0 虚拟网卡未就绪" "系统未检测到 tun0 网卡接口，流量无法通过 TUN 转发" "sh /etc/sing-box/setup_openwrt_network.sh"
+    elif command -v uci >/dev/null 2>&1 && [ "$FW_TUN_OK" -eq 0 ]; then
+        add_issue "fw_tun_untrusted" "warning" "防火墙未放行 tun0 接口" "uci firewall 中未找到 tun0，局域网设备转发流量将被默认丢弃" "sh /etc/sing-box/setup_openwrt_network.sh"
     fi
 elif [ "$SERVICE_NAME" = "dae" ]; then
     if [ "$DAE_RUNNING" -eq 0 ]; then
@@ -228,7 +243,9 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
   "singbox_running": $( [ "$SINGBOX_RUNNING" -eq 1 ] && echo true || echo false ),
   "dae_running": $( [ "$DAE_RUNNING" -eq 1 ] && echo true || echo false ),
   "tun_alive": $( [ "$TUN_EXISTS" -eq 1 ] && echo true || echo false ),
+  "fw_tun_ok": $( [ "$FW_TUN_OK" -eq 1 ] && echo true || echo false ),
   "port53_open": $( [ "$PORT53_OPEN" -eq 1 ] && echo true || echo false ),
+  "outbound_ok": $( [ "$OUTBOUND_OK" -eq 1 ] && echo true || echo false ),
   "issue_count": $ISSUE_COUNT,
   "issues": [ $ISSUES_JSON ],
   "suggested_actions": [ $SUGGESTIONS_JSON ],

@@ -2,6 +2,24 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.4.0] - 2026-11-09
+
+### 协议规范对齐、dae 传输层完备支持与底层守护增强 (Protocol Alignment & System Hardening)
+
+- **sing-box 规则规范化与私有域名消除**：
+  - 彻底移除了 `dns.rules` 中的非标字段 `preferred_by`，使生成的 DNS 规则严格符合 sing-box Schema；
+  - 移除了基准模板和 mixins 中硬编码的私有域名（如 `x1pro.lan`、`speed.lan`），替换为标准 RFC 局域网私网后缀（`.lan`、`.local`、`.home.arpa`），并新增门禁测试断言。
+- **dae 传输层完备支持 (WebSocket / gRPC)**：
+  - 升级 `sub_parser.py` 的 `to_dae_nodes` 导出器，在生成 dae 节点 URI 时精准注入 `&type=ws&path=...&host=...` 与 `&type=grpc&serviceName=...`，确保 VLESS 与 Trojan 在 dae 中能够建立 WebSocket 和 gRPC 握手。
+- **dae 全量配置自动化合成器 (`sub_to_dae.py --full`)**：
+  - `sub_to_dae.py` 新增 `--full`、`--lan-iface`、`--wan-iface` 与 `--out` 参数，支持一键将订阅节点注入 `openwrt.dae` 基准模板，并自动调用 `check_dae_syntax.py` 执行 5 条铁律静态门禁校验，直接产出合规生产级 `config.dae`。
+- **OpenWrt SSH 守护进程 OOM 豁免保护 (`oom_score_adj`)**：
+  - 在 `setup_openwrt_network.sh` 中对 `dropbear` / `sshd` 注入 `oom_score_adj -1000` 保护，杜绝路由器在极端高并发或低内存场景下被内核 OOM Killer 误杀 SSH 守护导致失联。
+- **智能诊断工具全景体检升级 (`doctor.sh`)**：
+  - 增加 `fw_tun_ok`（检查防火墙是否正确放行 tun0 转发）与 `outbound_ok`（实际探测 Cloudflare 204 境外连通性），在结构化 JSON 中实时暴露并输出对应自愈建议。
+- **架构清理与测试套件扩充**：
+  - 移除冗余的 `diagnose_openwrt.sh` 及已废弃的本地临时脚本，单元测试套件扩充至 **157 项**（全量 PASS）。
+
 ## [0.3.1] - 2026-11-09
 
 ### 网络治理修正与生产加固 (Network Governance & Production Hardening)

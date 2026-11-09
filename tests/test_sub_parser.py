@@ -215,6 +215,28 @@ class TestToDaeNodes(unittest.TestCase):
         uri = self._lines(nodes)[0].split("'")[3]
         self.assertIn("insecure=1", uri)
 
+    def test_vless_and_trojan_ws_grpc_preserved_in_dae(self):
+        nodes = [
+            {
+                "type": "vless", "tag": "VWS", "server": "1.2.3.4", "server_port": 443, "uuid": "u-1",
+                "tls": {"enabled": True, "server_name": "ws.example.com"},
+                "transport": {"type": "ws", "path": "/vless-ws", "headers": {"Host": "cdn.example.com"}},
+            },
+            {
+                "type": "trojan", "tag": "TGRPC", "server": "5.6.7.8", "server_port": 443, "password": "pw",
+                "tls": {"enabled": True, "server_name": "grpc.example.com"},
+                "transport": {"type": "grpc", "service_name": "tr-Stream"},
+            },
+        ]
+        lines = self._lines(nodes)
+        vless_uri = lines[0].split("'")[3]
+        trojan_uri = lines[1].split("'")[3]
+        self.assertIn("type=ws", vless_uri)
+        self.assertIn("path=/vless-ws", vless_uri)
+        self.assertIn("host=cdn.example.com", vless_uri)
+        self.assertIn("type=grpc", trojan_uri)
+        self.assertIn("serviceName=tr-Stream", trojan_uri)
+
 
 class TestToDaeNodesIPv6(unittest.TestCase):
     V6 = "240e:123:456::1"

@@ -399,6 +399,29 @@ def _bare_host(server) -> str:
     return str(server).strip().strip("[]")
 
 
+def _dae_transport_query(n: Dict[str, Any]) -> str:
+    """提取 sing-box outbound 的 transport 块并编码为 URI 查询参数（支持 ws / grpc）。"""
+    transport = n.get("transport")
+    if not isinstance(transport, dict):
+        return ""
+    ttype = transport.get("type", "").lower()
+    if ttype == "ws":
+        path = urllib.parse.quote(str(transport.get("path") or "/"), safe="/")
+        q = f"&type=ws&path={path}"
+        headers = transport.get("headers")
+        if isinstance(headers, dict) and headers.get("Host"):
+            hval = headers["Host"]
+            if isinstance(hval, (list, tuple)):
+                hval = hval[0] if hval else ""
+            if hval:
+                q += f"&host={urllib.parse.quote(str(hval))}"
+        return q
+    elif ttype == "grpc":
+        svc = urllib.parse.quote(str(transport.get("service_name") or ""))
+        return f"&type=grpc&serviceName={svc}"
+    return ""
+
+
 def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
     """将节点导出为 dae node { ... } 语法块。
 
@@ -416,6 +439,7 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             continue
         frag = urllib.parse.quote(tag)
         host = _uri_host(server)   # authority 部分：IPv6 必须 [v6]
+        trans_part = _dae_transport_query(n)
 
         if ntype == "hysteria2":
             pw = n.get("password", "")
@@ -437,18 +461,18 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
                 sid = tls["reality"].get("short_id", "")
                 sni = _bare_host(tls.get("server_name", server))
                 fp = tls.get("utls", {}).get("fingerprint", "chrome")
-                lines.append(f"  '{tag}': 'vless://{uuid}@{host}:{port}?security=reality&sni={sni}&pbk={pbk}&sid={sid}&fp={fp}{flow_part}#{frag}'")
+                lines.append(f"  '{tag}': 'vless://{uuid}@{host}:{port}?security=reality&sni={sni}&pbk={pbk}&sid={sid}&fp={fp}{flow_part}{trans_part}#{frag}'")
             else:
                 sni = _bare_host(tls.get("server_name", server))
                 fp = tls.get("utls", {}).get("fingerprint", "chrome")
                 insecure = "&allowInsecure=1" if tls.get("insecure") else ""
-                lines.append(f"  '{tag}': 'vless://{uuid}@{host}:{port}?security=tls&sni={sni}&fp={fp}{insecure}{flow_part}#{frag}'")
+                lines.append(f"  '{tag}': 'vless://{uuid}@{host}:{port}?security=tls&sni={sni}&fp={fp}{insecure}{flow_part}{trans_part}#{frag}'")
         elif ntype == "trojan":
             pw = n.get("password", "")
             tls = n.get("tls", {})
             sni = _bare_host(tls.get("server_name", server))
             insecure = "&allowInsecure=1" if tls.get("insecure") else ""
-            lines.append(f"  '{tag}': 'trojan://{pw}@{host}:{port}?sni={sni}{insecure}#{frag}'")
+            lines.append(f"  '{tag}': 'trojan://{pw}@{host}:{port}?sni={sni}{insecure}{trans_part}#{frag}'")
         elif ntype == "shadowsocks":
             method = n.get("method", "")
             pw = n.get("password", "")

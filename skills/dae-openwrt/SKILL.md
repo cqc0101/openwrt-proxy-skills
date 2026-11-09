@@ -141,7 +141,11 @@ ssh root@192.168.1.1 "sh -s -- -j" < scripts/probe.sh
 使用 `scripts/sub_to_dae.py` 支持将机场 HTTP/HTTPS 订阅一键清洗并转换为 dae 原生 `node { ... }` 格式：
 
 ```bash
-python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 > /tmp/nodes.dae
+# 方式 A：一键合成完整 config.dae（自动注入 openwrt.dae 模板并内置执行 5 条铁律静态审计）
+python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 --full --out /tmp/config.dae
+
+# 方式 B：仅导出 node { ... } 节点池语法块
+python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 --out /tmp/nodes.dae
 ```
 
 ---

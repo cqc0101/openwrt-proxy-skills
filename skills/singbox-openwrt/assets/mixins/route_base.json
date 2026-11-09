@@ -2,13 +2,19 @@
   "auto_detect_interface": true,
   "default_domain_resolver": "alidns",
   "rules": [
-    { "action": "sniff" },
+    {
+      "action": "sniff"
+    },
     {
       "type": "logical",
       "mode": "or",
       "rules": [
-        { "protocol": "dns" },
-        { "port": 53 }
+        {
+          "protocol": "dns"
+        },
+        {
+          "port": 53
+        }
       ],
       "action": "hijack-dns"
     },
@@ -16,10 +22,7 @@
       "domain_suffix": [
         ".lan",
         ".local",
-        "router.lan",
-        "openwrt.lan",
-        "x1pro.lan",
-        "speed.lan"
+        ".home.arpa"
       ],
       "action": "route",
       "outbound": "direct"
@@ -33,8 +36,12 @@
       "type": "logical",
       "mode": "or",
       "rules": [
-        { "port": 853 },
-        { "protocol": "stun" }
+        {
+          "port": 853
+        },
+        {
+          "protocol": "stun"
+        }
       ],
       "action": "reject"
     },

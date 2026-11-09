@@ -214,9 +214,6 @@ ssh root@192.168.1.1 "sh -s -- --json" < scripts/doctor.sh
 
 # 2. 专项 DNS 深度防污染与防泄漏健康体检
 ssh root@192.168.1.1 "sh -s -- --json" < scripts/diagnose_dns.sh
-
-# 3. 全链路网络健康体检 (终端人机排障时调用)
-ssh root@192.168.1.1 "sh -s" < scripts/diagnose_openwrt.sh
 ```
 
 Agent 解析 JSON 响应中的 `suggested_actions` 字段，即可自主执行针对性修复指令（如校准时钟、清理端口冲突、重启 dnsmasq）。

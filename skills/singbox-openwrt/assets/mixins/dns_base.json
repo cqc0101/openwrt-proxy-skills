@@ -1,19 +1,75 @@
 {
   "servers": [
-    { "tag": "hosts", "type": "hosts" },
-    { "tag": "local-dns", "type": "local" },
-    { "tag": "google-dns", "type": "https", "server": "8.8.8.8", "detour": "proxy" },
-    { "tag": "alidns", "type": "udp", "server": "223.5.5.5" }
+    {
+      "tag": "hosts",
+      "type": "hosts"
+    },
+    {
+      "tag": "local-dns",
+      "type": "local"
+    },
+    {
+      "tag": "google-dns",
+      "type": "https",
+      "server": "8.8.8.8",
+      "detour": "proxy"
+    },
+    {
+      "tag": "alidns",
+      "type": "udp",
+      "server": "223.5.5.5"
+    }
   ],
   "rules": [
-    { "preferred_by": "hosts", "action": "route", "server": "hosts" },
-    { "domain_suffix": [".lan", ".local", "router.lan", "openwrt.lan", "x1pro.lan", "speed.lan"], "action": "route", "server": "local-dns" },
-    { "query_type": ["PTR"], "action": "route", "server": "local-dns" },
-    { "clash_mode": "Direct", "action": "route", "server": "local-dns" },
-    { "clash_mode": "Global", "action": "route", "server": "google-dns" },
-    { "rule_set": "geosite-ads", "action": "reject" },
-    { "domain": ["use-application-dns.net", "mask.icloud.com", "mask-h2.icloud.com"], "action": "reject" },
-    { "rule_set": ["geosite-cn"], "action": "route", "server": "alidns" }
+    {
+      "action": "route",
+      "server": "hosts"
+    },
+    {
+      "domain_suffix": [
+        ".lan",
+        ".local",
+        ".home.arpa"
+      ],
+      "action": "route",
+      "server": "local-dns"
+    },
+    {
+      "query_type": [
+        "PTR"
+      ],
+      "action": "route",
+      "server": "local-dns"
+    },
+    {
+      "clash_mode": "Direct",
+      "action": "route",
+      "server": "local-dns"
+    },
+    {
+      "clash_mode": "Global",
+      "action": "route",
+      "server": "google-dns"
+    },
+    {
+      "rule_set": "geosite-ads",
+      "action": "reject"
+    },
+    {
+      "domain": [
+        "use-application-dns.net",
+        "mask.icloud.com",
+        "mask-h2.icloud.com"
+      ],
+      "action": "reject"
+    },
+    {
+      "rule_set": [
+        "geosite-cn"
+      ],
+      "action": "route",
+      "server": "alidns"
+    }
   ],
   "final": "google-dns",
   "strategy": "ipv4_only"

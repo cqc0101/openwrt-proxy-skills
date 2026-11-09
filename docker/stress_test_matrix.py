@@ -105,8 +105,8 @@ def deploy_config_ssh(conf_file, timeout=30):
 
 
 def run_diagnose_ssh(timeout=30):
-    """通过 SSH 管道流式执行 diagnose_openwrt.sh 诊断体检。"""
-    sh_path = os.path.join(SB_DIR, "scripts", "diagnose_openwrt.sh")
+    """通过 SSH 管道流式执行 doctor.sh 诊断体检。"""
+    sh_path = os.path.join(SB_DIR, "scripts", "doctor.sh")
     with open(sh_path, "r", encoding="utf-8") as f:
         sh_content = f.read()
     ssh_cmd = [
@@ -118,7 +118,7 @@ def run_diagnose_ssh(timeout=30):
     ]
     if os.path.exists(KEY_PATH):
         ssh_cmd.extend(["-i", KEY_PATH])
-    ssh_cmd.extend([f"root@{ROUTER_IP}", "tr -d '\\r' | sh"])
+    ssh_cmd.extend([f"root@{ROUTER_IP}", "tr -d '\\r' | sh -s -- sing-box"])
     r = subprocess.run(ssh_cmd, input=sh_content, capture_output=True, text=True, timeout=timeout)
     return r.returncode, r.stdout, r.stderr
 
@@ -216,7 +216,7 @@ def round_1_baseline_fakeip():
 
     rc_diag, out_diag, _ = run_diagnose_ssh()
     if rc_diag != 0:
-        log_step(False, f"diagnose_openwrt.sh 诊断失败 (返回码 {rc_diag})")
+        log_step(False, f"doctor.sh 诊断失败 (返回码 {rc_diag})")
         return False
     log_step(True, "全链路 7 项诊断 100% 通过 (PID 存在、tun0 UP、9090 监听、DNS 正常)")
     return True
@@ -349,7 +349,7 @@ def round_6_firewall_tamper_and_heal():
     # 运行诊断脚本，验证诊断程序检测到异常 (返回非 0)
     rc_diag, out_diag, _ = run_diagnose_ssh()
     if rc_diag != 0 or "tun0" in out_diag:
-        log_step(True, "diagnose_openwrt.sh 成功抓取防火墙异常状态并在体检报告中标记！")
+        log_step(True, "doctor.sh 成功抓取防火墙异常状态并在体检报告中标记！")
     else:
         log_step(False, f"诊断脚本未能检测到 tun0 防火墙缺失 (返回码: {rc_diag})")
         return False

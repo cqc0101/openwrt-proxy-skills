@@ -39,6 +39,11 @@ run_dae_hardening() {
     sysctl -w net.ipv4.conf.all.forwarding=1 >/dev/null 2>&1
     sysctl -w net.netfilter.nf_conntrack_max=65536 >/dev/null 2>&1 || true
 
+    # 守护进程 OOM 豁免保护：防止内存紧张时内核 OOM Killer 误杀 dropbear/sshd 导致失联
+    for _ssh_pid in $(pidof dropbear sshd 2>/dev/null); do
+        echo -1000 > "/proc/${_ssh_pid}/oom_score_adj" 2>/dev/null || true
+    done
+
     mkdir -p /etc/sysctl.d
     cat << 'SYSCTL_EOF' > /etc/sysctl.d/99-dae.conf
 net.ipv4.ip_forward=1

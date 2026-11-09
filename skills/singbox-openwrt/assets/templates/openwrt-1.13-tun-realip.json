@@ -48,10 +48,7 @@
         "domain_suffix": [
           ".lan",
           ".local",
-          "router.lan",
-          "openwrt.lan",
-          "x1pro.lan",
-          "speed.lan"
+          ".home.arpa"
         ],
         "action": "route",
         "server": "local-dns"
@@ -182,10 +179,7 @@
         "domain_suffix": [
           ".lan",
           ".local",
-          "router.lan",
-          "openwrt.lan",
-          "x1pro.lan",
-          "speed.lan"
+          ".home.arpa"
         ],
         "action": "route",
         "outbound": "direct"
