@@ -19,18 +19,18 @@ import subprocess
 import sys
 import time
 
-BASE_DIR = r"E:\gemini-up\skills-gemini"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SB_DIR = os.path.join(BASE_DIR, "skills", "singbox-openwrt")
 DAE_DIR = os.path.join(BASE_DIR, "skills", "dae-openwrt")
 
 # 目标设备 1: Cisco Meraki Z1 (MIPS)
-MERAKI_IP = "192.168.1.250"
-PLINK_EXE = r"C:\Program Files\PuTTY\plink.exe"
-MERAKI_HOSTKEY = "SHA256:hjGxlL8cnPueq7tNu2dFncUNH2C/JKFY3DZw7nveUaA"
-MERAKI_PASS = "password"
+MERAKI_IP = os.getenv("MERAKI_IP", "192.0.2.250")
+PLINK_EXE = os.getenv("PLINK_EXE", "plink")
+MERAKI_HOSTKEY = os.getenv("MERAKI_HOSTKEY", "")
+MERAKI_PASS = os.getenv("MERAKI_PASS", "password")
 
 # 目标设备 2: 蒲公英 X1 Pro (ARM64)
-X1PRO_IP = "192.168.6.1"
+X1PRO_IP = os.getenv("X1PRO_IP", "192.0.2.220")
 X1PRO_KEY = os.path.join(BASE_DIR, ".deploy_key", "id_ed25519")
 
 TOTAL_ROUNDS = 100

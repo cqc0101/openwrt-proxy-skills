@@ -59,7 +59,7 @@ ssh -p 2222 root@127.0.0.1
 
 每次运行将依次执行以下 5 大阶段：
 
-1. **探针采集 (Probe)**：执行 `probe.ps1` / `probe.sh`，采集架构 (`x86_64`)、OpenWrt 版本 (`23.05.5`)、防火墙 (`fw4`)、WAN/LAN 网卡绑定；
+1. **探针采集 (Probe)**：执行 `probe.sh`，采集架构 (`x86_64`)、OpenWrt 版本 (`23.05.5`)、防火墙 (`fw4`)、WAN/LAN 网卡绑定；
 2. **配置生成 (Auto Config)**：调用 `auto_config.py`，根据探针事实动态选择 `openwrt-1.14-tun-fakeip.json` 模板并注入测试节点；
 3. **防火墙放行 (Firewall)**：调用 `setup_openwrt_network.sh`，将 `tun0` 放行至 LAN 区域 (`@zone[0]`)；
 4. **服务部署 (Deploy)**：安全下发配置至 `/etc/sing-box/config.json`，校验语法并重启 `sing-box` procd 服务；

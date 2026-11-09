@@ -21,10 +21,10 @@ import tempfile
 import time
 
 # 路由器与工作区配置
-ROUTER_IP = "192.168.6.1"
-ROUTER_PORT = 22
-KEY_PATH = r"E:\gemini-up\skills-gemini\.deploy_key\id_ed25519"
-BASE_DIR = r"E:\gemini-up\skills-gemini"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
+ROUTER_IP = os.getenv("OPENWRT_TEST_HOST", "192.0.2.220")
+ROUTER_PORT = int(os.getenv("OPENWRT_TEST_PORT", "22"))
+KEY_PATH = os.getenv("OPENWRT_TEST_KEY", os.path.join(BASE_DIR, ".deploy_key", "id_ed25519"))
 SB_DIR = os.path.join(BASE_DIR, "skills", "singbox-openwrt")
 DAE_DIR = os.path.join(BASE_DIR, "skills", "dae-openwrt")
 

@@ -57,7 +57,7 @@ def is_docker_available():
         return False
 
 
-def run_pipeline(router, port, key_path=None):
+def run_pipeline(router, port, key_path=None, mock_state=None):
     """在目标 OpenWrt 节点上执行探针、生成、部署与诊断全链路测试。"""
     print("\n" + "=" * 65)
     print(f" 开始执行 OpenWrt 技能测试流水线 (目标: {router}:{port})")
@@ -103,29 +103,59 @@ def run_pipeline(router, port, key_path=None):
         say("FAIL", f"配置审计发现异常:\n{r_chk.stdout}")
         results.append(("Config Schema Audit", False, "Audit errors"))
 
+    # 准备执行器：若存在进程内 mock_state 则直接交互，否则通过真实 SSH 管道执行
+    def _exec_remote(remote_cmd, stdin_text=""):
+        if mock_state is not None:
+            out, rc = mock_state.execute_command(remote_cmd, stdin_text)
+            return rc, out, ""
+        ssh_cmd = [
+            "ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=5", "-p", str(port),
+        ]
+        if key_file:
+            ssh_cmd.extend(["-i", key_file])
+        ssh_cmd.extend([f"root@{router}", remote_cmd])
+        r = subprocess.run(ssh_cmd, input=stdin_text, capture_output=True, text=True, timeout=15)
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+
     # 3. Agent 自主部署与服务验证 (Agent Deployment)
     say("PHASE 3", "执行 Agent SSH 原子部署与服务热重载验证...")
-    say("PASS", "sing-box 部署与服务重启完成 (Agent 原生管道模式)")
-    results.append(("Deploy & Reload", True, "Pass"))
+    with open(test_conf_path, "r", encoding="utf-8") as f_conf:
+        conf_body = f_conf.read()
+    rc_up, _, err_up = _exec_remote("cat > /tmp/config.json.test", conf_body)
+    rc_ck, out_ck, err_ck = _exec_remote("sing-box check -c /tmp/config.json.test")
+    rc_mv, _, err_mv = _exec_remote("mv /tmp/config.json.test /etc/sing-box/config.json && uci set sing-box.main.enabled='1' && /etc/init.d/sing-box restart")
+    if rc_up == 0 and rc_ck == 0 and rc_mv == 0:
+        say("PASS", "sing-box 沙盒校验、原子替换与服务重启验证通过")
+        results.append(("Deploy & Reload", True, "Pass"))
+    else:
+        say("FAIL", f"部署或校验失败: {err_up or err_ck or out_ck or err_mv}")
+        results.append(("Deploy & Reload", False, "Deploy failed"))
 
     # 4. 全链路诊断与智能医生 (Diagnose & Doctor)
     say("PHASE 4", "执行 7 步全链路健康诊断与 Doctor JSON 校验...")
     diag_sh = os.path.join(SB_DIR, "scripts", "diagnose_openwrt.sh")
     doctor_sh = os.path.join(SB_DIR, "scripts", "doctor.sh")
-    if os.path.isfile(diag_sh) and os.path.isfile(doctor_sh):
-        say("PASS", "7 步全链路健康诊断与智能医生就绪")
+    with open(diag_sh, "r", encoding="utf-8") as f_d:
+        diag_body = f_d.read()
+    rc_diag, out_diag, _ = _exec_remote("sh -s", diag_body)
+    if rc_diag == 0 and os.path.isfile(doctor_sh) and out_diag:
+        say("PASS", "7 步全链路健康诊断与智能医生执行通过")
         results.append(("Full Diagnostics (7 steps)", True, "0 Errors"))
     else:
-        results.append(("Full Diagnostics (7 steps)", False, "Scripts missing"))
+        results.append(("Full Diagnostics (7 steps)", False, "Diagnostics failed"))
 
     # 5. 最后一公里网络与网关接管加固验证 (Last-Mile Network Hook)
     say("PHASE 5", "验证最后一公里网络加固脚本 (setup_openwrt_network.sh)...")
     network_sh = os.path.join(SB_DIR, "scripts", "setup_openwrt_network.sh")
-    if os.path.isfile(network_sh):
-        say("PASS", "最后一公里网络接管加固脚本验证通过")
+    with open(network_sh, "r", encoding="utf-8") as f_n:
+        net_body = f_n.read()
+    rc_net, _, _ = _exec_remote("sh -s", net_body)
+    if rc_net == 0:
+        say("PASS", "最后一公里网络接管加固脚本执行通过")
         results.append(("Last-Mile Network Hook", True, "Pass"))
     else:
-        results.append(("Last-Mile Network Hook", False, "Missing setup_openwrt_network.sh"))
+        results.append(("Last-Mile Network Hook", False, "Hook execution failed"))
 
     # 清理临时配置文件
     if os.path.isfile(test_conf_path):
@@ -190,16 +220,22 @@ def main():
                 say("ERROR", f"容器 SSH 端口 {args.router}:{args.port} 超时未就绪")
                 sys.exit(1)
 
-        elif mode == "mock":
+        mock_state = None
+        if mode == "mock":
             say("MOCK", f"正在本地 127.0.0.1:{args.port} 启动 OpenWrt 仿真守护服务...")
             sys.path.insert(0, DOCKER_DIR)
-            from mock_openwrt_server import MockServerDaemon
-            mock_server = MockServerDaemon(host=args.router, port=args.port)
-            mock_server.start()
-            say("MOCK", f"Mock 服务已就绪，端口 {args.port} 接受测试连接")
+            from mock_openwrt_server import MockServerDaemon, OpenWrtState, paramiko as _pmk
+            if _pmk is not None:
+                mock_server = MockServerDaemon(host=args.router, port=args.port)
+                mock_server.start()
+                mock_state = mock_server.state
+                say("MOCK", f"Mock SSH 服务已就绪，端口 {args.port} 接受测试连接")
+            else:
+                mock_state = OpenWrtState()
+                say("MOCK", "当前环境未安装 paramiko，自动启用零依赖进程内 OpenWrtState 仿真引擎")
 
         # 执行测试流水线
-        results = run_pipeline(args.router, args.port, key_path=args.key)
+        results = run_pipeline(args.router, args.port, key_path=args.key, mock_state=mock_state)
 
         # 汇总报告
         print("\n" + "=" * 65)

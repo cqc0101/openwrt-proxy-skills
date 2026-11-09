@@ -2,6 +2,27 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.3.1] - 2026-11-09
+
+### 网络治理修正与生产加固 (Network Governance & Production Hardening)
+
+- **移除防火墙 53 端口 DNAT 劫持规则**：
+  - 彻底移除了 `setup_openwrt_network.sh` 中的 Port 53 DNAT 规则，杜绝该规则在 PREROUTING 阶段将局域网 DNS 短路送往本机 Dnsmasq，确保 Layer 3 `tun0` 路由接管与 `hijack-dns` 防污染正常工作；
+  - 增加 `--revert` 时对 LAN 区域 `masq` / `masquerade` 的干净清理逻辑。
+- **修复 DoH (HTTPS) 上游 DNS URL 解析**：
+  - 在 `auto_config.py` 中引入精确 URL 解析器，将 DoH URL 正确剥离并分发至 `server`（主机名/IP）、`server_port` 及 `path` 字段，严格符合 sing-box DNS 规范；
+  - 增加对自定义 UDP 远端 DNS 的健壮支持。
+- **探针参数与冲突检测增强**：
+  - `probe.sh` 参数解析改为全参数循环遍历，避免 `-j` / `--json` 标志被位置参数截断；
+  - 在 JSON 输出的 `conflicts` 块中补齐 `dnsmasq_upstream` 与 `dnsmasq_loop_risk` 事实字段。
+- **部署指令与技能指南纠偏**：
+  - 修正 `SKILL.md`：移除无 `sftp-server` 支持的 `scp` 上传指令，统一重构为原生 `ssh` + `stdin` 管道；纠正 v1.13 规则集 `download_detour` 描述与 dae 订阅转换脚本指令；
+  - 规范 `modular-blocks.md`：入站 TUN 显式绑定 `tun0` 并设置 `auto_redirect: false`；DNS 拦截规则升级为 `protocol: dns` 或 `port: 53` 双条件逻辑判定。
+- **测试基座与工程门禁升级**：
+  - 重构 `docker/run_docker_tests.py`：实现真实的远程 SSH 沙盒校验与服务部署执行流，支持无依赖进程内 `OpenWrtState` 仿真；
+  - 消除本地压力测试脚本中的绝对路径与特定私网 IP 硬编码；
+  - 在 `test_docs.py` 中新增静态禁词门禁，严禁废弃脚本名称与个人本地路径引入代码库。
+
 ## [0.3.0] - 2026-11-08
 
 ### 架构精简与解耦 (Architecture Streamlining & Decoupled Tooling)

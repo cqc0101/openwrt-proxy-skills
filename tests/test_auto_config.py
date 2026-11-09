@@ -182,7 +182,7 @@ class TestCustomDnsUpstreams(unittest.TestCase):
 
         cfg_doh = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_cn="https://dns.alidns.com/dns-query")
         s_doh = next(s for s in cfg_doh["dns"]["servers"] if s.get("tag") == "alidns")
-        self.assertEqual(s_doh["server"], "https://dns.alidns.com/dns-query")
+        self.assertEqual(s_doh["server"], "dns.alidns.com")
         self.assertEqual(s_doh["type"], "https")
 
     def test_dns_remote_presets_and_doh(self):
@@ -198,11 +198,19 @@ class TestCustomDnsUpstreams(unittest.TestCase):
         self.assertEqual(s_quad9["type"], "https")
         self.assertEqual(s_quad9["detour"], "proxy")
 
-        cfg_doh = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_remote="https://1.1.1.1/dns-query")
+        cfg_doh = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_remote="https://1.1.1.1:8443/custom-query")
         s_doh = next(s for s in cfg_doh["dns"]["servers"] if s.get("tag") == "google-dns")
-        self.assertEqual(s_doh["server"], "https://1.1.1.1/dns-query")
+        self.assertEqual(s_doh["server"], "1.1.1.1")
         self.assertEqual(s_doh["type"], "https")
+        self.assertEqual(s_doh["server_port"], 8443)
+        self.assertEqual(s_doh["path"], "/custom-query")
         self.assertEqual(s_doh["detour"], "proxy")
+
+        cfg_udp = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_remote="208.67.222.222")
+        s_udp = next(s for s in cfg_udp["dns"]["servers"] if s.get("tag") == "google-dns")
+        self.assertEqual(s_udp["server"], "208.67.222.222")
+        self.assertEqual(s_udp["type"], "udp")
+        self.assertEqual(s_udp["detour"], "proxy")
 
 
 class TestBootstrapDns(unittest.TestCase):

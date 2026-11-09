@@ -15,13 +15,13 @@ import os
 import subprocess
 import sys
 
-ROUTER_IP = "192.168.1.250"
-SSH_USER = "root"
-SSH_PASS = "password"
-PLINK_EXE = r"C:\Program Files\PuTTY\plink.exe"
-HOSTKEY = "SHA256:hjGxlL8cnPueq7tNu2dFncUNH2C/JKFY3DZw7nveUaA"
+ROUTER_IP = os.getenv("MERAKI_IP", "192.0.2.250")
+SSH_USER = os.getenv("MERAKI_USER", "root")
+SSH_PASS = os.getenv("MERAKI_PASS", "password")
+PLINK_EXE = os.getenv("PLINK_EXE", "plink")
+HOSTKEY = os.getenv("MERAKI_HOSTKEY", "")
 
-BASE_DIR = r"E:\gemini-up\skills-gemini"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SB_DIR = os.path.join(BASE_DIR, "skills", "singbox-openwrt")
 
 

@@ -77,19 +77,22 @@ def run_ssh(cmd, timeout=10):
 
 def deploy_config_ssh(conf_file, timeout=30):
     """Agent 原生自主部署流程 (SCP 沙盒上传 -> 远端 check -> 原子生效并重启)。"""
-    scp_cmd = [
-        "scp",
+    with open(conf_file, "r", encoding="utf-8") as f_in:
+        conf_data = f_in.read()
+    ssh_up = [
+        "ssh",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=5",
-        "-P", str(ROUTER_PORT),
+        "-o", "LogLevel=ERROR",
+        "-p", str(ROUTER_PORT),
     ]
     if os.path.exists(KEY_PATH):
-        scp_cmd.extend(["-i", KEY_PATH])
-    scp_cmd.extend([conf_file, f"root@{ROUTER_IP}:/tmp/test_deploy_conf.json"])
-    r_scp = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
-    if r_scp.returncode != 0:
-        return 1, r_scp.stdout, r_scp.stderr
+        ssh_up.extend(["-i", KEY_PATH])
+    ssh_up.extend([f"root@{ROUTER_IP}", "cat > /tmp/test_deploy_conf.json"])
+    r_up = subprocess.run(ssh_up, input=conf_data, capture_output=True, text=True, timeout=timeout)
+    if r_up.returncode != 0:
+        return 1, r_up.stdout, r_up.stderr
 
     check_cmd = "sing-box check -c /tmp/test_deploy_conf.json"
     rc_chk, out_chk, err_chk = run_ssh(check_cmd, timeout=timeout)

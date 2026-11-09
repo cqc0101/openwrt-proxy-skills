@@ -44,7 +44,12 @@ class TestDocLinks(unittest.TestCase):
         forbidden_rules = [
             (re.compile(r"setup_openwrt_firewall\.sh"), "已更名为 setup_openwrt_network.sh"),
             (re.compile(r"diagnose\s+dns\.sh"), "下划线被误写为空格：应为 diagnose_dns.sh"),
-            (re.compile(r"sub_parser\.py\s+--format\s+dae"), "dae 格式订阅清洗应直接调用 sub_to_dae.py"),
+            (re.compile(r"sub_parser\.py[^\n]*--format\s+dae"), "dae 格式订阅清洗应直接调用 sub_to_dae.py"),
+            (re.compile(r"sub_parser\.py[^\n]*--(url|sub|max-nodes|out)\b"), "sub_parser.py 不存在 --url/--sub/--max-nodes/--out 参数"),
+            (re.compile(r"\bdeploy_singbox\.(sh|ps1)\b"), "deploy_singbox 脚本已废弃移除"),
+            (re.compile(r"\bsetup_openwrt_network\.ps1\b"), "setup_openwrt_network.ps1 已废弃移除"),
+            (re.compile(r"\bprobe\.ps1\b"), "probe.ps1 已废弃移除"),
+            (re.compile(r'gemini-up\\skills-gemini'), "严禁硬编码个人本地磁盘路径"),
         ]
         violations = []
         skip_dirs = {".git", ".deploy_key", "__pycache__"}
@@ -55,7 +60,7 @@ class TestDocLinks(unittest.TestCase):
                     full = os.path.join(root, file)
                     rel = os.path.relpath(full, REPO).replace("\\", "/")
                     # 排除本测试文件自身
-                    if rel == "tests/test_docs.py":
+                    if rel in ("tests/test_docs.py", "CHANGELOG.md", "HARDENING_REPORT.md", "docs/validation-report-x1pro.md"):
                         continue
                     with open(full, "r", encoding="utf-8", errors="replace") as f:
                         for lineno, line in enumerate(f, 1):

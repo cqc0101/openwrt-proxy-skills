@@ -54,11 +54,14 @@ class TestNetworkSetupScripts(unittest.TestCase):
         self.assertNotIn("echo -e", text, "POSIX /bin/sh 严禁使用 echo -e")
 
     def test_probe_reports_hardening_facts(self):
-        """真机验证沉淀：probe 必须报告 nfqueue 缺失与 sing-box-tiny 安装建议。"""
+        """真机验证沉淀：probe 必须报告 nfqueue 缺失、sing-box-tiny 安装建议以及 JSON 模式下的 dnsmasq_loop_risk。"""
         text = _read(os.path.join(SINGBOX, "probe.sh"))
         self.assertIn("nfqueue", text)
         self.assertIn("sing-box-tiny", text)
         self.assertIn("OUTPUT_JSON", text)
+        self.assertIn('"dnsmasq_loop_risk":', text)
+        self.assertIn('"dnsmasq_upstream":', text)
+        self.assertIn('for arg in "$@"; do', text)
 
     def test_doctor_script_features(self):
         """doctor 脚本必须支持 JSON 模式与核心报错特征扫描。"""
