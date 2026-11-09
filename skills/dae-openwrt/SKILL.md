@@ -1,5 +1,7 @@
 ---
 name: dae-openwrt
+license: MIT
+compatibility: Requires Python 3.8+ on host and SSH access to an OpenWrt / ImmortalWrt / iStoreOS router (Linux 5.15+ with BTF)
 description: >-
   为 OpenWrt / ImmortalWrt / iStoreOS 软路由生成、修改、排查原生 dae (Linux 内核级 eBPF 高性能透明代理) 配置文件与服务管理。
   当用户提及以下任意场景时必须触发：dae配置与管理、软路由eBPF出海代理、br-lan/wan网卡绑定、dae 5条拓扑与语法铁律、

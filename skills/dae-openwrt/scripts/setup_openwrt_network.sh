@@ -57,7 +57,7 @@ run_dae_hardening() {
                 ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
                 sh "$0" --revert 2>/dev/null || true
             fi
-        ) >/dev/null 2>&1 &
+        ) </dev/null >/dev/null 2>&1 &
         return 0
     fi
 

@@ -2,6 +2,23 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.5.1] - 2026-11-09
+
+### 拓扑增强、SSH 会话解耦与 Agent 规范合规 (Topology & Process Hardening)
+
+- **[特性] `sub_to_dae.py` 原生支持旁路由拓扑与主路由直连放行**：
+  - 新增 `--topology {main, bypass}` 与 `--main-router-ip` 命令行参数；
+  - 旁路由模式下自动在 `must_direct` 后注入 `dip(<main-router-ip>) -> direct`，杜绝单臂旁路流量自环与非对称丢包。
+- **[高危] `setup_openwrt_network.sh` 修复看门狗导致 SSH 会话悬挂假死 (SSH Stdin Leak)**：
+  - 自动回滚看门狗后台子进程重定向补齐 `</dev/null`（`</dev/null >/dev/null 2>&1 &`）；
+  - 彻底阻断因后台进程继承 SSH 标准输入导致的远端 SSH 会话无法正常退出、前端发布流程长期阻塞假死的问题。
+- **[规范] AgentSkills 开放协议元数据合规 (Frontmatter Specification)**：
+  - `dae-openwrt` 与 `singbox-openwrt` 的 `SKILL.md` 补齐 `license: MIT` 与 `compatibility` 声明，完全符合 AgentSkills 规范。
+- **[语法] `check_dae_syntax.py` 补充未配对单引号语法检测**：
+  - 完善单引号词法状态机，针对 `pa'ss` 等非闭合单引号异常提供精准行号定位与语法阻断。
+- **[测试] 单元测试矩阵扩充至 192 项**：
+  - 补齐 dae 旁路由规则注入单测、看门狗 stdin 隔离断言、AgentSkills frontmatter 合规校验及未平衡单引号拦截，100% 满分通过。
+
 ## [0.5.0] - 2026-11-09
 
 ### 新特性与现代协议扩展 (New Features & Protocol Expansions)

@@ -83,5 +83,17 @@ class TestDaeDocsFlattened(unittest.TestCase):
             self.fail(f"发现多级文档目录: references/{rel}，必须扁平收拢为一级")
 
 
+
+    def test_skill_frontmatter_follows_agentskills_spec(self):
+        for skill_dir, expected_name in ((SB, "singbox-openwrt"), (DAE, "dae-openwrt")):
+            text = read(os.path.join(skill_dir, "SKILL.md"))
+            self.assertTrue(text.startswith("---\n"), "SKILL.md 必须以 YAML frontmatter 开头")
+            fm = text.split("---\n", 2)[1]
+            self.assertIn(f"name: {expected_name}", fm)
+            self.assertIn("description:", fm)
+            self.assertIn("license: MIT", fm)
+            self.assertIn("compatibility:", fm)
+
+
 if __name__ == "__main__":
     unittest.main()

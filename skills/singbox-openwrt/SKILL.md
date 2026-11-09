@@ -1,5 +1,7 @@
 ---
 name: singbox-openwrt
+license: MIT
+compatibility: Requires Python 3.8+ on host and SSH access to an OpenWrt / ImmortalWrt / iStoreOS router
 description: >-
   为 OpenWrt / ImmortalWrt / iStoreOS 软路由网关生成、修改、排查 sing-box (v1.13 与 v1.14+) 生产级科学上网与透明代理配置。
   当用户提及以下任意场景时必须触发：OpenWrt/软路由科学上网、翻墙/出海/梯子/代理配置、导入或更换节点链接(vless/hysteria2/trojan/ss)、

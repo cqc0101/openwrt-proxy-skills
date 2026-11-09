@@ -49,10 +49,12 @@ def check_dae_syntax(filepath):
     lines = [_strip_comments(l) for l in raw_lines]
     content = "\n".join(lines)
 
-    # 1. 检查双引号 (单引号词法铁律；ext:"xxx" 除外)
+    # 1. 检查双引号与未闭合的单引号 (单引号词法铁律；ext:"xxx" 除外)
     for idx, line in enumerate(lines, 1):
         if not line:
             continue
+        if line.count("'") % 2 != 0:
+            errors.append(f"第 {idx} 行存在未配对闭合的单引号: {line}。请检查密码或名称中是否含有未转义的 '。")
         matches = re.findall(r'([\w\'\-]+:\s*"[^"]*"|->\s*"[^"]*")', line)
         for m in matches:
             if not m.startswith('ext:'):

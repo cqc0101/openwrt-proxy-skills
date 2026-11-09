@@ -38,8 +38,8 @@ from sub_parser import parse_source, to_dae_nodes
 from check_dae_syntax import check_dae_syntax
 
 
-def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", template_path=None):
-    """读取 openwrt.dae 基准模板，注入清洗后的 node 块与接口设置，返回完整配置文本。"""
+def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology="main", main_router_ip=None, template_path=None):
+    """读取 openwrt.dae 基准模板，注入清洗后的 node 块、接口与旁路由主网关直连规则，返回完整配置文本。"""
     tpl_file = template_path or TEMPLATE_PATH
     if not os.path.isfile(tpl_file):
         raise FileNotFoundError(f"找不到 dae 模板文件: {tpl_file}")
@@ -53,6 +53,14 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", template_
         merged = re.sub(r"(?m)^(\s*lan_interface:\s*)\S+", lambda m: f"{m.group(1)}{lan_iface}", merged)
     if wan_iface and wan_iface != "auto":
         merged = re.sub(r"(?m)^(\s*wan_interface:\s*)\S+", lambda m: f"{m.group(1)}{wan_iface}", merged)
+    if topology == "bypass" and main_router_ip:
+        gw_ip = str(main_router_ip).strip()
+        merged = re.sub(
+            r"(?m)^(\s*pname\([^)]*dnsmasq[^)]*\)[^\n]*->\s*must_direct\s*)$",
+            lambda m: f"{m.group(1)}\n    dip({gw_ip}) -> direct",
+            merged,
+            count=1,
+        )
     return merged
 
 
@@ -70,6 +78,8 @@ def main():
     parser.add_argument("--full", action="store_true", help="注入 openwrt.dae 模板生成完整配置文件并执行内置 5 条铁律静态审计")
     parser.add_argument("--lan-iface", default="br-lan", help="完整配置模式下的局域网接口 (默认: br-lan)")
     parser.add_argument("--wan-iface", default="auto", help="完整配置模式下的外网接口 (默认: auto)")
+    parser.add_argument("--topology", choices=["main", "bypass"], default="main", help="网络拓扑模式 (默认: main，旁路由请指定 bypass)")
+    parser.add_argument("--main-router-ip", default=None, help="旁路由模式下的主路由 IP (如 192.168.1.1)")
     parser.add_argument("-o", "--out", help="输出文件路径 (不指定则输出到标准输出)")
 
     args = parser.parse_args()
@@ -84,7 +94,13 @@ def main():
         sys.exit(1)
 
     if args.full:
-        out_text = build_full_dae_config(nodes, lan_iface=args.lan_iface, wan_iface=args.wan_iface)
+        out_text = build_full_dae_config(
+            nodes,
+            lan_iface=args.lan_iface,
+            wan_iface=args.wan_iface,
+            topology=args.topology,
+            main_router_ip=args.main_router_ip,
+        )
         with tempfile.NamedTemporaryFile("w", suffix=".dae", delete=False, encoding="utf-8") as tf:
             tf.write(out_text)
             tmp_dae = tf.name

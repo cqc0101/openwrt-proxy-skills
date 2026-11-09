@@ -158,5 +158,16 @@ routing {
             content = f.read()
         self.assertIn("qname('use-application-dns.net'", content)
 
+
+    def test_unbalanced_single_quote_flagged(self):
+        cfg = (
+            "global { lan_interface: br-lan\n wan_interface: auto }\n"
+            "node { 'bad': 'trojan://pa'ss@1.2.3.4:443' }\n"
+            "routing { pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct }\n"
+        )
+        errors, _ = check(cfg)
+        self.assertTrue(any("未配对闭合的单引号" in e for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()

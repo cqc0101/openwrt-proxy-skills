@@ -99,6 +99,7 @@ class TestNetworkSetupScripts(unittest.TestCase):
             self.assertIn("--watchdog", text)
             self.assertIn("--confirm", text)
             self.assertIn("/tmp/proxy_deploy_confirmed", text)
+            self.assertIn("</dev/null >/dev/null 2>&1 &", text, "后台看门狗必须关闭 stdin 防止阻塞 SSH 会话")
 
 
 class TestSharedScriptsConsistency(unittest.TestCase):

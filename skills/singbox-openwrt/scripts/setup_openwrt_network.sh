@@ -74,7 +74,7 @@ run_router_hardening() {
                 /etc/init.d/sing-box restart 2>/dev/null || true
                 sh "$0" --revert 2>/dev/null || true
             fi
-        ) >/dev/null 2>&1 &
+        ) </dev/null >/dev/null 2>&1 &
         return 0
     fi
 
