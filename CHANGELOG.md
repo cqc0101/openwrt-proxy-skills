@@ -2,6 +2,25 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.4.1] - 2026-11-09
+
+### 错误修复 (Bug Fixes)
+
+- **[高危] `dae validate` 命令语法修正**：
+  - `dae-openwrt/SKILL.md`、`check_dae_syntax.py` 中所有出现的 `dae validate -c <file>` 均修正为 `dae validate <file>`；dae 官方 CLI 不支持 `-c` 参数（该参数属于 sing-box），错误用法会导致 Agent 部署流程在验证步骤直接失败。
+- **[高危] dae procd/非 procd 热重载场景区分**：
+  - 在 `dae-openwrt/SKILL.md` 红线部分补充说明：ImmortalWrt 官方源的 `daed` 包由 procd 管理，热重载使用 `/etc/init.d/daed reload`；裸二进制模式使用 `dae reload`。
+- **[中危] OpenWrt 包管理器信息更正**：
+  - `architecture-and-schema.md` 中更正了包管理器说明：OpenWrt **24.10+ 正式 Release** 已将 `apk` 作为默认包管理器，取代 `opkg`；旧版（< 24.10）仍使用 `opkg`。原文错误地将 24.10 归入 `opkg` 阵营。
+- **[中危] `dae-openwrt/SKILL.md` 步骤数量标注错误**：
+  - 修正 "6步工程闭环" 为 "7步工程闭环"（实际含步骤 7：结构化自愈诊断）。
+- **[低危] `v1.14 download_detour` 禁止说明歧义修正**：
+  - `singbox-openwrt/SKILL.md` 中统一说明：`download_detour: "direct"` 在 v1.13 和 v1.14 中均**不能**显式声明，这是全版本禁用字段，不仅限于 v1.14。
+- **[低危] `http_clients` 的 `detour` 字段避坑说明增强**：
+  - `architecture-and-schema.md` 中明确指出 `direct-client` 对象**不设 `detour` 字段**即为直连，显式写 `"detour": "direct"` 会触发致命崩溃，防止误操作。
+
+---
+
 ## [0.4.0] - 2026-11-09
 
 ### 协议规范对齐、dae 传输层完备支持与底层守护增强 (Protocol Alignment & System Hardening)
@@ -19,6 +38,8 @@
   - 增加 `fw_tun_ok`（检查防火墙是否正确放行 tun0 转发）与 `outbound_ok`（实际探测 Cloudflare 204 境外连通性），在结构化 JSON 中实时暴露并输出对应自愈建议。
 - **架构清理与测试套件扩充**：
   - 移除冗余的 `diagnose_openwrt.sh` 及已废弃的本地临时脚本，单元测试套件扩充至 **157 项**（全量 PASS）。
+
+---
 
 ## [0.3.1] - 2026-11-09
 
@@ -40,6 +61,8 @@
   - 重构 `docker/run_docker_tests.py`：实现真实的远程 SSH 沙盒校验与服务部署执行流，支持无依赖进程内 `OpenWrtState` 仿真；
   - 消除本地压力测试脚本中的绝对路径与特定私网 IP 硬编码；
   - 在 `test_docs.py` 中新增静态禁词门禁，严禁废弃脚本名称与个人本地路径引入代码库。
+
+---
 
 ## [0.3.0] - 2026-11-08
 
@@ -88,7 +111,6 @@
   - `probe.sh` 深度探测 Dnsmasq 上游配置，自动告警本地回环死锁风险。
 - **模块化规则积木架构 (Modular Blocks & Composable Rules)**：
   - 新增 `references/modular-blocks.md`（singbox 与 dae 双端），将规则沉淀为正交原子积木，支持根据主路由、旁路由或分流拓扑按需灵活拼装生产配置。
-  - 重构 `SKILL.md` 与参考文档体系，建立涵盖环境拓扑感知、规则积木拼装、静态门禁审计、网络接管与结构化自愈诊断的全流程工程闭环。
 - **最后一公里网络与网关接管闭环 (Last-Mile Transparent Proxy Network Hook)**：
   - 升级 `setup_openwrt_network.sh`；
   - 自动持久化内核转发 `net.ipv4.ip_forward=1`；
@@ -120,4 +142,3 @@
 - 脚本：环境检测、订阅解析与节点转换、配置生成、网络闭环接管、诊断。
 - 模板：4 个 sing-box 基准模板与 1 个 dae 基准模板。
 - 参考文档：架构与门控、DNS防环、避坑排障、模块化积木。
-- 测试：回归测试套件与 GitHub Actions CI。

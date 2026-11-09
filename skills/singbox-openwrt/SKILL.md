@@ -167,9 +167,10 @@ sh /etc/sing-box/setup_openwrt_network.sh --bypass
 **严禁**只用单一的 `"protocol": "dns"`（会导致未被嗅探到的标准 UDP 53 DNS 报文泄漏漏劫持）。
 
 ### 5. 严格的版本字段门控 (v1.13 vs v1.14)
-* **v1.13 专用**：`independent_cache`、`store_rdrc`（注意：切勿设置 `download_detour: "direct"`，直连下载留空即可，显式指定 direct 会触发启动期崩溃）。
+* **v1.13 专用**：`independent_cache`、`store_rdrc`。
 * **v1.14 专用**：`dns.optimistic`、`store_dns`、`default_http_client`。
-* **v1.14 严禁使用**：`independent_cache`、`store_rdrc`、`download_detour`（自 1.14 起已废弃，直接换用新字段）。
+* **所有版本均禁止**：`download_detour: "direct"`（无论是在 `rule_set` 还是 `http_clients` 中，显式写 `detour: "direct"` 都会在启动期触发 `empty direct outbound` 致命崩溃——直连下载**不设该字段**即为默认直连，切勿画蛇添足）。
+* **v1.14 严禁使用**：`independent_cache`、`store_rdrc`（自 1.14 起已废弃，直接换用新字段）。
 
 ### 6. IPv4 纯净防假死原则
 除非用户明确确认其宽带 IPv6 链路优质且要求启用，否则默认执行 IPv4-only 策略以防止国内手机 App 打开首页转圈死锁：

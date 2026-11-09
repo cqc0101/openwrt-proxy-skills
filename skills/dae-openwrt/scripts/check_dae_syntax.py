@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 dae 配置文件 5 条铁律静态合规检测工具（启发式检查）
-注意：本工具只做静态模式匹配，最终结论必须由远端 `dae validate -c` 确认。
+注意：本工具只做静态模式匹配，最终结论必须由远端 `dae validate <file>` 确认（注意：dae 不支持 -c 参数，直接传文件路径）。
 """
 
 import sys
@@ -114,7 +114,7 @@ def main():
         print("\n[x] 检查未通过，请修复后重试。")
         sys.exit(1)
 
-    print("[i] 提示：本工具仅做静态检查，部署前请务必以远端 'dae validate -c <file>' 的结论为准。")
+    print("[i] 提示：本工具仅做静态检查，部署前请务必以远端 'dae validate <file>' 的结论为准（dae 不接受 -c 参数）。")
     return 0
 
 

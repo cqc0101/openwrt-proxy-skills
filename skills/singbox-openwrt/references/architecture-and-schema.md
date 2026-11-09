@@ -36,8 +36,8 @@
 | `cache_file.store_dns` | **禁止使用** | **推荐开启 (`true`)** | 1.14+ 持久化存储 DNS 记录至临时数据库 |
 | `cache_file.store_rdrc` | **推荐开启 (`true`)** | **禁止使用** (已废弃) | 旧版 RDRC 缓存标识 |
 | `route.default_http_client` | **禁止使用** | **必须包含 (`direct-client`)** | 1.14+ 规则集下载必须通过显式 http_client |
-| `http_clients` 顶级数组 | **禁止使用** | **必须声明** | 声明 `direct-client`；其 `detour` 严禁指向 `direct`（启动崩溃） |
-| `rule_set.download_detour` | **禁止使用** (无需声明) | **禁止使用** (已废弃) | 显式声明 `download_detour: direct` 会在启动期触发 empty direct outbound 致命崩溃 |
+| `http_clients` 顶级数组 | **禁止使用** | **必须声明** | 声明 `direct-client`；**严禁**设置 `"detour": "direct"`（会触发 `empty direct outbound` 崩溃），不设 `detour` 字段即为默认直连 |
+| `rule_set.download_detour` | **禁止使用** | **禁止使用** (已废弃) | 在 v1.13 或 v1.14 下显式声明 `download_detour: "direct"` 均会在启动期触发致命崩溃；直连下载**不设该字段**即可 |
 
 ### 默认工作流与模板推荐：
 * 推荐基准模板默认采用 **1.13 TUN FakeIP**（`--dns-mode fakeip`），兼顾内存占用极低与防 DNS 污染能力。
@@ -47,8 +47,9 @@
 ## 三、 软路由平台兼容矩阵速查
 
 * **OpenWrt 发行版与包管理器**：
-  - **OpenWrt 21.02 / 22.03 / 23.05 / 24.10**：一律使用 `opkg`（注意：APK packages are *not* supported on OpenWrt 24.10 release，`apk` 仅在 snapshot / main 开发分支实验性支持）。
-  - **ImmortalWrt / iStoreOS**：官方源通常提供带 LuCI 界面的专用包或预编译二进制。
+  - **OpenWrt < 24.10（21.02 / 22.03 / 23.05）**：使用经典 `opkg` 包管理器。
+  - **OpenWrt 24.10+ (正式 Release)**：`apk` 已成为**默认包管理器**（取代 opkg），这是重大迁移，注意区分发行版本。
+  - **ImmortalWrt / iStoreOS**：官方源通常提供带 LuCI 界面的专用包或预编译二进制，包管理器随基础发行版版本而定（多数仍为 opkg，但新版本 ImmortalWrt 开始跟随 24.10 迁移至 apk）。
 * **x86_64 / aarch64 (ARMv8)**：完整版 `sing-box` 性能最佳。
 * **低内存 / 小闪存 (RAM <= 256MB 或 ROM <= 70MB)**：
   - 安装精简版：`apk add sing-box-tiny` 或 `opkg install sing-box`（约 39MiB）；

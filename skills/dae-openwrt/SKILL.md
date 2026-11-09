@@ -16,9 +16,11 @@ description: >-
 
 ## 🚨 强制执行红线（任何任务开始前必读）
 
-1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒，经远端 `dae validate -c` 通过后再原子替换，并保留快照备份用于自动回滚。
+1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒，经远端 `dae validate <file>` 通过后再原子替换，并保留快照备份用于自动回滚。
 2. **硬件保护红线**：`global` 中 `lan_interface: br-lan` + `wan_interface: auto` + `auto_config_kernel_parameter: true`；部署前关闭流量分载（Flow Offloading，否则报文绕过 eBPF）；dropbear/sshd 需做 OOM 保护。
 3. **绝不盲目猜测**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh dae --json` 诊断，再进行针对性修复。
+4. **dae validate 语法说明**：dae 官方 CLI 不支持 `-c` 参数（`-c` 是 sing-box 的参数），正确格式为 `dae validate /path/to/config.dae`。
+5. **procd 托管区分**：ImmortalWrt 官方源的 `daed` 包由 procd 管理，热重载使用 `/etc/init.d/daed reload`；若使用官方二进制裸运行，热重载使用 `dae reload`。
 
 ---
 
@@ -34,7 +36,7 @@ description: >-
 
 ## 🧭 Agent 决策与 eBPF 闭环架构 (Agent Autonomous Workflow)
 
-本技能专为 AI Agent 设计，**大模型负责意图理解、eBPF 拓扑可行性推理与规则灵活装配，脚本负责高危确定性操作与底层事实感知**。全链路遵循 6 步工程闭环：
+本技能专为 AI Agent 设计，**大模型负责意图理解、eBPF 拓扑可行性推理与规则灵活装配，脚本负责高危确定性操作与底层事实感知**。全链路遵循 7 步工程闭环：
 
 ```
 [步骤 1: eBPF 兼容性推理] LLM 评估 (Linux 5.15+ 内核 / BTF 支持 / 流量分载 Offloading 规避)
@@ -49,7 +51,7 @@ description: >-
 [步骤 4: 规则积木灵活装配] dae-rules-and-syntax.md (宿主组件 must_direct / 设备 MAC 分流 / 大陆双向直连)
        │
        ▼
-[步骤 5: Agent 自主部署与热重载] SSH 管道原子发布 (沙盒 dae validate -c -> mv 替换 -> dae reload)
+[步骤 5: Agent 自主部署与热重载] SSH 管道原子发布 (沙盒 dae validate -> mv 替换 -> dae reload)
        │
        ▼
 [步骤 6: 软路由网络闭环接管] setup_openwrt_network.sh (关闭 Flow Offloading / 开启 filter_aaaa / MSS 钳制)
@@ -158,11 +160,15 @@ dae 的优势在于重载配置时**无需重启内核 eBPF 程序**，已有连
 # 1. 上传配置到 /tmp 临时沙盒
 ssh root@192.168.1.1 "cat > /tmp/config.dae.test" < /tmp/config.dae
 
-# 2. 远端沙盒严格语法校验
-ssh root@192.168.1.1 "dae validate -c /tmp/config.dae.test"
+# 2. 远端沙盒严格语法校验（注意：dae 不支持 -c 参数，直接传文件路径）
+ssh root@192.168.1.1 "dae validate /tmp/config.dae.test"
 
 # 3. 校验通过后原子替换配置并执行无感平滑热重载
+# - 官方二进制（非 procd 管理）：使用 dae reload
+# - OpenWrt procd 管理（daed 包）：使用 /etc/init.d/daed reload
 ssh root@192.168.1.1 "mv /tmp/config.dae.test /etc/dae/config.dae && dae reload"
+# 若为 procd 管理模式（ImmortalWrt 官方源的 daed 包）：
+# ssh root@192.168.1.1 "mv /tmp/config.dae.test /etc/dae/config.dae && /etc/init.d/daed reload"
 
 # 4. 执行软路由网络闭环脚本 (关闭 flow offloading，设置 filter_aaaa 与 MSS 钳制)
 ssh root@192.168.1.1 "sh -s" < scripts/setup_openwrt_network.sh
