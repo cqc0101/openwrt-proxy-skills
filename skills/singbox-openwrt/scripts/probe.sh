@@ -268,6 +268,12 @@ check_conflict "clash"
 check_conflict "mihomo"
 check_conflict "v2ray"
 check_conflict "xray"
+check_conflict "daed"
+DAED_RUNNING=0
+if pidof daed >/dev/null 2>&1 || pgrep -x daed >/dev/null 2>&1 || [ -f /etc/daed/wing.db ]; then
+    DAED_RUNNING=1
+fi
+
 
 # 防火墙框架探测
 FW_TYPE="unknown"
@@ -353,6 +359,8 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
     "dnsmasq_upstream": "$(je "$DNSMASQ_UPSTREAM")",
     "dnsmasq_loop_risk": $DNSMASQ_LOOP_RISK,
     "private_wan_dns_risk": $PRIVATE_WAN_DNS_RISK,
+    "daed_running": $DAED_RUNNING,
+    "daed_conflict": $([ "$DAED_RUNNING" -eq 1 ] && echo true || echo false),
     "active_conflicts": "$(je "$CONFLICT_STR")",
     "firewall": "$(je "$FW_TYPE")",
     "software_flow_offload": "$(je "$SW_OFFLOAD")",

@@ -22,7 +22,7 @@ description: >-
 2. **硬件保护红线**：`global` 中 `lan_interface: br-lan` + `wan_interface: auto` + `auto_config_kernel_parameter: true`；部署前关闭流量分载（Flow Offloading，否则报文绕过 eBPF）；dropbear/sshd 需做 OOM 保护。
 3. **绝不盲目猜测**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh dae --json` 诊断，再进行针对性修复。
 4. **dae validate 语法说明**：dae 官方 CLI 不支持 `-c` 参数（`-c` 是 sing-box 的参数），正确格式为 `dae validate /path/to/config.dae`。
-5. **procd 托管与 daed 区分**：ImmortalWrt 官方源的原生 `dae` 包由 procd 管理，启用与热重载使用 `uci set dae.config.enabled='1' && uci commit dae && /etc/init.d/dae reload`（裸二进制模式使用 `dae reload`）；而 `daed` 是 Web 面板独立包，不读取 `/etc/dae/config.dae`。
+5. **procd 托管与 daed 区分及强互斥检查**：ImmortalWrt 官方源的原生 `dae` 包由 procd 管理，启用与热重载使用 `uci set dae.config.enabled='1' && uci commit dae && /etc/init.d/dae reload`（裸二进制模式使用 `dae reload`）；而 `daed` 是 Web 面板独立包（端口 2023，读取 `/etc/daed/wing.db`，不读取 `/etc/dae/config.dae`）。若 `probe.sh -j` 检出 `daed_conflict: true`，必须严禁下发原生配置，提示用户先执行 `/etc/init.d/daed stop && /etc/init.d/daed disable`。
 
 ---
 
@@ -70,6 +70,7 @@ description: >-
 
 ### 1. 单引号词法规范
 在 `.dae` 规范中，除 `ext:"xxx.dat:tag"` 外部文件引用外，所有包含冒号 `:`、斜杠 `/`、正则表达式或复合协议的字符串，统一使用单引号 `'...'` 包裹，避免解析歧义。
+
 * 推荐：`tcp_check_url: 'http://cp.cloudflare.com'`
 
 ### 2. must_direct 防 DNS 死循环铁律
@@ -96,6 +97,7 @@ routing {
 
 ### 4. 路由短路 (First-Match) 六层匹配顺序
 规则自上而下匹配，一旦命中立即终止后续规则：
+
 1. **[第 1 层] 核心宿主进程与私网广播保护**：`pname(dnsmasq, ...) -> must_direct` 及 `dip(geoip:private) -> direct`
 2. **[第 2 层] 大流量下载与 P2P 绕行**：`pname(aria2c, qbittorrent-nox) -> must_direct` 及 `dscp(0x4) -> direct`
 3. **[第 3 层] 海外 QUIC/UDP 443 抑制**：`l4proto(udp) && dport(443) && !domain(geosite:cn) -> block`（规避运营商 UDP 降速）

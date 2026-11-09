@@ -521,5 +521,67 @@ proxies:
         }), {})
 
 
+
+    def test_vmess_to_dae_preserves_httpupgrade_host_alpn_and_insecure(self):
+        vm_node = {
+            "type": "vmess",
+            "tag": "VM-HU",
+            "server": "1.2.3.4",
+            "server_port": 443,
+            "uuid": "11111111-2222-3333-4444-555555555555",
+            "security": "auto",
+            "alter_id": 0,
+            "transport": {"type": "httpupgrade", "path": "/hu", "host": "hu.example.com"},
+            "tls": {"enabled": True, "server_name": "sni.example.com", "alpn": ["h2", "http/1.1"], "insecure": True},
+        }
+        dae_out = to_dae_nodes([vm_node])
+        line = [l for l in dae_out.splitlines() if l.strip().startswith("'")][0]
+        payload = line.split("'")[3].replace("vmess://", "")
+        decoded = json.loads(base64.b64decode(payload + "=" * (-len(payload) % 4)).decode("utf-8"))
+        self.assertEqual(decoded["host"], "hu.example.com")
+        self.assertEqual(decoded["alpn"], "h2,http/1.1")
+        self.assertEqual(decoded["allowInsecure"], 1)
+
+    def test_clash_out_of_range_port_filtered_and_invalid_max_nodes_rejected(self):
+        self.assertEqual(parse_clash_proxy({
+            "name": "BadPort", "type": "trojan", "server": "1.2.3.4", "port": 70000, "password": "p"
+        }), {})
+        with self.assertRaises(ValueError):
+            filter_nodes([], max_nodes=0)
+
+    def test_pure_python_clash_yaml_parser_with_anchors(self):
+        from sub_parser import parse_clash_yaml_pure_python, parse_subscription_text
+        yaml_text = """
+pr_common: &pr_common
+  type: vless
+  cipher: auto
+  tls: true
+  skip-cert-verify: true
+
+pr_trojan: &pr_trojan {type: trojan, password: trojan_pass, udp: true}
+
+proxies:
+  - name: "HK-VLESS"
+    <<: *pr_common
+    server: 198.51.100.1
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+  - {name: "SG-Trojan", <<: *pr_trojan, server: 198.51.100.2, port: 8443}
+"""
+        raw_list = parse_clash_yaml_pure_python(yaml_text)
+        self.assertEqual(len(raw_list), 2)
+        self.assertEqual(raw_list[0]["type"], "vless")
+        self.assertEqual(raw_list[0]["tls"], True)
+        self.assertEqual(raw_list[1]["type"], "trojan")
+        self.assertEqual(raw_list[1]["password"], "trojan_pass")
+
+        # 端到端测试 parse_subscription_text
+        nodes = parse_subscription_text(yaml_text)
+        self.assertEqual(len(nodes), 2)
+        tags = [n["tag"] for n in nodes]
+        self.assertIn("HK-VLESS", tags)
+        self.assertIn("SG-Trojan", tags)
+
+
 if __name__ == "__main__":
     unittest.main()

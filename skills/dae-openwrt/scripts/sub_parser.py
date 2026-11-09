@@ -230,6 +230,8 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         port = int(p.get("port") if p.get("port") is not None else 443)
     except (ValueError, TypeError):
         port = 443
+    if not (1 <= port <= 65535):
+        return {}
 
     if ptype == "ss":
         cipher = str(p.get("cipher") or "")
@@ -450,6 +452,190 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
+def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
+    """在无 PyYAML 环境下，以纯 Python 标准库解析 Clash YAML 订阅中的 proxies 列表，
+    并完整支持 YAML 锚点定义 (&anchor) 与引用别名合并 (<<: *anchor)。
+    """
+    lines = text.splitlines()
+    anchors: Dict[str, Dict[str, Any]] = {}
+
+    # 1. 扫描内联流式锚点: key: &anchor { k: v, ... }
+    for m in re.finditer(r'(?m)^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*\{([^}]+)\}', text):
+        a_name = m.group(2)
+        inner = m.group(3)
+        props: Dict[str, Any] = {}
+        for part in re.split(r'[,;]\s*', inner):
+            if ':' in part:
+                k, v = part.split(':', 1)
+                k_s = k.strip().strip('"\'')
+                v_s = v.strip().strip('"\'')
+                if v_s.lower() == 'true':
+                    val = True
+                elif v_s.lower() == 'false':
+                    val = False
+                elif v_s.isdigit():
+                    val = int(v_s)
+                else:
+                    val = v_s
+                props[k_s] = val
+        anchors[a_name] = props
+
+    # 2. 扫描缩进块式锚点:
+    # key: &anchor
+    #   sub_key: val
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r'^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*$', line)
+        if m:
+            a_name = m.group(2)
+            base_indent = len(line) - len(line.lstrip())
+            props = {}
+            i += 1
+            while i < len(lines):
+                sub_line = lines[i]
+                if not sub_line.strip() or sub_line.strip().startswith('#'):
+                    i += 1
+                    continue
+                sub_indent = len(sub_line) - len(sub_line.lstrip())
+                if sub_indent <= base_indent:
+                    break
+                if ':' in sub_line:
+                    k, v = sub_line.split(':', 1)
+                    k_s = k.strip().strip('"\'')
+                    v_s = v.strip().strip('"\'')
+                    if v_s.lower() == 'true':
+                        val = True
+                    elif v_s.lower() == 'false':
+                        val = False
+                    elif v_s.isdigit():
+                        val = int(v_s)
+                    else:
+                        val = v_s
+                    props[k_s] = val
+                i += 1
+            anchors[a_name] = props
+            continue
+        i += 1
+
+    # 3. 定位 proxies / Proxy 节点块起始行
+    proxies_idx = -1
+    for idx, l in enumerate(lines):
+        if re.match(r'^(?:proxies|Proxy)\s*:', l.strip()):
+            proxies_idx = idx
+            break
+
+    if proxies_idx == -1:
+        return []
+
+    # 4. 抽取 proxies 下所有节点行块
+    raw_items: List[List[str]] = []
+    curr_item: List[str] = []
+
+    for l in lines[proxies_idx + 1:]:
+        stripped = l.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        indent = len(l) - len(l.lstrip())
+
+        # 若遇到无缩进且不是以 '-' 开头的顶层键（如 rules:），说明已退出 proxies 块
+        if indent == 0 and not stripped.startswith('-') and ':' in stripped:
+            break
+
+        if stripped.startswith('-'):
+            if curr_item:
+                raw_items.append(curr_item)
+            curr_item = [l]
+        else:
+            if curr_item:
+                curr_item.append(l)
+    if curr_item:
+        raw_items.append(curr_item)
+
+    # 5. 解析每个 proxy 节点并应用锚点合并
+    parsed_proxies: List[Dict[str, Any]] = []
+    for item_lines in raw_items:
+        first = item_lines[0].strip()
+        # 情况 A: 单行内联 - { ... }
+        inline_m = re.match(r'^-\s*\{([^}]+)\}', first)
+        if inline_m:
+            p_dict: Dict[str, Any] = {}
+            for part in re.split(r'[,;]\s*', inline_m.group(1)):
+                if ':' in part:
+                    k, v = part.split(':', 1)
+                    k_s = k.strip().strip('"\'')
+                    v_s = v.strip().strip('"\'')
+                    if k_s == '<<' and v_s.startswith('*'):
+                        ref = v_s[1:]
+                        if ref in anchors:
+                            p_dict.update(anchors[ref])
+                    else:
+                        if v_s.lower() == 'true':
+                            val = True
+                        elif v_s.lower() == 'false':
+                            val = False
+                        elif v_s.isdigit():
+                            val = int(v_s)
+                        else:
+                            val = v_s
+                        p_dict[k_s] = val
+            if p_dict:
+                parsed_proxies.append(p_dict)
+            continue
+
+        # 情况 B: 多行缩进块 - name: ...
+        p_dict = {}
+        parent_indent = 0
+        current_sub_dict = None
+
+        for l in item_lines:
+            s = l.strip()
+            indent = len(l) - len(l.lstrip())
+            if s.startswith('-'):
+                s = s[1:].strip()
+                parent_indent = indent
+                current_sub_dict = None
+            if not s or s.startswith('#'):
+                continue
+
+            if ':' in s:
+                k, v = s.split(':', 1)
+                k_s = k.strip().strip('"\'')
+                v_s = v.strip().strip('"\'')
+
+                if not v_s:
+                    sub_d: Dict[str, Any] = {}
+                    p_dict[k_s] = sub_d
+                    current_sub_dict = sub_d
+                    continue
+
+                if k_s == '<<' and v_s.startswith('*'):
+                    ref = v_s[1:]
+                    if ref in anchors:
+                        for ak, av in anchors[ref].items():
+                            p_dict.setdefault(ak, av)
+                else:
+                    if v_s.lower() == 'true':
+                        val = True
+                    elif v_s.lower() == 'false':
+                        val = False
+                    elif v_s.isdigit():
+                        val = int(v_s)
+                    else:
+                        val = v_s
+
+                    if indent > parent_indent and current_sub_dict is not None:
+                        current_sub_dict[k_s] = val
+                    else:
+                        p_dict[k_s] = val
+                        current_sub_dict = None
+
+        if p_dict:
+            parsed_proxies.append(p_dict)
+
+    return parsed_proxies
+
+
 def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
     """智能解析订阅纯文本（支持 Base64、Clash YAML、多行 URI）"""
     text = text.strip()
@@ -458,13 +644,13 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
 
     # 1. 尝试作为 Clash YAML 解析（单节点隔离容错，防止单颗坏节点冲毁整份订阅）
     if "proxies:" in text or "Proxy:" in text:
+        results = []
         if HAS_YAML:
             try:
                 data = yaml.safe_load(text)
                 if isinstance(data, dict):
                     proxies = data.get("proxies") or data.get("Proxy") or []
                     if isinstance(proxies, list) and len(proxies) > 0:
-                        results = []
                         for p in proxies:
                             if isinstance(p, dict):
                                 try:
@@ -473,12 +659,26 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
                                         results.append(parsed)
                                 except Exception:
                                     continue
-                        if results:
-                            return results
+            except Exception:
+                results = []
+
+        # 若未安装 PyYAML 或 PyYAML 解析为空，启动内置纯 Python YAML 解析器（支持 &anchor 锚点与 <<: *anchor 别名继承）
+        if not results:
+            try:
+                pure_proxies = parse_clash_yaml_pure_python(text)
+                for p in pure_proxies:
+                    if isinstance(p, dict):
+                        try:
+                            parsed = parse_clash_proxy(p)
+                            if parsed:
+                                results.append(parsed)
+                        except Exception:
+                            continue
             except Exception:
                 pass
-        else:
-            print("[!] 检测到 Clash YAML 订阅格式，但当前环境未安装 PyYAML，建议安装 PyYAML 或改用通用 Base64/URI 订阅。", file=sys.stderr)
+
+        if results:
+            return results
 
     # 2. 尝试作为 Base64 解码
     # 机场典型格式：整个订阅是一大串未换行或每 76 字符换行的 base64
@@ -548,9 +748,12 @@ def filter_nodes(nodes: List[Dict[str, Any]],
         node["tag"] = final_tag
         clean_nodes.append(node)
 
-    # 弱路由内存安全冗余：截取前 max_nodes 个节点
-    if max_nodes and len(clean_nodes) > max_nodes:
-        clean_nodes = clean_nodes[:max_nodes]
+    # 弱路由内存安全冗余：校验 max_nodes 并截取前 max_nodes 个节点
+    if max_nodes is not None:
+        if int(max_nodes) < 1:
+            raise ValueError(f"max_nodes 必须为正整数 (>= 1)，当前值: {max_nodes!r}")
+        if len(clean_nodes) > int(max_nodes):
+            clean_nodes = clean_nodes[:int(max_nodes)]
 
     return clean_nodes
 
@@ -709,6 +912,12 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
                 ws_host = headers.get("Host", "")
                 if isinstance(ws_host, (list, tuple)):
                     ws_host = ws_host[0] if ws_host else ""
+            if not ws_host and transport.get("host"):
+                raw_th = transport.get("host")
+                if isinstance(raw_th, (list, tuple)):
+                    ws_host = ",".join(str(x) for x in raw_th if x)
+                else:
+                    ws_host = str(raw_th)
             vm = {
                 "v": "2",
                 "ps": tag,
@@ -724,6 +933,10 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
                 "tls": "tls" if tls.get("enabled") else "",
                 "sni": (tls.get("server_name") or server) if tls.get("enabled") else ""
             }
+            if alpn_vals:
+                vm["alpn"] = ",".join(str(a) for a in alpn_vals if a)
+            if tls.get("insecure"):
+                vm["allowInsecure"] = 1
             b64 = base64.b64encode(json.dumps(vm, ensure_ascii=False).encode()).decode()
             raw_uri = f"vmess://{b64}"
         elif ntype == "tuic":

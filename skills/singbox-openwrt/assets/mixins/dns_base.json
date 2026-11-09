@@ -42,16 +42,6 @@
       "server": "local-dns"
     },
     {
-      "clash_mode": "Direct",
-      "action": "route",
-      "server": "local-dns"
-    },
-    {
-      "clash_mode": "Global",
-      "action": "route",
-      "server": "google-dns"
-    },
-    {
       "rule_set": "geosite-ads",
       "action": "reject"
     },
@@ -62,6 +52,16 @@
         "mask-h2.icloud.com"
       ],
       "action": "reject"
+    },
+    {
+      "clash_mode": "Direct",
+      "action": "route",
+      "server": "local-dns"
+    },
+    {
+      "clash_mode": "Global",
+      "action": "route",
+      "server": "google-dns"
     },
     {
       "rule_set": [

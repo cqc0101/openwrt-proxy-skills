@@ -180,5 +180,21 @@ routing {
         self.assertTrue(any("未闭合的左花括号" in e for e in errors), errors)
 
 
+
+    def test_selector_double_quotes_and_empty_node_pool_warned(self):
+        cfg = (
+            "global { lan_interface: br-lan\n wan_interface: auto }\n"
+            "subscription {}\n"
+            "node {}\n"
+            "routing {\n"
+            '  pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct\n'
+            '  domain("google.com") -> proxy\n'
+            "}\n"
+        )
+        errors, warnings = check(cfg)
+        self.assertTrue(any("单引号" in e for e in errors), errors)
+        self.assertTrue(any("空节点池" in w for w in warnings), warnings)
+
+
 if __name__ == "__main__":
     unittest.main()

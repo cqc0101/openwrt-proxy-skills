@@ -30,14 +30,36 @@ kill_active_watchdog() {
     if [ -f /tmp/proxy_watchdog.pid ]; then
         _wd_pid=$(cat /tmp/proxy_watchdog.pid 2>/dev/null || true)
         if [ -n "$_wd_pid" ]; then
+            pkill -P "$_wd_pid" 2>/dev/null || true
             kill "$_wd_pid" 2>/dev/null || true
         fi
         rm -f /tmp/proxy_watchdog.pid
     fi
+    rm -f /tmp/proxy_watchdog.token
+}
+
+# 逆序清理名为 Redirect-DNS-Proxy 的遗留防火墙 redirect 规则，避免干扰 dae 透明劫持
+clean_dns_redirects() {
+    for r_idx in $(uci show firewall 2>/dev/null | grep -E "=redirect$" | cut -d. -f2 | cut -d= -f1 | awk '{lines[NR]=$0} END {for(i=NR;i>=1;i--) print lines[i]}'); do
+        r_name=$(uci get "firewall.${r_idx}.name" 2>/dev/null || true)
+        if [ "$r_name" = "Redirect-DNS-Proxy" ]; then
+            uci delete "firewall.${r_idx}" 2>/dev/null || true
+        fi
+    done
 }
 
 run_dae_hardening() {
     ACTION_FLAG="${1:-}"
+
+    # 检查因突发断电/内核崩溃遗留的闪存启动哨兵，执行启动即时自愈 (防 /tmp 挥发性失效)
+    if [ -f /etc/dae/.boot_guard ]; then
+        say "${RED}[BOOT GUARD] 检测到前序部署未确认且系统发生过硬重启，正在从闪存快照强力恢复配置与网络...${NC}"
+        [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
+        rm -f /etc/dae/.boot_guard 2>/dev/null || true
+        ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
+        run_dae_hardening "--revert" 2>/dev/null || true
+        return 0
+    fi
 
     # 定位 LAN zone 索引
     LAN_INDEX=""
@@ -51,25 +73,46 @@ run_dae_hardening() {
         ZONE_IDX=$((ZONE_IDX + 1))
     done
 
+    if [ -z "$LAN_INDEX" ]; then
+        say "${RED}[ERROR] 未在 /etc/config/firewall 中找到 lan zone！${NC}"
+        return 1
+    fi
+
     if [ "$ACTION_FLAG" = "--confirm" ]; then
         touch /tmp/proxy_deploy_confirmed
         kill_active_watchdog
-        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗已解除并清理。${NC}"
+        rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback 2>/dev/null || true
+        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗与闪存启动哨兵已解除并清理。${NC}"
         return 0
     fi
 
     if [ "$ACTION_FLAG" = "--watchdog" ]; then
         kill_active_watchdog
         rm -f /tmp/proxy_deploy_confirmed
-        say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (若 45 秒内未收到 --confirm 将自动回滚配置与网络)...${NC}"
+        _wd_token="wd_$$_$(date +%s 2>/dev/null || echo 1)"
+        echo "$_wd_token" > /tmp/proxy_watchdog.token 2>/dev/null || true
+
+        # 闪存持久化防失联哨兵 (根治因突发内核 Panic / 硬件断电导致 /tmp 内存盘挥发失效的边界死穴)
+        mkdir -p /etc/dae 2>/dev/null || true
+        if [ -f /etc/dae/config.dae ] && [ ! -f /etc/dae/.config.dae.rollback ]; then
+            cp -f /etc/dae/config.dae /etc/dae/.config.dae.rollback 2>/dev/null || true
+        fi
+        echo "$_wd_token" > /etc/dae/.boot_guard 2>/dev/null || true
+
+        say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (含闪存启动哨兵防死机)...${NC}"
         (
             sleep 45
-            if [ ! -f /tmp/proxy_deploy_confirmed ]; then
-                [ -f /tmp/config.dae.bak ] && cp /tmp/config.dae.bak /etc/dae/config.dae 2>/dev/null || true
+            _cur_token=$(cat /tmp/proxy_watchdog.token 2>/dev/null || true)
+            if [ ! -f /tmp/proxy_deploy_confirmed ] && [ "$_cur_token" = "$_wd_token" ]; then
+                [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
+                [ -f /tmp/config.dae.bak ] && cp -f /tmp/config.dae.bak /etc/dae/config.dae 2>/dev/null || true
+                rm -f /etc/dae/.boot_guard 2>/dev/null || true
                 ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
                 run_dae_hardening "--revert" 2>/dev/null || true
             fi
-            rm -f /tmp/proxy_watchdog.pid 2>/dev/null || true
+            if [ "$_cur_token" = "$_wd_token" ]; then
+                rm -f /tmp/proxy_watchdog.pid /tmp/proxy_watchdog.token 2>/dev/null || true
+            fi
         ) </dev/null >/dev/null 2>&1 &
         echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
         return 0
@@ -79,20 +122,45 @@ run_dae_hardening() {
         say "${YELLOW}[REVERT] 正在撤销 dae 网络加固并还原基线...${NC}"
         touch /tmp/proxy_deploy_confirmed 2>/dev/null || true
         kill_active_watchdog
+        if [ -f /etc/dae/.config.dae.rollback ]; then
+            cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
+            rm -f /etc/dae/.config.dae.rollback 2>/dev/null || true
+        fi
+        rm -f /etc/dae/.boot_guard 2>/dev/null || true
         if [ -f /etc/dae/.flow_offload.bak ]; then
             . /etc/dae/.flow_offload.bak
-            [ -n "${ORIG_SW_OFFLOAD:-}" ] && uci set "firewall.@defaults[0].flow_offloading=${ORIG_SW_OFFLOAD}" 2>/dev/null || uci delete firewall.@defaults[0].flow_offloading 2>/dev/null || true
-            [ -n "${ORIG_HW_OFFLOAD:-}" ] && uci set "firewall.@defaults[0].flow_offloading_hw=${ORIG_HW_OFFLOAD}" 2>/dev/null || uci delete firewall.@defaults[0].flow_offloading_hw 2>/dev/null || true
+            if [ -n "${ORIG_SW_OFFLOAD:-}" ]; then
+                uci set "firewall.@defaults[0].flow_offloading=${ORIG_SW_OFFLOAD}" 2>/dev/null || true
+            else
+                uci delete firewall.@defaults[0].flow_offloading 2>/dev/null || true
+            fi
+            if [ -n "${ORIG_HW_OFFLOAD:-}" ]; then
+                uci set "firewall.@defaults[0].flow_offloading_hw=${ORIG_HW_OFFLOAD}" 2>/dev/null || true
+            else
+                uci delete firewall.@defaults[0].flow_offloading_hw 2>/dev/null || true
+            fi
             rm -f /etc/dae/.flow_offload.bak
         fi
         if [ -f /etc/dae/.network_baseline.bak ]; then
             . /etc/dae/.network_baseline.bak
             if [ -n "$LAN_INDEX" ]; then
                 uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
-                [ -n "${ORIG_LAN_MASQ:-}" ] && uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
-                [ -n "${ORIG_LAN_MTU_FIX:-}" ] && uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+                if [ -n "${ORIG_LAN_MASQ:-}" ]; then
+                    uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || true
+                else
+                    uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+                fi
+                if [ -n "${ORIG_LAN_MTU_FIX:-}" ]; then
+                    uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || true
+                else
+                    uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+                fi
             fi
-            [ -n "${ORIG_FILTER_AAAA:-}" ] && uci set "dhcp.@dnsmasq[0].filter_aaaa=${ORIG_FILTER_AAAA}" 2>/dev/null || uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+            if [ -n "${ORIG_FILTER_AAAA:-}" ]; then
+                uci set "dhcp.@dnsmasq[0].filter_aaaa=${ORIG_FILTER_AAAA}" 2>/dev/null || true
+            else
+                uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+            fi
             rm -f /etc/dae/.network_baseline.bak
         else
             if [ -n "$LAN_INDEX" ]; then
@@ -183,8 +251,9 @@ SYSCTL_EOF
         fi
     fi
 
-    # 合并提交所有防火墙变更并仅执行 1 次 reload，消除嵌入式路由多次重载 nftables 的 CPU 峰值抖动
+    # 清理遗留的本机 53 端口 DNAT 重定向规则并合并提交所有防火墙变更（仅执行 1 次 reload）
     if command -v uci >/dev/null 2>&1; then
+        clean_dns_redirects
         uci commit firewall 2>/dev/null || true
         /etc/init.d/firewall reload 2>/dev/null || true
     fi

@@ -294,5 +294,49 @@ class TestAuditHardeningAutoConfig(unittest.TestCase):
             build_config(version="1.14", dns_mode="fakeip", topology="bypass", main_router_ip="not-an-ip")
 
 
+
+    def test_dns_ip_port_and_tls_quic_schemes_supported(self):
+        from check_config import check_config_obj
+        # AdGuardHome / SmartDNS local port cascading (127.0.0.1:5335) must not inject false domain_resolver
+        cfg_adg = build_config(version="1.14", dns_mode="fakeip", mirror="direct", dns_cn="127.0.0.1:5335")
+        ali = next(s for s in cfg_adg["dns"]["servers"] if s["tag"] == "alidns")
+        self.assertEqual(ali["server"], "127.0.0.1")
+        self.assertEqual(ali["server_port"], 5335)
+        self.assertNotIn("domain_resolver", ali)
+        errs, _ = check_config_obj(cfg_adg)
+        self.assertEqual(errs, [])
+
+        # DoT (tls://) and DoQ (quic://) schemes
+        cfg_dot = build_config(
+            version="1.14", dns_mode="fakeip", mirror="direct",
+            dns_cn="tls://dns.alidns.com:853", dns_remote="quic://dns.adguard-dns.com"
+        )
+        ali_dot = next(s for s in cfg_dot["dns"]["servers"] if s["tag"] == "alidns")
+        self.assertEqual(ali_dot["type"], "tls")
+        self.assertEqual(ali_dot["server"], "dns.alidns.com")
+        self.assertEqual(ali_dot["server_port"], 853)
+        self.assertEqual(ali_dot["domain_resolver"], "bootstrap-dns")
+        rem_doq = next(s for s in cfg_dot["dns"]["servers"] if s["tag"] == "google-dns")
+        self.assertEqual(rem_doq["type"], "quic")
+        self.assertEqual(rem_doq["server"], "dns.adguard-dns.com")
+        errs2, _ = check_config_obj(cfg_dot)
+        self.assertEqual(errs2, [])
+
+    def test_invalid_wan_iface_and_nonpositive_max_nodes_rejected(self):
+        with self.assertRaises(ValueError):
+            build_config(version="1.14", dns_mode="fakeip", wan_iface="-oProxyCommand=bad")
+        with self.assertRaises(ValueError):
+            build_config(version="1.14", dns_mode="fakeip", wan_iface="eth0; reboot")
+        with self.assertRaises(ValueError):
+            build_config(version="1.14", dns_mode="fakeip", max_nodes=0)
+
+    def test_canary_and_ads_precede_clash_global_mode_in_dns_rules(self):
+        cfg = build_config(version="1.14", dns_mode="fakeip", mirror="direct")
+        rules = cfg["dns"]["rules"]
+        idx_canary = next(i for i, r in enumerate(rules) if "use-application-dns.net" in r.get("domain", []))
+        idx_global = next(i for i, r in enumerate(rules) if r.get("clash_mode") == "Global")
+        self.assertLess(idx_canary, idx_global, "Canary 域名阻断必须位于 clash_mode: Global 之前")
+
+
 if __name__ == "__main__":
     unittest.main()

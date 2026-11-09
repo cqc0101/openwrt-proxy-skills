@@ -2,6 +2,41 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.5.4] - 2026-11-09
+
+### 全栈深度审计加固与边界缺陷清零 (Deep Code Audit & Full-Stack Hardening)
+
+- **[高危] 根治 `/tmp` 内存盘挥发性失效 (Flash Pre-Rollback & Boot Guard)**：
+  - 在 `setup_openwrt_network.sh` 中为 `--watchdog` 引入持久化闪存快照 `/etc/sing-box/.config.json.rollback`（或 `dae` 的 `.config.dae.rollback`）与启动哨兵 `.boot_guard`；
+  - 彻底根治因极端配置引发内核崩溃（Kernel Panic）或硬件断电时 `/tmp` 内存盘被瞬间清空导致看门狗与快照挥发失效的单点隐患；路由器在硬重启后执行开机即时自愈强力还原。
+- **[高危] 攻克无 PyYAML 环境下 Clash 订阅解析盲区与 YAML 锚点支持**：
+  - 在 `sub_parser.py` 中内置基于纯标准库的轻量 YAML 状态机 `parse_clash_yaml_pure_python`；
+  - 完整解析 `&anchor` 块式/流式锚点定义与 `<<: *anchor` 属性继承，实现 0 第三方库依赖下 100% 成功解析主流机场复杂 Clash 订阅。
+- **[治理] 破除 `daed` (Web面板) 与原生 `dae` (CLI/procd) 的天然认知断层**：
+  - `probe.sh` 与 `doctor.sh` 引入对 `daed` 进程、`/etc/daed/wing.db` 数据库与 2023 端口的强互斥检测与诊断提醒；
+  - `SKILL.md` 新增强互斥红线，严禁在 `daed` 独占 eBPF/TC 时盲目下发原生 `config.dae` 配置。
+- **[门禁] `check_config.py` 补充 Shadowsocks 废弃流加密方法阻断**：
+  - 静态门禁扫描拦截 `aes-256-cfb`、`rc4-md5`、`bf-cfb` 等已遭 sing-box v1.8+ 淘汰的 Cipher，阻断启动崩溃。
+- **[高危] 修复 `doctor.sh` 默认 `all` 模式跳过进程与 `tun0` 存活检查的盲区**：
+  - 当不带服务名直接运行 `doctor.sh --json` 时，原先 `SERVICE_NAME="all"` 未进入 `sing-box`/`dae` 分支，导致核心进程停摆或 `tun0` 丢失时仍误报 `healthy`；现已补全自动引擎状态检查与 `tun0`/防火墙校验。
+- **[高危] 修复 `setup_openwrt_network.sh` 看门狗并发竞争误回滚与基线恢复盲区**：
+  - 为 `--watchdog` 引入唯一令牌 `/tmp/proxy_watchdog.token` 与 `pkill -P` 子进程清理，根治 BusyBox `ash` 下前序残留 `sleep 45` 子进程误回滚后续已确认部署的竞态漏洞；
+  - 补全 `ORIG_LAN_FORWARD` 基线备份与无损恢复，消除 `[ -n ... ] && uci set || uci delete` 短路误删隐患；
+  - 为 `dae` 网络脚本补齐 `LAN_INDEX` 缺失显式报错拦截与 `clean_dns_redirects` 遗留 53 端口 DNAT 清理。
+- **[高危] 修复 `auto_config.py` 自定义 `IP:Port` 及 `tls://`/`quic://` DNS 上游解析错误**：
+  - 修复传入 `--dns-cn 127.0.0.1:5335`（如 AdGuardHome/SmartDNS 级联）时未拆分 `server_port` 且误判为域名注入 `bootstrap-dns` 的缺陷；新增对 `tls://`、`quic://`、`h3://`、`tcp://`、`udp://` 协议及 `[ipv6]:port` 的完整解析；
+  - 调整 `dns_base.json` 与 4 个基准模板的 `dns.rules` 顺序，使 `geosite-ads` 与 Canary 域名（`use-application-dns.net`、`mask.icloud.com`）阻断优先于 `clash_mode: Global`。
+- **[中危] 节点解析期端口边界强校验与协议无损转换加固**：
+  - 在 `parse_node.py` 与 `sub_parser.py` 解析阶段即拦截超出 `1..65535` 的非法端口，确保含单颗坏端口节点的机场订阅能单点隔离跳过，而非混入配置后触发 `check_config.py` 整包中止；
+  - 修复 `ss://` 整体 Base64 编码节点丢失内部 `?plugin=...` 参数的问题；
+  - 修复 `to_dae_nodes` 导出 `vmess://` 时丢失 `httpupgrade`/`h2` 的 `transport.host`、`tls.alpn` 与 `allowInsecure` 的问题；
+  - 支持 VLESS/Trojan/HY2 `servername` 参数别名，并在 TLS+WS/HTTPUpgrade 缺省 `sni` 时自动回退至 `host`。
+- **[中危] `dae` 旁路由 IPv6 主网关单引号合规与静态检查增强**：
+  - `sub_to_dae.py` 在 `--topology bypass` 注入 IPv6 或 CIDR 主网关时自动包裹单引号 `dip('...') -> direct`，并对 `--lan-iface`/`--wan-iface` 执行白名单字符校验；
+  - `check_dae_syntax.py` 新增对选择器内部双引号（如 `domain("...")`）的违规拦截，并在 `node {}` 与 `subscription {}` 同时为空时输出提醒。
+- **[测试] 单元测试矩阵扩充至 217 项**：
+  - 新增纯 Python Clash YAML 锚点解析、Shadowsocks 废弃加密方法阻断、闪存开机哨兵与 daed 冲突探测测试，全量 217 项单元测试 100% 满分通过。
+
 ## [0.5.3] - 2026-11-09
 
 ### Reality 凭据完备性、Shadowsocks SIP002 Obfs 插件、旁路网关 IPv6 校验与 204 项 QA 矩阵 (Protocol Enforcement & Syntax Hardening)

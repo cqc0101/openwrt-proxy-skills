@@ -93,7 +93,9 @@ def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
             else:
                 print(f"[!] 目标软路由 sing-box 版本为 {out} (< 1.13)，建议升级至 1.14+ 现代版本以获得最佳稳定性与字段支持；已选用 1.13 基础规范兼容生成", file=sys.stderr)
                 return "1.13", out
-        return "1.13", out if out else "Unknown"
+        err_msg = (res.stderr or out or "无输出").strip().splitlines()[0] if (res.stderr or out) else "无响应"
+        print(f"[!] 远程探测未返回有效 sing-box 版本 ({err_msg})，默认降级使用 1.13 稳定规范", file=sys.stderr)
+        return "1.13", out if out else "Fallback-1.13"
     except Exception as e:
         print(f"[!] 无法探测远程版本 ({e})，默认降级使用 1.13 稳定规范", file=sys.stderr)
         return "1.13", "Fallback-1.13"
@@ -246,7 +248,13 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     # 路由防环与防死锁
     if "route" not in config:
         config["route"] = {}
-    if wan_iface:
+    if max_nodes is not None and int(max_nodes) < 1:
+        raise ValueError(f"--max-nodes 必须为正整数 (>= 1)，当前值: {max_nodes!r}")
+
+    if wan_iface is not None:
+        wan_iface = str(wan_iface).strip()
+        if not wan_iface or wan_iface.startswith("-") or not re.match(r"^[a-zA-Z0-9_.\-@:]+$", wan_iface):
+            raise ValueError(f"非法的 WAN 接口名称 (--wan-iface={wan_iface!r})")
         # 显式 WAN 接口模式：缺 nfqueue 模块的内核（真机验证：Oray X1 Pro / ImmortalWrt SNAPSHOT）
         # auto_detect_interface 的自保会失效，直连流量被 TUN 自捕获（国内全 RST）
         config["route"].pop("auto_detect_interface", None)
@@ -259,26 +267,59 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     dns_servers = config.get("dns", {}).get("servers", [])
 
     def _configure_dns_server(entry, val, presets, detour=None):
-        val_str = val.strip()
+        val_str = str(val or "").strip()
         val_lower = val_str.lower()
         entry.pop("path", None)
         entry.pop("server_port", None)
+        entry.pop("domain_resolver", None)
         if val_lower in presets:
             srv, stype = presets[val_lower]
             entry["server"] = srv
             entry["type"] = stype
-        elif val_lower.startswith(("https://", "http://")):
+        elif "://" in val_lower:
             import urllib.parse as _up
             parsed = _up.urlparse(val_str)
-            entry["server"] = parsed.hostname or val_str
-            entry["type"] = "https" if val_lower.startswith("https://") else "http"
-            if parsed.port:
-                entry["server_port"] = parsed.port
-            if parsed.path and parsed.path not in ("/", "/dns-query"):
+            scheme = (parsed.scheme or "").lower()
+            scheme_map = {
+                "https": "https",
+                "http": "http",
+                "h3": "h3",
+                "tls": "tls",
+                "quic": "quic",
+                "udp": "udp",
+                "tcp": "tcp",
+            }
+            if scheme not in scheme_map or not parsed.hostname:
+                raise ValueError(f"不支持或格式非法的 DNS 上游 URL: {val_str!r}")
+            entry["server"] = parsed.hostname
+            entry["type"] = scheme_map[scheme]
+            if parsed.port is not None:
+                if not (1 <= int(parsed.port) <= 65535):
+                    raise ValueError(f"DNS 端口超出合法范围 (1-65535): {parsed.port}")
+                entry["server_port"] = int(parsed.port)
+            if scheme in ("https", "http", "h3") and parsed.path and parsed.path not in ("/", "/dns-query"):
                 entry["path"] = parsed.path
         else:
-            entry["server"] = val_str
+            host_part = val_str
+            port_val = None
+            if host_part.startswith("[") and "]:" in host_part:
+                h_str, p_str = host_part.rsplit("]:", 1)
+                host_part = h_str.lstrip("[").strip()
+                if not p_str.isdigit() or not (1 <= int(p_str) <= 65535):
+                    raise ValueError(f"非法的 DNS 服务器端口: {val_str!r}")
+                port_val = int(p_str)
+            elif host_part.count(":") == 1:
+                h_str, p_str = host_part.rsplit(":", 1)
+                if not p_str.isdigit() or not (1 <= int(p_str) <= 65535):
+                    raise ValueError(f"非法的 DNS 服务器端口: {val_str!r}")
+                host_part = h_str.strip()
+                port_val = int(p_str)
+            else:
+                host_part = host_part.strip("[]").strip()
+            entry["server"] = host_part
             entry["type"] = "udp"
+            if port_val is not None:
+                entry["server_port"] = port_val
         if detour:
             entry["detour"] = detour
 

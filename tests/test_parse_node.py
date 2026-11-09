@@ -324,5 +324,27 @@ class TestAuditHardeningParseNode(unittest.TestCase):
             parse_uri("vless://11111111-2222-3333-4444-555555555555@example.com:443?security=reality&sni=example.com#MissingPBK")
 
 
+
+    def test_out_of_range_ports_rejected_at_parse_time(self):
+        for bad_uri in (
+            "trojan://pw@1.2.3.4:0#ZeroPort",
+            "trojan://pw@1.2.3.4:70000#HighPort",
+            "vless://11111111-2222-3333-4444-555555555555@[2001:db8::1]:99999?security=tls#V6HighPort",
+            "ss://YWVzLTI1Ni1nY206cGFzcw==@1.2.3.4:65536#SSHighPort",
+        ):
+            with self.subTest(uri=bad_uri):
+                with self.assertRaises(ValueError):
+                    parse_uri(bad_uri)
+
+    def test_whole_base64_ss_preserves_plugin_and_servername_fallback(self):
+        b64 = base64.b64encode(b"aes-256-gcm:pass123@1.2.3.4:8388/?plugin=obfs-local%3Bobfs%3Dtls#InnerPlugin").decode()
+        ob = parse_shadowsocks(f"ss://{b64}")
+        self.assertEqual(ob["plugin"], "obfs-local")
+        self.assertEqual(ob["plugin_opts"], "obfs=tls")
+
+        v_ob = parse_uri("vless://11111111-2222-3333-4444-555555555555@104.16.1.1:443?security=tls&type=ws&host=ws.example.com#CF-WS")
+        self.assertEqual(v_ob["tls"]["server_name"], "ws.example.com")
+
+
 if __name__ == "__main__":
     unittest.main()

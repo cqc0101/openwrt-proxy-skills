@@ -168,7 +168,11 @@ say "${BOLD}================================================================${NC
 say "${BOLD}       OpenWrt 科学上网智能日志诊断医生 (Smart Log Doctor)       ${NC}"
 say "${BOLD}================================================================${NC}"
 
-# 进程与接口状态检测
+    if pidof daed >/dev/null 2>&1 || pgrep -x daed >/dev/null 2>&1 || [ -f /etc/daed/wing.db ]; then
+        add_issue "daed_conflict" "error" "检测到正在运行 Web 面板版 daed (与原生 dae 互斥)" "原生 dae 配置文件 (/etc/dae/config.dae) 会被 Web 版 daed 忽略，两者同时启动将发生 eBPF 钩子争抢" "/etc/init.d/daed stop && /etc/init.d/daed disable && /etc/init.d/dae enable && /etc/init.d/dae start"
+    fi
+
+# 进程与接口状态检测 (兼容显式指定 sing-box / dae 与默认 all 自动识别模式)
 if [ "$SERVICE_NAME" = "sing-box" ]; then
     if [ "$SINGBOX_RUNNING" -eq 0 ]; then
         add_issue "service_stopped" "error" "sing-box 进程未运行" "sing-box 服务处于停止或异常退出状态" "uci set sing-box.main.enabled='1' 2>/dev/null; uci set sing-box.main.user='root' 2>/dev/null; uci commit sing-box 2>/dev/null; /etc/init.d/sing-box restart"
@@ -183,6 +187,21 @@ elif [ "$SERVICE_NAME" = "dae" ]; then
         DAE_INIT_CMD="/etc/init.d/dae restart"
         [ -x /etc/init.d/daed ] && [ ! -x /etc/init.d/dae ] && DAE_INIT_CMD="/etc/init.d/daed restart"
         add_issue "service_stopped" "error" "dae 进程未运行" "dae / daed 服务处于停止状态" "$DAE_INIT_CMD"
+    fi
+else
+    if [ "$SINGBOX_RUNNING" -eq 0 ] && [ "$DAE_RUNNING" -eq 0 ]; then
+        if [ -x /etc/init.d/dae ] || [ -f /etc/dae/config.dae ]; then
+            add_issue "service_stopped" "error" "代理核心进程未运行" "未检测到运行中的 sing-box 或 dae 进程" "/etc/init.d/dae restart"
+        else
+            add_issue "service_stopped" "error" "代理核心进程未运行" "未检测到运行中的 sing-box 或 dae 进程" "uci set sing-box.main.enabled='1' 2>/dev/null; uci set sing-box.main.user='root' 2>/dev/null; uci commit sing-box 2>/dev/null; /etc/init.d/sing-box restart"
+        fi
+    fi
+    if [ "$SINGBOX_RUNNING" -eq 1 ]; then
+        if [ "$TUN_EXISTS" -eq 0 ]; then
+            add_issue "tun_missing" "warning" "tun0 虚拟网卡未就绪" "系统未检测到 tun0 网卡接口，流量无法通过 TUN 转发" "sh /etc/sing-box/setup_openwrt_network.sh"
+        elif command -v uci >/dev/null 2>&1 && [ "$FW_TUN_OK" -eq 0 ]; then
+            add_issue "fw_tun_untrusted" "warning" "防火墙未放行 tun0 接口" "uci firewall 中未找到 tun0，局域网设备转发流量将被默认丢弃" "sh /etc/sing-box/setup_openwrt_network.sh"
+        fi
     fi
 fi
 

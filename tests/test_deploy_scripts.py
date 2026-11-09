@@ -169,5 +169,29 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             text = _read(os.path.join(base, "probe.sh"))
             self.assertIn("DISTRIB_DESCRIPTION", text, "probe.sh 必须结合 DISTRIB_DESCRIPTION 识别真机 iStoreOS")
 
+
+    def test_watchdog_token_isolation_and_doctor_all_mode(self):
+        for base in (SINGBOX, DAE):
+            net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
+            self.assertIn("/tmp/proxy_watchdog.token", net_txt, "看门狗必须使用唯一 token 防止并发部署误回滚")
+            self.assertIn("pkill -P", net_txt, "停止看门狗时应清理子进程 sleep")
+            doc_txt = _read(os.path.join(base, "doctor.sh"))
+            self.assertIn('if [ "$SINGBOX_RUNNING" -eq 0 ] && [ "$DAE_RUNNING" -eq 0 ]; then', doc_txt, "doctor.sh 默认 all 模式必须检查进程存活")
+
+    def test_flash_boot_guard_and_daed_conflict_detection(self):
+        for base in (SINGBOX, DAE):
+            net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
+            self.assertIn(".boot_guard", net_txt, "setup_openwrt_network.sh 必须写入持久化闪存哨兵以抵御 /tmp 挥发性失效")
+            self.assertIn(".rollback", net_txt, "setup_openwrt_network.sh 必须保留持久化配置快照")
+            self.assertIn("BOOT GUARD", net_txt, "必须包含开机即时自愈恢复逻辑")
+
+            probe_txt = _read(os.path.join(base, "probe.sh"))
+            self.assertIn("daed_conflict", probe_txt, "probe.sh 必须探测 daed 互斥冲突")
+            self.assertIn("daed_running", probe_txt, "probe.sh 必须检测 daed 运行状态")
+
+            doc_txt = _read(os.path.join(base, "doctor.sh"))
+            self.assertIn("daed_conflict", doc_txt, "doctor.sh 必须针对 daed 运行给出错误诊断与禁用方案")
+
+
 if __name__ == "__main__":
     unittest.main()

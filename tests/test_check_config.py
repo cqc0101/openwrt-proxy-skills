@@ -256,6 +256,19 @@ class TestAuditHardeningCheckConfig(unittest.TestCase):
         })
         self.assertTrue(any("Reality 配置残缺" in e for e in errs2), errs2)
 
+    def test_deprecated_shadowsocks_cipher_blocked(self):
+        errs, _ = run({
+            "outbounds": [{
+                "type": "shadowsocks",
+                "tag": "ss-old",
+                "server": "1.2.3.4",
+                "server_port": 8388,
+                "method": "aes-256-cfb",
+                "password": "pwd",
+            }]
+        })
+        self.assertTrue(any("废弃加密" in e for e in errs), errs)
+
 
 if __name__ == "__main__":
     unittest.main()

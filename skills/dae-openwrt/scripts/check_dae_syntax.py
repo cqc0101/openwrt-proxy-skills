@@ -71,10 +71,14 @@ def check_dae_syntax(filepath):
                     if brace_depth < 0:
                         errors.append(f"第 {idx} 行存在多余的右花括号 '}}': {line}")
                         brace_depth = 0
-        matches = re.findall(r'([\w\'\-]+:\s*"[^"]*"|->\s*"[^"]*")', line)
-        for m in matches:
-            if not m.startswith('ext:'):
-                errors.append(f"第 {idx} 行疑似违反单引号规范: {m}。建议统一使用单引号 '...'（ext:\"file.dat:tag\" 除外）。")
+        line_no_ext = re.sub(r'ext:\s*"[^"]*"', "", line)
+        if '"' in line_no_ext:
+            matches = re.findall(r'([\w\'\-]+:\s*"[^"]*"|->\s*"[^"]*"|\w+\([^)]*"[^"]*"[^)]*\))', line_no_ext)
+            if matches:
+                for m in matches:
+                    errors.append(f"第 {idx} 行疑似违反单引号规范: {m}。建议统一使用单引号 '...'（ext:\"file.dat:tag\" 除外）。")
+            else:
+                errors.append(f"第 {idx} 行疑似违反单引号规范: {line}。建议统一使用单引号 '...'（ext:\"file.dat:tag\" 除外）。")
     if brace_depth != 0:
         errors.append(f"[语法块未闭合] 配置文件中存在 {brace_depth} 个未闭合的左花括号 '{{'，请检查 global/node/dns/routing 块是否缺少 '}}'！")
 
@@ -109,6 +113,14 @@ def check_dae_syntax(filepath):
                     errors.append("[DNS 投毒死循环高危] 配置了私网 IP 污染重查，但 response 块中缺少位于其前的"
                                   "可信上游白名单放行（'upstream(...) -> accept'），会导致无限递归重查！")
                     break
+
+    # 6. 检查 node 与 subscription 是否同时为空（模板未注入真实节点提醒）
+    if re.search(r'\bnode\s*\{', content) and re.search(r'\bsubscription\s*\{', content):
+        node_bodies = re.findall(r'\bnode\s*\{([^}]*)\}', content, flags=re.S)
+        sub_bodies = re.findall(r'\bsubscription\s*\{([^}]*)\}', content, flags=re.S)
+        has_active_node = any(b.strip() for b in node_bodies) or any(b.strip() for b in sub_bodies)
+        if not has_active_node:
+            warnings.append("[空节点池提醒] node 与 subscription 块均为空，部署前请使用 sub_to_dae.py 注入真实节点或订阅。")
 
     return errors, warnings
 

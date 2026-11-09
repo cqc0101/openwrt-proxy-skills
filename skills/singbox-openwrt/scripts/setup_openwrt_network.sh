@@ -31,10 +31,12 @@ kill_active_watchdog() {
     if [ -f /tmp/proxy_watchdog.pid ]; then
         _wd_pid=$(cat /tmp/proxy_watchdog.pid 2>/dev/null || true)
         if [ -n "$_wd_pid" ]; then
+            pkill -P "$_wd_pid" 2>/dev/null || true
             kill "$_wd_pid" 2>/dev/null || true
         fi
         rm -f /tmp/proxy_watchdog.pid
     fi
+    rm -f /tmp/proxy_watchdog.token
 }
 
 # 逆序清理名为 Redirect-DNS-Proxy 的防火墙 redirect 规则，防止正序删除时匿名节索引前移漏删
@@ -50,6 +52,16 @@ clean_dns_redirects() {
 # 核心路由器端本地加固逻辑
 run_router_hardening() {
     ACTION_FLAG="${1:-}"
+
+    # 检查因突发断电/内核崩溃遗留的闪存启动哨兵，执行启动即时自愈 (防 /tmp 挥发性失效)
+    if [ -f /etc/sing-box/.boot_guard ]; then
+        say "${RED}[BOOT GUARD] 检测到前序部署未确认且系统发生过硬重启，正在从闪存快照强力恢复配置与网络...${NC}"
+        [ -f /etc/sing-box/.config.json.rollback ] && cp -f /etc/sing-box/.config.json.rollback /etc/sing-box/config.json 2>/dev/null || true
+        rm -f /etc/sing-box/.boot_guard 2>/dev/null || true
+        /etc/init.d/sing-box restart 2>/dev/null || true
+        run_router_hardening "--revert" 2>/dev/null || true
+        return 0
+    fi
 
     # 1. 定位确切的 LAN zone 索引 (坚决不盲猜 @zone[0])
     LAN_INDEX=""
@@ -71,22 +83,38 @@ run_router_hardening() {
     if [ "$ACTION_FLAG" = "--confirm" ]; then
         touch /tmp/proxy_deploy_confirmed
         kill_active_watchdog
-        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗已解除并清理。${NC}"
+        rm -f /etc/sing-box/.boot_guard /etc/sing-box/.config.json.rollback 2>/dev/null || true
+        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗与闪存启动哨兵已解除并清理。${NC}"
         return 0
     fi
 
     if [ "$ACTION_FLAG" = "--watchdog" ]; then
         kill_active_watchdog
         rm -f /tmp/proxy_deploy_confirmed
-        say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (若 45 秒内未收到 --confirm 将自动回滚配置与网络)...${NC}"
+        _wd_token="wd_$$_$(date +%s 2>/dev/null || echo 1)"
+        echo "$_wd_token" > /tmp/proxy_watchdog.token 2>/dev/null || true
+
+        # 闪存持久化防失联哨兵 (根治因突发内核 Panic / 硬件断电导致 /tmp 内存盘挥发失效的边界死穴)
+        mkdir -p /etc/sing-box 2>/dev/null || true
+        if [ -f /etc/sing-box/config.json ] && [ ! -f /etc/sing-box/.config.json.rollback ]; then
+            cp -f /etc/sing-box/config.json /etc/sing-box/.config.json.rollback 2>/dev/null || true
+        fi
+        echo "$_wd_token" > /etc/sing-box/.boot_guard 2>/dev/null || true
+
+        say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (含闪存启动哨兵防死机)...${NC}"
         (
             sleep 45
-            if [ ! -f /tmp/proxy_deploy_confirmed ]; then
-                [ -f /tmp/config.json.bak ] && cp /tmp/config.json.bak /etc/sing-box/config.json 2>/dev/null || true
+            _cur_token=$(cat /tmp/proxy_watchdog.token 2>/dev/null || true)
+            if [ ! -f /tmp/proxy_deploy_confirmed ] && [ "$_cur_token" = "$_wd_token" ]; then
+                [ -f /etc/sing-box/.config.json.rollback ] && cp -f /etc/sing-box/.config.json.rollback /etc/sing-box/config.json 2>/dev/null || true
+                [ -f /tmp/config.json.bak ] && cp -f /tmp/config.json.bak /etc/sing-box/config.json 2>/dev/null || true
+                rm -f /etc/sing-box/.boot_guard 2>/dev/null || true
                 /etc/init.d/sing-box restart 2>/dev/null || true
                 run_router_hardening "--revert" 2>/dev/null || true
             fi
-            rm -f /tmp/proxy_watchdog.pid 2>/dev/null || true
+            if [ "$_cur_token" = "$_wd_token" ]; then
+                rm -f /tmp/proxy_watchdog.pid /tmp/proxy_watchdog.token 2>/dev/null || true
+            fi
         ) </dev/null >/dev/null 2>&1 &
         echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
         return 0
@@ -96,13 +124,33 @@ run_router_hardening() {
         say "${YELLOW}[REVERT] 正在撤销最后一公里网络接管配置并恢复基线...${NC}"
         touch /tmp/proxy_deploy_confirmed 2>/dev/null || true
         kill_active_watchdog
+        if [ -f /etc/sing-box/.config.json.rollback ]; then
+            cp -f /etc/sing-box/.config.json.rollback /etc/sing-box/config.json 2>/dev/null || true
+            rm -f /etc/sing-box/.config.json.rollback 2>/dev/null || true
+        fi
+        rm -f /etc/sing-box/.boot_guard 2>/dev/null || true
         uci del_list firewall.@zone[${LAN_INDEX}].device='tun0' 2>/dev/null || true
         uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
         if [ -f /etc/sing-box/.network_baseline.bak ]; then
             . /etc/sing-box/.network_baseline.bak
-            [ -n "${ORIG_LAN_MASQ:-}" ] && uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
-            [ -n "${ORIG_LAN_MTU_FIX:-}" ] && uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
-            [ -n "${ORIG_FILTER_AAAA:-}" ] && uci set "dhcp.@dnsmasq[0].filter_aaaa=${ORIG_FILTER_AAAA}" 2>/dev/null || uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+            if [ -n "${ORIG_LAN_FORWARD:-}" ]; then
+                uci set "firewall.@zone[${LAN_INDEX}].forward=${ORIG_LAN_FORWARD}" 2>/dev/null || true
+            fi
+            if [ -n "${ORIG_LAN_MASQ:-}" ]; then
+                uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || true
+            else
+                uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+            fi
+            if [ -n "${ORIG_LAN_MTU_FIX:-}" ]; then
+                uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || true
+            else
+                uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+            fi
+            if [ -n "${ORIG_FILTER_AAAA:-}" ]; then
+                uci set "dhcp.@dnsmasq[0].filter_aaaa=${ORIG_FILTER_AAAA}" 2>/dev/null || true
+            else
+                uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+            fi
             rm -f /etc/sing-box/.network_baseline.bak
         else
             uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
@@ -133,10 +181,11 @@ run_router_hardening() {
     # 首次执行前保存用户原始防火墙与 Dnsmasq 基线，确保 --revert 不误删用户原有配置
     mkdir -p /etc/sing-box
     if [ ! -f /etc/sing-box/.network_baseline.bak ]; then
+        _orig_fwd=$(uci get "firewall.@zone[${LAN_INDEX}].forward" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
         _orig_masq=$(uci get "firewall.@zone[${LAN_INDEX}].masq" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
         _orig_mtu=$(uci get "firewall.@zone[${LAN_INDEX}].mtu_fix" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
         _orig_aaaa=$(uci get dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
-        printf "ORIG_LAN_MASQ='%s'\nORIG_LAN_MTU_FIX='%s'\nORIG_FILTER_AAAA='%s'\n" "$_orig_masq" "$_orig_mtu" "$_orig_aaaa" > /etc/sing-box/.network_baseline.bak
+        printf "ORIG_LAN_FORWARD='%s'\nORIG_LAN_MASQ='%s'\nORIG_LAN_MTU_FIX='%s'\nORIG_FILTER_AAAA='%s'\n" "$_orig_fwd" "$_orig_masq" "$_orig_mtu" "$_orig_aaaa" > /etc/sing-box/.network_baseline.bak
     fi
 
     # 按路由器物理内存动态计算安全 nf_conntrack_max，防止小内存设备内核 Slab OOM

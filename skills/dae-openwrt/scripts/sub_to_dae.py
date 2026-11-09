@@ -50,10 +50,15 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology=
     node_block = to_dae_nodes(nodes)
     # 替换模板中的 node { ... } 块（锚定行首闭括号，防止注释或密码中的 } 提前截断）
     merged = re.sub(r"(?ms)^node\s*\{.*?^\}", lambda _: node_block, tpl_text, count=1)
+    for _if_label, _if_val in (("lan_interface", lan_iface), ("wan_interface", wan_iface)):
+        if _if_val is not None:
+            _if_s = str(_if_val).strip()
+            if not _if_s or _if_s.startswith("-") or not re.match(r"^[a-zA-Z0-9_.\-@:,]+$", _if_s):
+                raise ValueError(f"非法的网卡接口名 ({_if_label}={_if_val!r})")
     if lan_iface and lan_iface != "br-lan":
-        merged = re.sub(r"(?m)^(\s*lan_interface:\s*)\S+", lambda m: f"{m.group(1)}{lan_iface}", merged)
+        merged = re.sub(r"(?m)^(\s*lan_interface:\s*)\S+", lambda m: f"{m.group(1)}{lan_iface.strip()}", merged)
     if wan_iface and wan_iface != "auto":
-        merged = re.sub(r"(?m)^(\s*wan_interface:\s*)\S+", lambda m: f"{m.group(1)}{wan_iface}", merged)
+        merged = re.sub(r"(?m)^(\s*wan_interface:\s*)\S+", lambda m: f"{m.group(1)}{wan_iface.strip()}", merged)
     if topology == "bypass" and main_router_ip:
         raw_gw = str(main_router_ip).strip()
         try:
@@ -61,9 +66,10 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology=
             gw_ip = str(gw_if.ip) if "/" not in raw_gw else str(gw_if)
         except ValueError as e:
             raise ValueError(f"非法的旁路由主网关 IP (--main-router-ip={main_router_ip!r}): {e}")
+        gw_expr = f"'{gw_ip}'" if (":" in gw_ip or "/" in gw_ip) else gw_ip
         merged = re.sub(
             r"(?m)^(\s*pname\([^)]*dnsmasq[^)]*\)[^\n]*->\s*must_direct\s*)$",
-            lambda m: f"{m.group(1)}\n    dip({gw_ip}) -> direct",
+            lambda m: f"{m.group(1)}\n    dip({gw_expr}) -> direct",
             merged,
             count=1,
         )

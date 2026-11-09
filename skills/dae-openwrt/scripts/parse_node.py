@@ -56,7 +56,12 @@ def _split_host_port(host_port: str, default_port: int = 443):
         if "]:" in host_port:
             server_part, port_str = host_port.split("]:", 1)
             server = server_part.lstrip("[").strip()
-            port = int(port_str) if port_str.isdigit() else default_port
+            if port_str.isdigit():
+                port = int(port_str)
+                if not (1 <= port <= 65535):
+                    raise ValueError(f"端口号超出合法范围 (1-65535): {port}")
+            else:
+                port = default_port
         else:
             server = host_port.strip("[]").strip()
             port = default_port
@@ -67,7 +72,12 @@ def _split_host_port(host_port: str, default_port: int = 443):
         else:
             server_str, port_str = host_port.rsplit(":", 1)
             server = urllib.parse.unquote(server_str).strip("[]").strip()
-            port = int(port_str) if port_str.isdigit() else default_port
+            if port_str.isdigit():
+                port = int(port_str)
+                if not (1 <= port <= 65535):
+                    raise ValueError(f"端口号超出合法范围 (1-65535): {port}")
+            else:
+                port = default_port
     else:
         server = urllib.parse.unquote(host_port).strip("[]").strip()
         port = default_port
@@ -87,9 +97,14 @@ def _extract_userinfo_password(parsed) -> str:
 
 
 def _safe_port(parsed, default_port: int = 443) -> int:
-    """安全提取端口，防止非数字端口引发 ValueError 崩溃。"""
+    """安全提取端口：对非数字端口回退默认端口，对越界数字端口 (0 或 >65535) 显式报错拦截。"""
     try:
-        return parsed.port or default_port
+        p = parsed.port
+        if p is None:
+            return default_port
+        if not (1 <= int(p) <= 65535):
+            raise ValueError(f"端口号超出合法范围 (1-65535): {p}")
+        return int(p)
     except ValueError:
         host_port = parsed.netloc.rsplit("@", 1)[-1]
         _, port = _split_host_port(host_port, default_port=default_port)
@@ -228,7 +243,7 @@ def parse_vless(uri_str):
         if not pbk:
             raise ValueError(f"VLESS Reality 节点缺少必要的公钥参数 (pbk): {uri_str[:40]}...")
         sid = params.get("sid", [""])[0]
-        sni = params.get("sni", [""])[0]
+        sni = params.get("sni", params.get("servername", [""]))[0]
         fp = params.get("fp", ["chrome"])[0]
 
         outbound["tls"] = {
@@ -245,7 +260,8 @@ def parse_vless(uri_str):
             }
         }
     elif security == "tls":
-        sni = params.get("sni", [server])[0]
+        fallback_host = params.get("host", [server])[0].split(",")[0].strip() or server
+        sni = params.get("sni", params.get("servername", [fallback_host]))[0] or fallback_host
         fp = params.get("fp", ["chrome"])[0]
         insecure = params.get("allowInsecure", params.get("insecure", ["0"]))[0] in ("1", "true", "True")
         outbound["tls"] = {
@@ -290,7 +306,8 @@ def parse_hysteria2(uri_str):
 
     raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
     tag = raw_frag or f"hy2-{server}"
-    sni = params.get("sni", [server])[0]
+    fallback_host = params.get("host", [server])[0].split(",")[0].strip() or server
+    sni = params.get("sni", params.get("servername", [fallback_host]))[0] or fallback_host
     insecure = params.get("insecure", params.get("allowInsecure", ["0"]))[0] in ("1", "true", "True")
 
     outbound = {
@@ -331,7 +348,8 @@ def parse_trojan(uri_str):
     params = urllib.parse.parse_qs(parsed.query)
     raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
     tag = raw_frag or f"trojan-{server}"
-    sni = params.get("sni", [server])[0]
+    fallback_host = params.get("host", [server])[0].split(",")[0].strip() or server
+    sni = params.get("sni", params.get("servername", [fallback_host]))[0] or fallback_host
     insecure = params.get("allowInsecure", params.get("insecure", ["0"]))[0] in ("1", "true", "True")
     net_type = params.get("type", ["tcp"])[0].lower()
 
@@ -366,6 +384,7 @@ def parse_shadowsocks(uri_str):
     # 1) ss://method:password@host:port          （明文 userinfo）
     # 2) ss://BASE64(method:password)@host:port  （SIP002，支持百分号编码如 %3D）
     # 3) ss://BASE64(method:password@host:port)  （整体 base64）
+    inner_query = ""
     if parsed.password is not None and parsed.username:
         method = urllib.parse.unquote(parsed.username or "")
         password = urllib.parse.unquote(parsed.password)
@@ -385,7 +404,7 @@ def parse_shadowsocks(uri_str):
             if not raw_frag and inner_tag.strip():
                 tag = urllib.parse.unquote(inner_tag.strip())
         if "?" in decoded:
-            decoded = decoded.split("?", 1)[0]
+            decoded, inner_query = decoded.split("?", 1)
         if "/" in decoded:
             decoded = decoded.split("/", 1)[0]
         if "@" not in decoded:
@@ -407,7 +426,7 @@ def parse_shadowsocks(uri_str):
         "method": method,
         "password": password
     }
-    params = urllib.parse.parse_qs(parsed.query)
+    params = urllib.parse.parse_qs(parsed.query or inner_query)
     raw_plugin = params.get("plugin", [""])[0].strip()
     if raw_plugin:
         if ";" in raw_plugin:
@@ -466,10 +485,13 @@ def parse_vmess(uri_str):
 
     raw_ps = str(data.get("ps") or "").strip()
     tag = raw_ps or frag_tag or f"vmess-{server}"
+    raw_port = data.get("port", 443)
     try:
-        port = int(data.get("port", 443))
+        port = int(raw_port if raw_port is not None and str(raw_port).strip() != "" else 443)
     except (ValueError, TypeError):
         port = 443
+    if not (1 <= port <= 65535):
+        raise ValueError(f"VMess 端口号超出合法范围 (1-65535): {port}")
 
     try:
         alter_id = int(data.get("aid", 0))
@@ -563,7 +585,8 @@ def parse_tuic(uri_str):
     raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
     tag = raw_frag or f"tuic-{server}"
 
-    sni = params.get("sni", [server])[0]
+    fallback_host = params.get("host", [server])[0].split(",")[0].strip() or server
+    sni = params.get("sni", params.get("servername", [fallback_host]))[0] or fallback_host
     cc = params.get("congestion_control", ["bbr"])[0] or "bbr"
     urm = params.get("udp_relay_mode", ["native"])[0] or "native"
     insecure = params.get("allow_insecure", params.get("allowInsecure", params.get("insecure", ["0"])))[0] in ("1", "true", "True")
@@ -600,7 +623,8 @@ def parse_anytls(uri_str):
     params = urllib.parse.parse_qs(parsed.query)
     raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
     tag = raw_frag or f"anytls-{server}"
-    sni = params.get("sni", [server])[0]
+    fallback_host = params.get("host", [server])[0].split(",")[0].strip() or server
+    sni = params.get("sni", params.get("servername", [fallback_host]))[0] or fallback_host
     insecure = params.get("insecure", params.get("allowInsecure", ["0"]))[0] in ("1", "true", "True")
 
     outbound = {

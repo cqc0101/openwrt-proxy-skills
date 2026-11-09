@@ -226,6 +226,18 @@ def check_config_obj(cfg):
             sp = ob.get("server_port")
             if not isinstance(sp, int) or isinstance(sp, bool) or not (1 <= sp <= 65535):
                 errors.append(f"[非法端口] outbound[{idx}]({ob_tag}) 的 server_port '{sp}' 超出合法端口范围 (1-65535)！")
+
+        # 检查 Shadowsocks 加密方法合法性（拦截 sing-box 不支持的废弃流加密方法）
+        if ob_type == "shadowsocks":
+            ss_method = str(ob.get("method") or "").strip().lower()
+            deprecated_ciphers = {
+                "aes-256-cfb", "aes-128-cfb", "aes-192-cfb", "rc4-md5",
+                "bf-cfb", "cast5-cfb", "des-cfb", "idea-cfb", "rc2-cfb", "seed-cfb",
+                "salsa20", "chacha20"
+            }
+            if ss_method in deprecated_ciphers:
+                errors.append(f"[废弃加密] outbound[{idx}]({ob_tag}) shadowsocks 使用了 sing-box 已废弃/不支持的加密方法 '{ss_method}'！请使用 2022-blake3 或 AEAD (aes-gcm / chacha20-poly1305)。")
+
         tls_cfg = ob.get("tls")
         if isinstance(tls_cfg, dict):
             reality_cfg = tls_cfg.get("reality")

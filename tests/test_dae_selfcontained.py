@@ -99,5 +99,17 @@ class TestDaeSelfContained(unittest.TestCase):
         self.assertIn("bpf_conn_state_map_size: 65536", cfg_256)
 
 
+
+    def test_sub_to_dae_ipv6_bypass_quoted_and_invalid_iface_rejected(self):
+        if DAE_SCRIPTS not in sys.path:
+            sys.path.insert(0, DAE_SCRIPTS)
+        from sub_to_dae import build_full_dae_config
+        nodes = [{"type": "trojan", "tag": "T1", "server": "1.2.3.4", "server_port": 443, "password": "pw", "tls": {"enabled": True, "server_name": "example.com"}}]
+        cfg_v6 = build_full_dae_config(nodes, topology="bypass", main_router_ip="fd00::1")
+        self.assertIn("dip('fd00::1') -> direct", cfg_v6)
+        with self.assertRaises(ValueError):
+            build_full_dae_config(nodes, lan_iface="br-lan; reboot")
+
+
 if __name__ == "__main__":
     unittest.main()

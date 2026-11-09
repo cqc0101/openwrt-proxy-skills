@@ -79,6 +79,7 @@ ssh root@192.168.1.1 "sh -s -- -j" < scripts/probe.sh
 ```
 
 **探针核心探测项：**
+
 1. **发行版与包管理器**：精准识别 OpenWrt 原版、ImmortalWrt 还是 iStoreOS；判断包管理器是经典 `opkg` 还是新系列 `apk`。
 2. **内核与 BTF 符号**：检测内核主次版本与 BTF 文件（`/sys/kernel/btf/vmlinux`）。
 3. **硬件资源评估**：精确区分 x86_64、aarch64、armv7、mips/mipsel 大小端；检测空闲 RAM 与 ROM，ROM 小于 15MB 自动警示并锁定 `/tmp` 缓存。
@@ -102,11 +103,12 @@ python scripts/auto_config.py --version 1.14 --dns-mode fakeip --sub ./airport_c
 ```
 
 **自适应适配机制：**
+
 1. **自动提取版本**：调用 `sing-box version` 提取主次版本号（如 v1.13 或 v1.14）。
 2. **规则与语法自动降级/升级**：
    - 若探测为 **v1.13**：自动选用 `openwrt-1.13-tun-fakeip.json`（默认）或 `--dns-mode realip` 的 `openwrt-1.13-tun-realip.json`，启用 `store_rdrc: true` 与 `independent_cache: true`（注：远程规则集严禁显式配置 `download_detour: "direct"`，不设即默认直连，否则启动即崩）。
    - 若探测为 **v1.14+**：自动选用 `openwrt-1.14-tun-fakeip.json`（默认）或 `--dns-mode realip` 的 `openwrt-1.14-tun-realip.json`，启用 `optimistic: true`、`store_dns: true` 及 `default_http_client`，彻底剔除已废弃的旧字段。
-3. **生成后自动静态审计（“一次成功”保障）**：`auto_config.py` 输出前会内置跑一遍 `check_config`——存在悬空引用、重复标签、非法字段等阻断错误时**绝不输出文件**，先修再发。
+3. **生成后自动静态审计（“一次成功”保障）**：`auto_config.py` 输出前会内置跑一遍 `check_config` - 存在悬空引用、重复标签、非法字段等阻断错误时**绝不输出文件**，先修再发。
 4. **国内首启动冷启动死锁消除 (`--mirror jsdelivr`)**：自动将 GitHub 原始链接替换为国内直接秒拉的 jsDelivr CDN 镜像，根除“未翻墙无法下载规则，无规则无法翻墙”的死锁问题。
 5. **机场广告过滤与节点上限保护 (`--max-nodes 15`)**：自动剔除垃圾公告节点，去重并限制节点数，防止过多节点耗尽 256MB/512MB 内存。
 6. **强制注入 OpenWrt 物理网关防御**：不论哪个版本，一律强制注入 `/tmp/sing-box-cache.db` 闪存保护、`auto_detect_interface: true` 防环、`default_domain_resolver` 纯 IP 引导防死锁及 `0.0.0.0:9090` Clash API 局域网控制。
@@ -136,6 +138,7 @@ OpenWrt SPI 闪存擦写寿命极为脆弱，`experimental.cache_file.path` **�
   "default_domain_resolver": "alidns"
 }
 ```
+
 * `auto_detect_interface: true`：自动将节点出站连接绑定到物理 WAN 口，防止 TUN 流量自环。
 * `default_domain_resolver`：指定国内直连纯 IP DNS（如阿里 DNS `223.5.5.5`），确保启动初期拉取远程 `.srs` 规则集与解析 VPS 域名时不会死锁。
 * **纯净 TUN 入站防自环**：TUN 入站严禁开启 `auto_redirect: true`（缺少 `kmod-nft-queue` 内核会导致 nfqueue 崩溃并退化为端口重定向自环死锁），统一使用纯净 L3 原生 TUN（`auto_redirect: false`）。
@@ -149,6 +152,7 @@ sh /etc/sing-box/setup_openwrt_network.sh
 sh /etc/sing-box/setup_openwrt_network.sh --bypass
 ```
 **闭环接管执行 5 大核心动作：**
+
 1. **精准定位 LAN Zone**：动态查询 `uci get firewall.@zone[i].name`，严禁硬编码 `@zone[0]`，将 `tun0` 安全注入 lan zone 并开启 `forward=ACCEPT`。
 2. **MSS 钳制 (MTU Clamping)**：开启 `mtu_fix='1'`，杜绝因 PPPoE MTU 1492 引起的大包握手卡死。
 3. **DNS 转发路径清理**：清理遗留的本机 53 端口 DNAT 重定向规则，确保三层 `tun0` 的 `hijack-dns` 不被本机重定向短路。
@@ -169,13 +173,15 @@ sh /etc/sing-box/setup_openwrt_network.sh --bypass
 **严禁**只用单一的 `"protocol": "dns"`（会导致未被嗅探到的标准 UDP 53 DNS 报文泄漏漏劫持）。
 
 ### 5. 严格的版本字段门控 (v1.13 vs v1.14)
+
 * **v1.13 专用**：`independent_cache`、`store_rdrc`。
 * **v1.14 专用**：`dns.optimistic`、`store_dns`、`default_http_client`。
-* **所有版本均禁止**：`download_detour: "direct"`（无论是在 `rule_set` 还是 `http_clients` 中，显式写 `detour: "direct"` 都会在启动期触发 `empty direct outbound` 致命崩溃——直连下载**不设该字段**即为默认直连，切勿画蛇添足）。
+* **所有版本均禁止**：`download_detour: "direct"`（无论是在 `rule_set` 还是 `http_clients` 中，显式写 `detour: "direct"` 都会在启动期触发 `empty direct outbound` 致命崩溃 - 直连下载**不设该字段**即为默认直连，切勿画蛇添足）。
 * **v1.14 严禁使用**：`independent_cache`、`store_rdrc`（自 1.14 起已废弃，直接换用新字段）。
 
 ### 6. IPv4 纯净防假死原则
 除非用户明确确认其宽带 IPv6 链路优质且要求启用，否则默认执行 IPv4-only 策略以避免无 IPv6 路由时客户端等待 AAAA 超时：
+
 * DNS 模块：`"strategy": "ipv4_only"`
 * TUN 入站：仅分配 IPv4 子网（`"address": "172.19.0.1/30"`），不给 TUN 配 IPv6 地址。
 
@@ -214,7 +220,7 @@ ssh root@192.168.1.1 "sh -s -- --confirm" < scripts/setup_openwrt_network.sh
 
 ```bash
 # 1. 结构化日志与运行状态体检 (输出机器可读 JSON，含 status/issues/suggested_actions)
-ssh root@192.168.1.1 "sh -s -- --json" < scripts/doctor.sh
+ssh root@192.168.1.1 "sh -s -- sing-box --json" < scripts/doctor.sh
 
 # 2. 专项 DNS 深度防污染与防泄漏健康体检
 ssh root@192.168.1.1 "sh -s -- --json" < scripts/diagnose_dns.sh
