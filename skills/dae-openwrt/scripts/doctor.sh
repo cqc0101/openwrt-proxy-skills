@@ -190,13 +190,17 @@ if [ "$SERVICE_NAME" = "sing-box" ]; then
     fi
 elif [ "$SERVICE_NAME" = "dae" ]; then
     if [ "$DAE_RUNNING" -eq 0 ]; then
-        DAE_INIT_CMD="/etc/init.d/dae restart"
-        [ -x /etc/init.d/daed ] && [ ! -x /etc/init.d/dae ] && DAE_INIT_CMD="/etc/init.d/daed restart"
-        add_issue "service_stopped" "error" "dae 进程未运行" "dae / daed 服务处于停止状态" "$DAE_INIT_CMD"
+        if [ "$DAED_RUNNING" -eq 1 ] || [ -x /etc/init.d/daed ]; then
+            add_issue "daed_conflict" "error" "检测到安装了互斥的 Web 面板版 daed (与原生 dae 互斥)" "原生 dae 服务未运行且存在冲突的 daed 软件包，请卸载 daed 并安装原生 dae" "/etc/init.d/daed stop && /etc/init.d/daed disable && opkg update && opkg install dae && /etc/init.d/dae enable && /etc/init.d/dae start"
+        else
+            add_issue "service_stopped" "error" "dae 进程未运行" "dae 服务处于停止状态" "/etc/init.d/dae restart"
+        fi
     fi
 else
     if [ "$SINGBOX_RUNNING" -eq 0 ] && [ "$DAE_RUNNING" -eq 0 ]; then
-        if [ -x /etc/init.d/dae ] || [ -f /etc/dae/config.dae ]; then
+        if [ "$DAED_RUNNING" -eq 1 ]; then
+            :
+        elif [ -x /etc/init.d/dae ] || [ -f /etc/dae/config.dae ]; then
             add_issue "service_stopped" "error" "代理核心进程未运行" "未检测到运行中的 sing-box 或 dae 进程" "/etc/init.d/dae restart"
         else
             add_issue "service_stopped" "error" "代理核心进程未运行" "未检测到运行中的 sing-box 或 dae 进程" "uci set sing-box.main.enabled='1' 2>/dev/null; uci set sing-box.main.user='root' 2>/dev/null; uci commit sing-box 2>/dev/null; /etc/init.d/sing-box restart"

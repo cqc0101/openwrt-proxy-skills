@@ -53,6 +53,33 @@ class OpenWrtState:
     def execute_command(self, cmd_line, stdin_data=""):
         cmd = cmd_line.strip()
 
+        # 检查是否为 JSON 诊断/探针脚本调用
+        if ("--json" in cmd or "-j" in cmd) and ("doctor.sh" in stdin_data or "Smart Log Doctor" in stdin_data):
+            return json.dumps({
+                "service": "sing-box",
+                "status": "healthy",
+                "overall_code": 0,
+                "singbox_running": self.singbox_running,
+                "dae_running": False,
+                "tun_alive": True,
+                "fw_tun_ok": "tun0" in self.fw_zone_lan_devices,
+                "port53_open": True,
+                "outbound_ok": True,
+                "issue_count": 0,
+                "issues": [],
+                "suggested_actions": [],
+            }), 0
+        if ("--json" in cmd or "-j" in cmd) and ("diagnose_dns.sh" in stdin_data or "DNS 深度健康体检" in stdin_data):
+            return json.dumps({
+                "total_checks": 7,
+                "passed_checks": 7,
+                "warnings": 0,
+                "errors": 0,
+                "dns_holder": "Dnsmasq",
+                "port53_open": True,
+                "checks": [{"status": "pass", "message": "ok"}] * 7,
+            }), 0
+
         # 检查是否为诊断全量脚本
         if "diagnose_openwrt" in cmd or "全链路健康诊断" in stdin_data or "CHECK 1/7" in stdin_data:
             return self.simulate_diagnosis(), 0

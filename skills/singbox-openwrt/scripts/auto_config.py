@@ -66,6 +66,8 @@ def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
         raise ValueError(f"非法的目标主机地址: {host!r}")
     if not user_str or user_str.startswith("-") or re.search(r"\s", user_str):
         raise ValueError(f"非法的 SSH 用户名: {user!r}")
+    if isinstance(port, bool) or not (1 <= int(port) <= 65535):
+        raise ValueError(f"SSH 端口超出合法范围 (1-65535): {port!r}")
 
     ssh_cmd = [
         "ssh",
@@ -268,6 +270,8 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
 
     def _configure_dns_server(entry, val, presets, detour=None):
         val_str = str(val or "").strip()
+        if not val_str or re.search(r"\s", val_str):
+            raise ValueError(f"非法的 DNS 上游服务器地址: {val!r}")
         val_lower = val_str.lower()
         entry.pop("path", None)
         entry.pop("server_port", None)
@@ -480,6 +484,8 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
 
     # 5. 旁路由拓扑 (Bypass Gateway) 适配
     if topology == "bypass":
+        if not main_router_ip:
+            print("[!] 提示: 旁路由模式 (--topology bypass) 未指定 --main-router-ip，仅依赖 ip_is_private 直连规则。", file=sys.stderr)
         if main_router_ip:
             try:
                 cidr = str(ipaddress.ip_interface(str(main_router_ip).strip()))

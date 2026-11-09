@@ -1,8 +1,8 @@
-# OpenWrt 代理套件稳定性加固与全量安全审计报告 (Hardening & Security Audit Report v0.5.5)
+# OpenWrt 代理套件稳定性加固与全量安全审计报告 (Hardening & Security Audit Report v0.5.6)
 
 **测试周期**：针对生产环境复杂固件（OpenWrt / ImmortalWrt / iStoreOS）与极端订阅输入的深度安全审计与加固  
 **工程质量基线**：零非标准库依赖、跨平台 POSIX 严格兼容、代码增量收敛、100% 回归单测覆盖、全量 Mock 脱敏规范  
-**测试结果**：单元测试用例扩充至 **222 项**（全量 PASS），跨架构仿真与压力测试矩阵全部通过  
+**测试结果**：单元测试用例扩充至 **229 项**（全量 PASS），跨架构仿真与压力测试矩阵全部通过  
 
 ---
 
@@ -12,13 +12,13 @@
 | :--- | :--- | :--- | :--- | :---: |
 | **规范 1** | **架构稳定性** | 保持生产脚本结构精简，零新增生产脚本文件，零第三方外部库依赖 | 生产脚本结构保持冻结，未引入任何非标准库依赖 | **✔ 合规** |
 | **规范 2** | **体积与复杂度** | SKILL.md 控制在 250 行内，脚本以脆弱逻辑重构为主，净代码增量严格受控 | `singbox-openwrt/SKILL.md` (233 行), `dae-openwrt/SKILL.md` (198 行) | **✔ 合规** |
-| **规范 3** | **回归单测守护** | 现有测试断言只增不减，历史断言严格保持阻断 | 用例由 160 项扩充至 **222 项**，所有历史断言均保持 100% 严格阻断 | **✔ 合规** |
+| **规范 3** | **回归单测守护** | 现有测试断言只增不减，历史断言严格保持阻断 | 用例由 160 项扩充至 **229 项**，所有历史断言均保持 100% 严格阻断 | **✔ 合规** |
 | **规范 4** | **原子化提交** | 缺陷修复与对应回归单测配套闭环，双目录共享脚本 100% 严格同步 | 完成 26 项深度审计修复与完整单测闭环 | **✔ 合规** |
 | **规范 5** | **边界测试验收** | 经极端畸形输入模糊测试与高并发压力测试验证，无未捕获异常 | 多轮边界模糊测试与 Mock/Docker 仿真流水线 100% 零失败通过 | **✔ 通过** |
 
 ---
 
-## 二、 v0.5.5 深度安全审计修复记录（26 项全量闭环）
+## 二、 v0.5.6 深度安全审计修复记录（33 项深水区加固与白盒全量闭环）
 
 ### 1. 订阅解码、协议转换与防碰撞加固
 1. **修复 `sub_parser.py` URLSafe Base64 静默删字符损坏漏洞 (F-01)**：改用 `base64.urlsafe_b64decode` 统一兼容标准与 URLSafe 字母表，并增加 `gb18030` 中文解码回退，解决含中文节点名的 URLSafe 订阅解码成乱码返回 0 节点的问题。
@@ -41,4 +41,12 @@
 1. **消除 `doctor.sh` 错误的 `127.0.0.1#5335` 建议指令 (F-04, F-21)**：改为清理错误回环上游 `uci delete dhcp.@dnsmasq[0].server`，杜绝将 Dnsmasq 指向死端口。
 2. **加固 `setup_openwrt_network.sh` SSH 参数安全与 `--revert` 完整还原 (F-07, F-19)**：消除未加引号的 `$SSH_CMD` 分词与参数注入风险，修复末尾孤立 `-u/-p/-i` 触发 `shift` 崩溃，补齐 `flow_offloading` 与 `mtu_fix` 回滚，统一使用标准 `masq='1'`。
 3. **修复 `probe.sh` 真机 iStoreOS 识别与 `diagnose_dns.sh` 计数准确性 (F-17, F-18)**：结合 `DISTRIB_DESCRIPTION` 与 `/etc/os-release` 识别 iStoreOS；修正 `diagnose_dns.sh` 第 7 关计数、过滤 `dig` 非 IP 输出并修正 IPv6 ULA/回环匹配模式。
-4. **补齐 `SKILL.md` 部署权限锁与测试基座修复 (F-08, F-09, F-22, F-23)**：`dae` 部署补齐 `chmod 600` 与 `/etc/init.d/dae reload`；`sing-box` 部署补齐配置备份、`user='root'`、`workdir='/tmp/sing-box'` 与 `uci commit`；修复 `mock_openwrt_server.py` 漏导入 `io`、`run_docker_tests.py` 未执行 `doctor.sh` 及压测脚本 Round 9。
+4. **补齐 `SKILL.md` 部署权限锁与测试基座修复 (F-08, F-09, F-22, F-23)**：`dae` 部署补齐 `chmod 600` 与 `/etc/init.d/dae reload`；`sing-box` 部署补齐配置备份、`user='root'`、`workdir='/tmp/sing-box'` 与 `uci commit`；修复 `mock_openwrt_server.py` 漏导入 `io`、`run_docker_tests.py` 未执行 `doctor.sh` 及压测脚本 Round 9。### 4. 深水区专项加固与白盒审计清零 (F-27 ~ F-33 & R3-01 ~ R3-06)
+1. **修复 `sub_parser.py` 纯 Python YAML 引擎块字典嵌套回退污染 (F-27)**：重构缩进栈并在属性回退时清理 `pending_key`，避免 `smux` 后的顶层参数被错误吞没，补齐 `_split_yaml_kv` 安全分离。
+2. **修复 `setup_openwrt_network.sh` 后台看门狗双 fork 孤儿化 (F-28)**：消除 OpenWrt dropbear SSH 非交互式管道下挂起 45 秒问题。
+3. **消除 `doctor.sh` 建议重启不兼容 Web 版 `daed` 的矛盾诊断 (F-29)**：明确隔离 `daed` 与 `dae`，给出准确的 `opkg install dae` 替换指令。
+4. **提升 `diagnose_dns.sh` IPv6 地址提取准确度 (F-30)**：要求至少包含两个冒号或双冒号缩写，防止单冒号十六进制单词误匹配。
+5. **增强 `check_dae_syntax.py` 与 `check_config.py` 门禁防护 (F-31, F-32, F-33, R3-02, R3-03)**：转义单引号豁免、`route.default_interface` 字符防注入白名单、双套件 `--revert` sysctl 清理闭环；补充代理出站字段非空与悬空引用拦截。
+6. **阻断 Python `bool` 子类化 `int` 与 HY2 非法端口/反转跳跃篡改 (R3-01, R3-04)**：全面拦截 `port: true` 类型穿透，严格校验 `1 <= port <= 65535` 及 `mport` 合法性。
+
+

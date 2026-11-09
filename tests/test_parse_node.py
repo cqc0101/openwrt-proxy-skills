@@ -346,5 +346,25 @@ class TestAuditHardeningParseNode(unittest.TestCase):
         self.assertEqual(v_ob["tls"]["server_name"], "ws.example.com")
 
 
+
+    def test_hysteria2_invalid_ports_and_inverted_ranges_rejected(self):
+        for bad_hy2 in (
+            "hysteria2://pass@1.2.3.4:0#ZeroPort",
+            "hysteria2://pass@1.2.3.4:70000#HighPort",
+            "hysteria2://pass@1.2.3.4:50000-20000#InvertedRange",
+            "hysteria2://pass@1.2.3.4:443?mport=50000-20000#BadMport",
+        ):
+            with self.subTest(uri=bad_hy2):
+                with self.assertRaises(ValueError):
+                    parse_uri(bad_hy2)
+
+    def test_vmess_boolean_port_rejected(self):
+        import json
+        vm = {"v": "2", "ps": "BoolPort", "add": "1.2.3.4", "port": True, "id": "u-1"}
+        b64 = base64.b64encode(json.dumps(vm).encode()).decode()
+        with self.assertRaises(ValueError):
+            parse_vmess(f"vmess://{b64}")
+
+
 if __name__ == "__main__":
     unittest.main()

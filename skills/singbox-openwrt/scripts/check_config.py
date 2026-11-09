@@ -19,6 +19,7 @@ import sys
 import os
 import json
 import ipaddress
+import re
 
 # 中文 Windows 控制台 (cp936) 无法编码 emoji/部分字符，统一重配为 UTF-8 输出
 for _s in (sys.stdout, sys.stderr):
@@ -101,6 +102,10 @@ def check_config_obj(cfg):
     else:
         if not route.get("auto_detect_interface") and not route.get("default_interface"):
             warnings.append("[防环风险] route 块中未开启 'auto_detect_interface: true' 或 'default_interface'，在 TUN 模式下可能引发路由自环！")
+        def_iface = route.get("default_interface")
+        if def_iface is not None:
+            if not isinstance(def_iface, str) or not re.match(r"^[a-zA-Z0-9_.\-@:]+$", def_iface):
+                errors.append(f"[非法接口名] route.default_interface '{def_iface}' 包含非法字符或格式不正确！")
 
         resolver = route.get("default_domain_resolver")
         if not resolver:
@@ -172,6 +177,10 @@ def check_config_obj(cfg):
     for idx, s in enumerate(dns.get("servers") or []):
         if not isinstance(s, dict):
             continue
+        s_type = str(s.get("type") or "udp").strip().lower()
+        if s_type in ("udp", "tcp", "tls", "https", "h3", "quic"):
+            if not str(s.get("server") or "").strip():
+                errors.append(f"[DNS 配置残缺] dns.servers[{idx}]({s.get('tag')}) 类型为 '{s_type}'，但缺少有效的 server 地址！")
         s_detour = s.get("detour")
         if s_detour and s_detour not in all_outbounds:
             errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 detour 指向未定义的 outbound: '{s_detour}'！")
@@ -223,11 +232,28 @@ def check_config_obj(cfg):
             if ttype and ttype not in ("ws", "grpc", "http", "httpupgrade", "quic"):
                 errors.append(f"[非法传输层] outbound[{idx}]({ob_tag}) 的 transport.type '{ttype}' 不受 sing-box 标准传输层支持（仅支持 ws/grpc/http/httpupgrade/quic）！")
 
-        # 检查代理节点端口范围合法性 (1..65535) 与 Reality 必填字段
-        if ob_type in ("vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls") and "server_port" in ob:
-            sp = ob.get("server_port")
-            if not isinstance(sp, int) or isinstance(sp, bool) or not (1 <= sp <= 65535):
-                errors.append(f"[非法端口] outbound[{idx}]({ob_tag}) 的 server_port '{sp}' 超出合法端口范围 (1-65535)！")
+        # 检查代理节点必填字段 (server/server_port/凭证)、端口范围合法性 (1..65535) 与 domain_resolver 引用
+        ob_resolver = ob.get("domain_resolver")
+        if isinstance(ob_resolver, dict):
+            ob_resolver = ob_resolver.get("server")
+        if ob_resolver and ob_resolver not in dns_servers:
+            errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 domain_resolver 指向未定义的 DNS server: '{ob_resolver}'！")
+
+        if ob_type in ("vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls"):
+            if not str(ob.get("server") or "").strip():
+                errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) 缺少有效的 server 主机地址！")
+            if "server_port" not in ob:
+                errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) 缺少 server_port 端口字段！")
+            else:
+                sp = ob.get("server_port")
+                if not isinstance(sp, int) or isinstance(sp, bool) or not (1 <= sp <= 65535):
+                    errors.append(f"[非法端口] outbound[{idx}]({ob_tag}) 的 server_port '{sp}' 超出合法端口范围 (1-65535)！")
+            if ob_type in ("vless", "vmess", "tuic") and not str(ob.get("uuid") or "").strip():
+                errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) ({ob_type}) 缺少有效的 uuid！")
+            if ob_type in ("trojan", "shadowsocks", "hysteria2", "anytls") and not str(ob.get("password") or "").strip():
+                errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) ({ob_type}) 缺少有效的 password！")
+            if ob_type == "shadowsocks" and not str(ob.get("method") or "").strip():
+                errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) (shadowsocks) 缺少有效的加密方式 method！")
 
         # 检查 Shadowsocks 加密方法合法性（拦截 sing-box 不支持的废弃流加密方法）
         if ob_type == "shadowsocks":

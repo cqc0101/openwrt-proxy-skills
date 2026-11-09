@@ -74,12 +74,14 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
     cmd_gen = [
         sys.executable,
         probe_py,
-        "--router", router,
-        "--port", str(port),
         "--dns-mode", "fakeip",
         "--out", test_conf_path,
         "--node", "hysteria2://mock_pwd@198.51.100.1:34589?sni=example.com#Test-Node",
     ]
+    if is_port_open(router, int(port), timeout=0.5):
+        cmd_gen.extend(["--router", router, "--port", str(port)])
+    else:
+        cmd_gen.extend(["--version", "1.14"])
     if key_file:
         cmd_gen.extend(["--key", key_file])
 

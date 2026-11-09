@@ -160,7 +160,7 @@ query_ips() {
                 }
                 if (tok ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
                     print tok
-                } else if (tok ~ /^[0-9a-fA-F:]*:[0-9a-fA-F:]+$/) {
+                } else if (tok ~ /^[0-9a-fA-F:]+$/ && (tok ~ /:.*:/ || tok ~ /^::/ || tok ~ /::$/)) {
                     print tok
                 }
             }

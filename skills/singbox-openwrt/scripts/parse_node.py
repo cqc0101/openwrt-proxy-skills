@@ -291,18 +291,30 @@ def parse_hysteria2(uri_str):
     params = urllib.parse.parse_qs(parsed.query)
     port_ranges = []
     try:
-        port = parsed.port or 443
-    except ValueError:
+        raw_p = parsed.port
+        if raw_p is None:
+            port = 443
+        elif not (1 <= int(raw_p) <= 65535):
+            raise ValueError(f"Hysteria2 端口超出合法范围 (1-65535): {raw_p}")
+        else:
+            port = int(raw_p)
+    except ValueError as e:
+        if "超出合法范围" in str(e):
+            raise
         host_port = parsed.netloc.rsplit("@", 1)[-1]
         port_spec = host_port.split("]:", 1)[1] if host_port.startswith("[") and "]:" in host_port else (
             host_port.rsplit(":", 1)[1] if ":" in host_port else ""
         )
         first_p, port_ranges = _normalize_port_ranges(port_spec)
-        port = first_p or 443
+        if first_p is None:
+            raise ValueError(f"非法的 Hysteria2 端口或端口跳跃表达式: {port_spec!r}")
+        port = first_p
 
-    mport_spec = params.get("mport", params.get("ports", [""]))[0]
+    mport_spec = params.get("mport", params.get("ports", [""]))[0].strip()
     if mport_spec and not port_ranges:
         _, port_ranges = _normalize_port_ranges(mport_spec)
+        if not port_ranges:
+            raise ValueError(f"非法的 Hysteria2 mport 端口跳跃范围: {mport_spec!r}")
 
     raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
     tag = raw_frag or f"hy2-{server}"
@@ -486,10 +498,12 @@ def parse_vmess(uri_str):
     raw_ps = str(data.get("ps") or "").strip()
     tag = raw_ps or frag_tag or f"vmess-{server}"
     raw_port = data.get("port", 443)
+    if isinstance(raw_port, bool):
+        raise ValueError(f"VMess 端口号类型非法 (bool): {raw_port!r}")
     try:
         port = int(raw_port if raw_port is not None and str(raw_port).strip() != "" else 443)
     except (ValueError, TypeError):
-        port = 443
+        raise ValueError(f"VMess 端口号格式非法: {raw_port!r}")
     if not (1 <= port <= 65535):
         raise ValueError(f"VMess 端口号超出合法范围 (1-65535): {port}")
 

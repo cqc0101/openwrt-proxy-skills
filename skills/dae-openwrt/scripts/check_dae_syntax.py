@@ -54,14 +54,12 @@ def check_dae_syntax(filepath):
     for idx, line in enumerate(lines, 1):
         if not line:
             continue
-        if line.count("'") % 2 != 0:
-            errors.append(f"第 {idx} 行存在未配对闭合的单引号: {line}。请检查密码或名称中是否含有未转义的 '。")
         in_sq = False
         in_dq = False
-        for ch in line:
-            if ch == "'" and not in_dq:
+        for idx_c, ch in enumerate(line):
+            if ch == "'" and not in_dq and (idx_c == 0 or line[idx_c - 1] != "\\"):
                 in_sq = not in_sq
-            elif ch == '"' and not in_sq:
+            elif ch == '"' and not in_sq and (idx_c == 0 or line[idx_c - 1] != "\\"):
                 in_dq = not in_dq
             elif not in_sq and not in_dq:
                 if ch == "{":
@@ -71,6 +69,10 @@ def check_dae_syntax(filepath):
                     if brace_depth < 0:
                         errors.append(f"第 {idx} 行存在多余的右花括号 '}}': {line}")
                         brace_depth = 0
+        if in_sq:
+            errors.append(f"第 {idx} 行存在未配对闭合的单引号: {line}。请检查密码或名称中是否含有未转义的 '。")
+        if in_dq:
+            errors.append(f"第 {idx} 行存在未配对闭合的双引号: {line}。")
         line_no_ext = re.sub(r'ext:\s*"[^"]*"', "", line)
         if '"' in line_no_ext:
             matches = re.findall(r'([\w\'\-]+:\s*"[^"]*"|->\s*"[^"]*"|\w+\([^)]*"[^"]*"[^)]*\))', line_no_ext)
@@ -113,6 +115,53 @@ def check_dae_syntax(filepath):
                     errors.append("[DNS 投毒死循环高危] 配置了私网 IP 污染重查，但 response 块中缺少位于其前的"
                                   "可信上游白名单放行（'upstream(...) -> accept'），会导致无限递归重查！")
                     break
+
+    # 5.5 检查 group 与 dns.upstream 引用完整性（当对应定义块存在时拦截悬空目标）
+    def _extract_named_block(text, block_name, start_pos=0):
+        pat = re.compile(r"\b" + re.escape(block_name) + r"\s*\{")
+        m = pat.search(text, start_pos)
+        if not m:
+            return None, -1
+        depth = 1
+        i = m.end()
+        in_s, in_d = False, False
+        while i < len(text) and depth > 0:
+            c = text[i]
+            if c == "'" and not in_d:
+                in_s = not in_s
+            elif c == '"' and not in_s:
+                in_d = not in_d
+            elif not in_s and not in_d:
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+            i += 1
+        return (text[m.end():i - 1] if depth == 0 else None), i
+
+    group_body, _ = _extract_named_block(content, "group")
+    if group_body is not None:
+        defined_groups = set(re.findall(r"(?m)^\s*([a-zA-Z0-9_\-]+)\s*\{", group_body))
+        builtin_outbounds = {"direct", "must_direct", "block", "must_rules"}
+        # 查找顶层 routing 块（排除 dns 内部的 routing 块）
+        dns_body, _ = _extract_named_block(content, "dns")
+        content_without_dns = content.replace(dns_body, "") if dns_body else content
+        rt_body, _ = _extract_named_block(content_without_dns, "routing")
+        if rt_body:
+            for tgt in re.findall(r"->\s*([a-zA-Z0-9_\-]+)", rt_body) + re.findall(r"(?m)^\s*fallback:\s*([a-zA-Z0-9_\-]+)", rt_body):
+                if tgt not in builtin_outbounds and tgt not in defined_groups:
+                    errors.append(f"[悬空策略组引用] routing 规则引用了未在 group 块中定义的出站组: '{tgt}'！")
+
+    dns_body, _ = _extract_named_block(content, "dns")
+    if dns_body is not None:
+        up_body, _ = _extract_named_block(dns_body, "upstream")
+        dns_rt_body, _ = _extract_named_block(dns_body, "routing")
+        if up_body is not None and dns_rt_body is not None:
+            defined_ups = set(re.findall(r"(?m)^\s*([a-zA-Z0-9_\-]+)\s*:", up_body))
+            builtin_dns_actions = {"accept", "reject", "asis", "must_asis"}
+            for tgt in re.findall(r"->\s*([a-zA-Z0-9_\-]+)", dns_rt_body) + re.findall(r"(?m)^\s*fallback:\s*([a-zA-Z0-9_\-]+)", dns_rt_body):
+                if tgt not in builtin_dns_actions and tgt not in defined_ups:
+                    errors.append(f"[悬空 DNS 上游引用] dns.routing 引用了未在 upstream 块中定义的 DNS 上游: '{tgt}'！")
 
     # 6. 检查 node 与 subscription 是否同时为空（模板未注入真实节点提醒）
     if re.search(r'\bnode\s*\{', content) and re.search(r'\bsubscription\s*\{', content):

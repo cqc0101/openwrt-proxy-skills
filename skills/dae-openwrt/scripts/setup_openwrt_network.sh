@@ -115,20 +115,22 @@ BOOTGUARD_EOF
 
         say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (含闪存启动哨兵防死机)...${NC}"
         (
-            sleep 45
-            _cur_token=$(cat /tmp/proxy_watchdog.token 2>/dev/null || true)
-            if [ ! -f /tmp/proxy_deploy_confirmed ] && [ "$_cur_token" = "$_wd_token" ]; then
-                [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
-                [ -f /tmp/config.dae.bak ] && cp -f /tmp/config.dae.bak /etc/dae/config.dae 2>/dev/null || true
-                rm -f /etc/dae/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
-                ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
-                run_dae_hardening "--revert" 2>/dev/null || true
-            fi
-            if [ "$_cur_token" = "$_wd_token" ]; then
-                rm -f /tmp/proxy_watchdog.pid /tmp/proxy_watchdog.token 2>/dev/null || true
-            fi
-        ) </dev/null >/dev/null 2>&1 &
-        echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
+            (
+                sleep 45
+                _cur_token=$(cat /tmp/proxy_watchdog.token 2>/dev/null || true)
+                if [ ! -f /tmp/proxy_deploy_confirmed ] && [ "$_cur_token" = "$_wd_token" ]; then
+                    [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
+                    [ -f /tmp/config.dae.bak ] && cp -f /tmp/config.dae.bak /etc/dae/config.dae 2>/dev/null || true
+                    rm -f /etc/dae/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
+                    ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
+                    run_dae_hardening "--revert" 2>/dev/null || true
+                fi
+                if [ "$_cur_token" = "$_wd_token" ]; then
+                    rm -f /tmp/proxy_watchdog.pid /tmp/proxy_watchdog.token 2>/dev/null || true
+                fi
+            ) </dev/null >/dev/null 2>&1 &
+            echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
+        )
         return 0
     fi
 
@@ -186,7 +188,7 @@ BOOTGUARD_EOF
         fi
         uci commit firewall 2>/dev/null || true
         /etc/init.d/firewall reload 2>/dev/null || true
-        rm -f /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
+        rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
         uci commit dhcp 2>/dev/null || true
         /etc/init.d/dnsmasq reload 2>/dev/null || true
         /etc/init.d/sysctl restart 2>/dev/null || sysctl -p 2>/dev/null || true
@@ -353,6 +355,11 @@ else
             exit 1
             ;;
     esac
+
+        if [ "$SSH_PORT" -lt 1 ] || [ "$SSH_PORT" -gt 65535 ]; then
+        say "${RED}[ERROR] SSH 端口超出合法范围 (1-65535): $SSH_PORT${NC}"
+        exit 1
+    fi
 
     say "${BLUE}[INFO]${NC} 正在连接路由器 ${SSH_USER}@${ROUTER_IP}:${SSH_PORT} 执行 dae 网络加固..."
     if [ -n "$SSH_KEY" ]; then

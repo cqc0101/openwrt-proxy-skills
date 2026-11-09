@@ -287,5 +287,28 @@ class TestAuditHardeningCheckConfig(unittest.TestCase):
         self.assertTrue(any("不支持 'default' 字段" in e for e in errs2), errs2)
 
 
+
+    def test_incomplete_proxy_outbound_and_dangling_outbound_domain_resolver_blocked(self):
+        errs1, _ = run({
+            "outbounds": [
+                {"type": "vless", "tag": "incomplete-vless"},
+                {"type": "direct", "tag": "direct"},
+            ]
+        })
+        self.assertTrue(any("缺少有效的 server" in e for e in errs1), errs1)
+        self.assertTrue(any("缺少 server_port" in e for e in errs1), errs1)
+        self.assertTrue(any("缺少有效的 uuid" in e for e in errs1), errs1)
+
+        errs2, _ = run({
+            "dns": {"servers": [{"tag": "alidns", "type": "udp", "server": ""}]},
+            "outbounds": [{
+                "type": "trojan", "tag": "t1", "server": "a.com", "server_port": 443,
+                "password": "pw", "domain_resolver": "ghost-dns"
+            }],
+        })
+        self.assertTrue(any("缺少有效的 server 地址" in e for e in errs2), errs2)
+        self.assertTrue(any("ghost-dns" in e for e in errs2), errs2)
+
+
 if __name__ == "__main__":
     unittest.main()

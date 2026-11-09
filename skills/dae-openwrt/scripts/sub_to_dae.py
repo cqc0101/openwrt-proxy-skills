@@ -73,7 +73,9 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology=
             merged,
             count=1,
         )
-    if ram_mb is not None and int(ram_mb) > 0:
+    if ram_mb is not None:
+        if isinstance(ram_mb, bool) or int(ram_mb) <= 0:
+            raise ValueError(f"--ram-mb 必须为正整数 (> 0)，当前值: {ram_mb!r}")
         r_mb = int(ram_mb)
         map_sz = 32768 if r_mb < 256 else (65536 if r_mb < 512 else 131072)
         merged = re.sub(

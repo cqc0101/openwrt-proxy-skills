@@ -65,5 +65,15 @@ class TestDnsDoctorScripts(unittest.TestCase):
         self.assertNotIn('sub(/[#:].*/, "", tok)', content, "严禁使用 [#:] 剥离冒号导致 IPv6 地址被截断")
 
 
+    def test_ipv6_awk_precision(self):
+        """awk 提取 IPv6 时必须要求至少包含两个冒号或双冒号前缀/后缀，杜绝单冒号十六进制单词误报。"""
+        for sdir in (SINGBOX_SCRIPTS, DAE_SCRIPTS):
+            sh_path = os.path.join(sdir, "diagnose_dns.sh")
+            with open(sh_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("tok ~ /:.*:/ || tok ~ /^::/ || tok ~ /::$/", content,
+                          f"{sh_path} 缺少精确 IPv6 多冒号提取逻辑")
+
+
 if __name__ == "__main__":
     unittest.main()

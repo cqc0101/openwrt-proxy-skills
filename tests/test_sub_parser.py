@@ -631,5 +631,54 @@ proxies:
         self.assertEqual(nodes[1]["transport"]["headers"]["Host"], "host.b.com")
 
 
+
+    def test_clash_bool_port_and_to_dae_invalid_port_rejected(self):
+        self.assertEqual(parse_clash_proxy({
+            "name": "BoolPort", "type": "trojan", "server": "1.2.3.4", "port": True, "password": "pw"
+        }), {})
+        out = to_dae_nodes([
+            {"type": "trojan", "tag": "BadBoolPort", "server": "1.2.3.4", "server_port": True, "password": "pw"},
+            {"type": "trojan", "tag": "BadHighPort", "server": "1.2.3.4", "server_port": 70000, "password": "pw"},
+        ])
+        self.assertNotIn("BadBoolPort", out)
+        self.assertNotIn("BadHighPort", out)
+
+
+    def test_pure_python_clash_yaml_parser_quoted_keys_and_nested_dict_dedent(self):
+        """验证纯 Python YAML 解析器在嵌套字典 dedent 缩进回退与带冒号/引号键名下的健壮性。"""
+        from sub_parser import parse_clash_yaml_pure_python
+        yaml_text = """
+proxies:
+  - name: test_node
+    type: vless
+    server: 1.1.1.1
+    port: 443
+    smux:
+      enabled: true
+      protocol: smux
+    network: ws
+    alpn:
+      - h2
+      - http/1.1
+    ws-opts:
+      path: /v2?key=foo:bar
+      headers:
+        Host: example.com
+    "custom:meta:tag": special_value
+"""
+        proxies = parse_clash_yaml_pure_python(yaml_text)
+        self.assertEqual(len(proxies), 1)
+        p = proxies[0]
+        self.assertEqual(p["name"], "test_node")
+        self.assertEqual(p["type"], "vless")
+        self.assertEqual(p["smux"], {"enabled": True, "protocol": "smux"})
+        # 核心回归断言：network 绝不能被错误卷入 smux 子字典内部
+        self.assertEqual(p["network"], "ws")
+        self.assertEqual(p["alpn"], ["h2", "http/1.1"])
+        self.assertEqual(p["ws-opts"]["path"], "/v2?key=foo:bar")
+        self.assertEqual(p["ws-opts"]["headers"]["Host"], "example.com")
+        self.assertEqual(p["custom:meta:tag"], "special_value")
+
+
 if __name__ == "__main__":
     unittest.main()

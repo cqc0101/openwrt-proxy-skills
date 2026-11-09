@@ -117,20 +117,22 @@ BOOTGUARD_EOF
 
         say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (含闪存启动哨兵防死机)...${NC}"
         (
-            sleep 45
-            _cur_token=$(cat /tmp/proxy_watchdog.token 2>/dev/null || true)
-            if [ ! -f /tmp/proxy_deploy_confirmed ] && [ "$_cur_token" = "$_wd_token" ]; then
-                [ -f /etc/sing-box/.config.json.rollback ] && cp -f /etc/sing-box/.config.json.rollback /etc/sing-box/config.json 2>/dev/null || true
-                [ -f /tmp/config.json.bak ] && cp -f /tmp/config.json.bak /etc/sing-box/config.json 2>/dev/null || true
-                rm -f /etc/sing-box/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
-                /etc/init.d/sing-box restart 2>/dev/null || true
-                run_router_hardening "--revert" 2>/dev/null || true
-            fi
-            if [ "$_cur_token" = "$_wd_token" ]; then
-                rm -f /tmp/proxy_watchdog.pid /tmp/proxy_watchdog.token 2>/dev/null || true
-            fi
-        ) </dev/null >/dev/null 2>&1 &
-        echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
+            (
+                sleep 45
+                _cur_token=$(cat /tmp/proxy_watchdog.token 2>/dev/null || true)
+                if [ ! -f /tmp/proxy_deploy_confirmed ] && [ "$_cur_token" = "$_wd_token" ]; then
+                    [ -f /etc/sing-box/.config.json.rollback ] && cp -f /etc/sing-box/.config.json.rollback /etc/sing-box/config.json 2>/dev/null || true
+                    [ -f /tmp/config.json.bak ] && cp -f /tmp/config.json.bak /etc/sing-box/config.json 2>/dev/null || true
+                    rm -f /etc/sing-box/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
+                    /etc/init.d/sing-box restart 2>/dev/null || true
+                    run_router_hardening "--revert" 2>/dev/null || true
+                fi
+                if [ "$_cur_token" = "$_wd_token" ]; then
+                    rm -f /tmp/proxy_watchdog.pid /tmp/proxy_watchdog.token 2>/dev/null || true
+                fi
+            ) </dev/null >/dev/null 2>&1 &
+            echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
+        )
         return 0
     fi
 
@@ -172,7 +174,7 @@ BOOTGUARD_EOF
             uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         fi
         clean_dns_redirects
-        rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-proxy-tuning.conf
+        rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
         if [ -f /etc/sing-box/.dnsmasq_upstream.bak ]; then
             . /etc/sing-box/.dnsmasq_upstream.bak
             if [ -n "${ORIG_NORESOLV:-}" ]; then
@@ -364,6 +366,11 @@ else
             exit 1
             ;;
     esac
+
+        if [ "$SSH_PORT" -lt 1 ] || [ "$SSH_PORT" -gt 65535 ]; then
+        say "${RED}[ERROR] SSH 端口超出合法范围 (1-65535): $SSH_PORT${NC}"
+        exit 1
+    fi
 
     say "${BLUE}[INFO]${NC} 正在连接路由器 ${SSH_USER}@${ROUTER_IP}:${SSH_PORT} 执行最后一公里网络闭环加固..."
     if [ -n "$SSH_KEY" ]; then

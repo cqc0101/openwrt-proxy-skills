@@ -10,7 +10,7 @@
 5. 智能过滤与去重 (支持关键字包含/排除，去除机场无用广告节点，全局唯一标签防碰撞)
 6. 弱路由节点上限保护 (默认截取前 N 个优质节点，防止数百节点撑爆 256MB/512MB 内存)
 """
-# [共享脚本] 本文件与 singbox-openwrt/scripts/sub_parser.py 完全一致，修改需双份同步！
+# [共享脚本] 本文件与 dae-openwrt/scripts/sub_parser.py 完全一致，修改需双份同步！
 
 import os
 import sys
@@ -21,7 +21,7 @@ import ipaddress
 import zlib
 import urllib.request
 import urllib.parse
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple, Optional
 
 # 单次订阅响应与解压最大字节上限 (10 MiB)，防止 Gzip 炸弹撑爆弱路由内存
 MAX_SUB_BYTES = 10 * 1024 * 1024
@@ -226,10 +226,13 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     server = str(p.get("server") or "").strip()
     if not server:
         return {}
+    raw_p = p.get("port")
+    if isinstance(raw_p, bool):
+        return {}
     try:
-        port = int(p.get("port") if p.get("port") is not None else 443)
+        port = int(raw_p if raw_p is not None else 443)
     except (ValueError, TypeError):
-        port = 443
+        return {}
     if not (1 <= port <= 65535):
         return {}
 
@@ -568,6 +571,37 @@ def _parse_yaml_flow_map(inner: str, anchors: Dict[str, Dict[str, Any]]) -> Dict
     return res
 
 
+def _split_yaml_kv(s: str) -> Tuple[str, str]:
+    """安全分离 YAML 键值对，兼容引号包裹的键名（即使键名中含冒号）与包含 URL/路径的值。"""
+    s = s.strip()
+    if s.startswith("'"):
+        end_q = s.find("'", 1)
+        if end_q != -1:
+            colon_idx = s.find(":", end_q)
+            if colon_idx != -1:
+                return s[:colon_idx].strip(), s[colon_idx + 1:].strip()
+    elif s.startswith('"'):
+        i = 1
+        end_q = -1
+        while i < len(s):
+            if s[i] == '"' and s[i - 1] != "\\":
+                end_q = i
+                break
+            i += 1
+        if end_q != -1:
+            colon_idx = s.find(":", end_q)
+            if colon_idx != -1:
+                return s[:colon_idx].strip(), s[colon_idx + 1:].strip()
+    m = re.search(r":(?:\s+|$)", s)
+    if m:
+        c_pos = m.start()
+        return s[:c_pos].strip(), s[c_pos + 1:].strip()
+    if ":" in s:
+        k, v = s.split(":", 1)
+        return k.strip(), v.strip()
+    return s, ""
+
+
 def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
     """在无 PyYAML 环境下，以纯 Python 标准库解析 Clash YAML 订阅中的 proxies 列表。
     支持：
@@ -603,12 +637,11 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
                 sub_indent = len(sub_line) - len(sub_line.lstrip())
                 if sub_indent <= base_indent:
                     break
-                if ":" in sub_line:
-                    k, v = sub_line.split(":", 1)
-                    k_s = k.strip().strip("\"'")
-                    v_s = v.strip()
-                    if v_s:
-                        props[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
+                k, v = _split_yaml_kv(sub_line)
+                k_s = k.strip().strip("\"'")
+                v_s = v.strip()
+                if v_s:
+                    props[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
                 i += 1
             anchors[a_name] = props
             continue
@@ -667,62 +700,75 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
                 parsed_proxies.append(p_dict)
             continue
 
-        # 情况 B: 多行缩进块 - name: ...（使用缩进栈支持多层嵌套字典与列表）
-        p_dict = {}
-        first_indent = len(item_lines[0]) - len(item_lines[0].lstrip())
-        stack: List[Any] = [(first_indent, p_dict, None)]  # (indent, container_dict, last_empty_key)
-
-        for idx_l, l in enumerate(item_lines):
-            s = l.strip()
-            indent = len(l) - len(l.lstrip())
-            if idx_l == 0 and s.startswith("-"):
-                s = s[1:].strip()
-                indent = first_indent + 2
-                stack = [(first_indent, p_dict, None)]
-            if not s:
+        # 情况 B: 多行缩进块 - name: ...（使用标准缩进栈支持多层嵌套字典与列表）
+        norm_lines: List[Tuple[int, str]] = []
+        for idx_l, raw_l in enumerate(item_lines):
+            stripped = raw_l.strip()
+            if not stripped:
                 continue
+            indent = len(raw_l) - len(raw_l.lstrip())
+            if idx_l == 0 and stripped.startswith("-"):
+                dash_idx = raw_l.index("-")
+                after = raw_l[dash_idx + 1:]
+                content = after.strip()
+                if content:
+                    content_indent = dash_idx + 1 + (len(after) - len(after.lstrip()))
+                    norm_lines.append((content_indent, content))
+            else:
+                norm_lines.append((indent, stripped))
 
-            while len(stack) > 1 and indent <= stack[-1][0]:
+        if not norm_lines:
+            continue
+
+        p_dict: Dict[str, Any] = {}
+        stack: List[Tuple[int, Any, str]] = [(norm_lines[0][0], p_dict, "dict")]
+        pending_key: Optional[str] = None
+
+        for indent, s in norm_lines:
+            if pending_key is not None and indent > stack[-1][0]:
+                parent_indent, parent_container, parent_type = stack[-1]
+                if s.startswith("-"):
+                    child_list: List[Any] = []
+                    parent_container[pending_key] = child_list
+                    stack.append((indent, child_list, "list"))
+                else:
+                    child_dict: Dict[str, Any] = {}
+                    parent_container[pending_key] = child_dict
+                    stack.append((indent, child_dict, "dict"))
+                pending_key = None
+
+            while len(stack) > 1 and indent < stack[-1][0]:
                 stack.pop()
 
-            cur_indent, cur_container, pending_key = stack[-1]
+            cur_indent, cur_container, cur_type = stack[-1]
 
-            # 处理多行 YAML 列表项 (例如 alpn: 下的 - h2)
-            if s.startswith("-") and (idx_l > 0):
-                list_val = _parse_yaml_scalar_or_flow(s[1:].strip(), anchors)
-                if pending_key is not None and isinstance(cur_container, dict):
-                    existing = cur_container.get(pending_key)
-                    if not isinstance(existing, list):
-                        cur_container[pending_key] = [list_val]
-                    else:
-                        existing.append(list_val)
+            if cur_type == "list":
+                if s.startswith("-"):
+                    val_str = s[1:].strip()
+                    val = _parse_yaml_scalar_or_flow(val_str, anchors)
+                    cur_container.append(val)
+                    continue
+                else:
+                    while len(stack) > 1 and cur_type == "list":
+                        stack.pop()
+                        cur_indent, cur_container, cur_type = stack[-1]
+
+            k, v = _split_yaml_kv(s)
+            k_s = k.strip().strip("\"'")
+            v_s = v.strip()
+
+            if not v_s:
+                pending_key = k_s
                 continue
 
-            if ":" in s:
-                k, v = s.split(":", 1)
-                k_s = k.strip().strip("\"'")
-                v_s = v.strip()
-
-                # 若前一个同级或父级 pending_key 是空字典占位，进入子字典层级
-                if pending_key is not None and indent > cur_indent and isinstance(cur_container.get(pending_key), dict):
-                    cur_container = cur_container[pending_key]
-                    cur_indent = indent
-                    stack.append((cur_indent, cur_container, None))
-
-                if not v_s:
-                    sub_d: Dict[str, Any] = {}
-                    cur_container[k_s] = sub_d
-                    stack[-1] = (cur_indent, cur_container, k_s)
-                    continue
-
-                if k_s == "<<" and v_s.startswith("*"):
-                    ref = v_s[1:].strip()
-                    if ref in anchors:
-                        for ak, av in anchors[ref].items():
-                            cur_container.setdefault(ak, av)
-                else:
-                    cur_container[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
-                    stack[-1] = (cur_indent, cur_container, None)
+            if k_s == "<<" and v_s.startswith("*"):
+                ref = v_s[1:].strip()
+                if ref in anchors:
+                    for ak, av in anchors[ref].items():
+                        cur_container.setdefault(ak, av)
+            else:
+                cur_container[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
+                pending_key = None
 
         if p_dict:
             parsed_proxies.append(p_dict)
@@ -947,9 +993,9 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
         used_tags.add(tag)
 
         ntype = n.get("type")
-        server = n.get("server")
+        server = str(n.get("server") or "").strip()
         port = n.get("server_port")
-        if not server or not port:
+        if not server or isinstance(port, bool) or not isinstance(port, int) or not (1 <= port <= 65535):
             continue
         frag = _q(tag)
         host = _uri_host(server)   # authority 部分：IPv6 必须 [v6]

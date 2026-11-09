@@ -196,5 +196,39 @@ routing {
         self.assertTrue(any("空节点池" in w for w in warnings), warnings)
 
 
+
+    def test_dangling_dae_group_and_dns_upstream_blocked(self):
+        cfg = '''
+global {
+    lan_interface: br-lan
+    wan_interface: auto
+}
+dns {
+    upstream {
+        alidns: 'udp://223.5.5.5:53'
+    }
+    routing {
+        request {
+            qname(geosite:cn) -> alidns
+            fallback: ghost_dns
+        }
+    }
+}
+group {
+    proxy {
+        policy: min_moving_avg
+    }
+}
+routing {
+    pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct
+    domain(geosite:google) -> ghost_group
+    fallback: proxy
+}
+'''
+        errors, _ = check(cfg)
+        self.assertTrue(any("ghost_group" in e for e in errors), errors)
+        self.assertTrue(any("ghost_dns" in e for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()

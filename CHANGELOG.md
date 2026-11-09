@@ -2,6 +2,41 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.5.6] - 2026-11-09
+
+### 第三轮极限白盒审计、深水区加固与残余漏洞全量清零 (Merged Hardened & White-Box Release)
+
+- **[高危] 修复 `parse_hysteria2` 将端口 `0`、越界端口 `>65535` 及反转跳跃范围 `50000-20000` 静默篡改为 `443` 的漏洞 (R3-01)**：
+  - 原 `parse_hysteria2` 使用 `parsed.port or 443` 并在 `except ValueError:` 中回退 `first_p or 443`，导致端口 `0`、`70000` 或非法跳跃范围 `50000-20000` 被静默改写为 `443` 混入生产配置；现已严格校验 `1 <= port <= 65535` 与 `mport` 范围合法性。
+- **[高危] 补全 `check_config.py` 对残缺代理节点、`outbound.domain_resolver` 悬空引用及空 `dns.servers.server` 的阻断门禁 (R3-02)**：
+  - 修复代理出站缺失 `server`、`server_port`、`uuid`、`password`、`method` 时 `check_config.py` 0 报错放行的盲区；
+  - 新增 `outbounds[i].domain_resolver` 引用存在性校验与 `dns.servers[i].server` 非空校验。
+- **[高危] 为 `check_dae_syntax.py` 新增 `group` 策略组与 `dns.upstream` 悬空引用静态审计及跨引号配对检测 (R3-03)**：
+  - 解析 `group {}` 与 `dns { upstream {} }` 块，精准拦截 `routing` 与 `dns.routing` 中指向未定义策略组或未定义 DNS 上游的悬空规则；
+  - 将单/双引号闭合检测升级为状态机判断，消除双引号内含单引号（如 `ext:"a'b.dat:cn"`）时的误判并补齐双引号未闭合检测。
+- **[中危] 阻断 Python `bool` 子类化 `int` 引发的 `port: true -> 1` 类型穿透漏洞 (R3-04)**：
+  - 在 `parse_vmess`、`parse_clash_proxy`、`to_dae_nodes` 与 `detect_remote_version` 中显式拦截 `isinstance(port, bool)`，并在 `to_dae_nodes` 导出 `vmess://` 时自动剥离 IPv6 方括号。
+- **[中危] 补齐 SSH 端口范围 (`1..65535`)、空白 DNS 参数及 Mock 仿真流水线 JSON 真实性校验 (R3-05, R3-06)**：
+  - `setup_openwrt_network.sh` 与 `auto_config.py` 新增 SSH 端口 `1..65535` 边界检查与空白 DNS 地址拦截；
+  - 修复 `run_docker_tests.py` 在无 `paramiko` 进程内 Mock 模式下因端口未监听降级生成 `1.13` 配置的假阳性问题。
+- **[高危] 修复 `sub_parser.py` 纯 Python YAML 引擎块字典嵌套回退污染与键值拆分缺陷 (F-27)**：
+  - 重构纯 Python YAML 状态机的缩进回退机制（dedent stack），并在退出子缩进层时清理 `pending_key`，彻底避免 `smux` 后的顶层参数被错误吞没；
+  - 新增 `_split_yaml_kv` 函数，安全切分键值对，彻底杜绝冒号后缺少空格（如 `port:443` 或 `http://...`）时的非法截断。
+- **[高危] 根治 `setup_openwrt_network.sh` 后台看门狗导致 SSH 会话挂起 45 秒 (F-28)**：
+  - 重构看门狗后台子进程启动方式，采用双重子 Shell 孤儿化与完全重定向 `( ( sleep 45 ... ) </dev/null >/dev/null 2>&1 & ... )`，彻底解耦 SSH 管道与标准输出文件描述符，解决非交互式 SSH 会话等待看门狗超时的问题。
+- **[诊断] 消除 `doctor.sh` 建议重启不兼容 Web 版 `daed` 的矛盾诊断 (F-29)**：
+  - 在检查冲突的守护进程时，明确区分原生 `dae` (CLI/procd) 与第三方面板 `daed` (Web)；
+  - 当发现系统中正在运行 `daed` 时，不再误报“建议运行 /etc/init.d/daed restart”，而是明确提示协议/架构不兼容并建议 `opkg install dae`。
+- **[诊断] 提升 `diagnose_dns.sh` IPv6 地址提取准确度 (F-30)**：
+  - 优化 IPv6 地址正则匹配逻辑，要求至少包含两个冒号或双冒号缩写（`::`），彻底防止单冒号十六进制单词误匹配为 IPv6 地址导致虚假污染告警。
+- **[门禁] 增强 `check_dae_syntax.py` 与 `check_config.py` 静态门禁防护 (F-31, F-32)**：
+  - `check_dae_syntax.py` 在检查单引号配对时，增加对转义单引号 `\'` 的安全豁免；
+  - `check_config.py` 补充对 `route.default_interface` 接口名称的严格字符白名单正则校验，防止异常字符串注入路由配置。
+- **[清理] 加固 `setup_openwrt_network.sh` 的 `--revert` 清理逻辑 (F-33)**：
+  - 无论在 `singbox` 还是 `dae` 下执行 `--revert`，均同时清理 `/etc/sysctl.d/99-singbox.conf` 与 `/etc/sysctl.d/99-dae.conf`，彻底杜绝双套件切换部署时残留旧套件的 sysctl 优化项。
+- **[单测] 单元测试矩阵扩充至 229 项 (全量 PASS)**：
+  - 整合双版本所有白盒对抗与深水区单测用例，测试用例总数达到 **229 项**，覆盖率与严苛度创历史新高。
+
 ## [0.5.5] - 2026-11-09
 
 ### 第二轮极限对抗审计与深水区缺陷清零 (Round 2 Deep Adversarial Audit & Bug Zeroing)
