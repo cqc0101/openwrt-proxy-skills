@@ -234,6 +234,8 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
     if ptype == "ss":
         cipher = str(p.get("cipher") or "")
         password = str(p.get("password") or "")
+        if not cipher or not password:
+            return {}
         ob = {
             "type": "shadowsocks",
             "tag": name,
@@ -242,6 +244,27 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
             "method": cipher,
             "password": password
         }
+        raw_pl = str(p.get("plugin") or "").strip().lower()
+        if raw_pl:
+            popts = p.get("plugin-opts") if isinstance(p.get("plugin-opts"), dict) else {}
+            if raw_pl in ("obfs", "obfs-local", "simple-obfs"):
+                mode = str(popts.get("mode") or "http").strip()
+                host = str(popts.get("host") or "").strip()
+                ob["plugin"] = "obfs-local"
+                ob["plugin_opts"] = f"obfs={mode};obfs-host={host}" if host else f"obfs={mode}"
+            elif raw_pl == "v2ray-plugin":
+                mode = str(popts.get("mode") or "websocket").strip()
+                parts = [f"mode={mode}"]
+                if popts.get("tls"):
+                    parts.append("tls")
+                if popts.get("host"):
+                    parts.append(f"host={popts['host']}")
+                if popts.get("path"):
+                    parts.append(f"path={popts['path']}")
+                ob["plugin"] = "v2ray-plugin"
+                ob["plugin_opts"] = ";".join(parts)
+            else:
+                return {}
         _apply_clash_smux(ob, p)
         return ob
 
@@ -318,6 +341,8 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
 
         reality_opts = p.get("reality-opts") if isinstance(p.get("reality-opts"), dict) else {}
         if reality_opts:
+            if not str(reality_opts.get("public-key") or "").strip():
+                return {}
             sni = reality_opts.get("server-name") or p.get("servername") or p.get("sni") or server
             ob["tls"] = {
                 "enabled": True,
@@ -662,7 +687,13 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             method = n.get("method", "")
             pw = n.get("password", "")
             userpass = base64.b64encode(f"{method}:{pw}".encode()).decode()
-            raw_uri = f"ss://{userpass}@{host}:{port}#{frag}"
+            pl = str(n.get("plugin") or "").strip()
+            pl_opts = str(n.get("plugin_opts") or "").strip()
+            pl_query = ""
+            if pl:
+                full_pl = f"{pl};{pl_opts}" if pl_opts else pl
+                pl_query = f"/?plugin={_q(full_pl)}"
+            raw_uri = f"ss://{userpass}@{host}:{port}{pl_query}#{frag}"
         elif ntype == "vmess":
             uuid = n.get("uuid", "")
             security = n.get("security", "auto")

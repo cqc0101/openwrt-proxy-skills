@@ -313,5 +313,16 @@ class TestAuditHardeningParseNode(unittest.TestCase):
         self.assertEqual(anytls_ob["tls"]["alpn"], ["h2"])
 
 
+
+    def test_shadowsocks_sip002_plugin_and_reality_missing_pbk(self):
+        ob = parse_uri("ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388/?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dbing.com#SS-Obfs")
+        self.assertEqual(ob["plugin"], "obfs-local")
+        self.assertEqual(ob["plugin_opts"], "obfs=http;obfs-host=bing.com")
+        with self.assertRaises(ValueError):
+            parse_uri("ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388/?plugin=shadow-tls%3Bhost%3Dbing.com#BadPlugin")
+        with self.assertRaises(ValueError):
+            parse_uri("vless://11111111-2222-3333-4444-555555555555@example.com:443?security=reality&sni=example.com#MissingPBK")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -236,5 +236,26 @@ class TestAuditHardeningCheckConfig(unittest.TestCase):
         self.assertTrue(any("非法端口" in e for e in errs2), errs2)
 
 
+
+    def test_self_referencing_dns_domain_resolver_and_incomplete_reality_blocked(self):
+        errs1, _ = run({
+            "dns": {"servers": [{"tag": "alidns", "type": "udp", "server": "223.5.5.5", "domain_resolver": "alidns"}]},
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("自环死锁" in e for e in errs1), errs1)
+
+        errs2, _ = run({
+            "outbounds": [{
+                "type": "vless",
+                "tag": "bad-reality",
+                "server": "1.2.3.4",
+                "server_port": 443,
+                "uuid": "u",
+                "tls": {"enabled": True, "server_name": "example.com", "reality": {"enabled": True, "public_key": ""}},
+            }]
+        })
+        self.assertTrue(any("Reality 配置残缺" in e for e in errs2), errs2)
+
+
 if __name__ == "__main__":
     unittest.main()

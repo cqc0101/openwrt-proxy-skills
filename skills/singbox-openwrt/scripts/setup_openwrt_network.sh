@@ -133,9 +133,9 @@ run_router_hardening() {
     # 首次执行前保存用户原始防火墙与 Dnsmasq 基线，确保 --revert 不误删用户原有配置
     mkdir -p /etc/sing-box
     if [ ! -f /etc/sing-box/.network_baseline.bak ]; then
-        _orig_masq=$(uci get "firewall.@zone[${LAN_INDEX}].masq" 2>/dev/null || echo "")
-        _orig_mtu=$(uci get "firewall.@zone[${LAN_INDEX}].mtu_fix" 2>/dev/null || echo "")
-        _orig_aaaa=$(uci get dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || echo "")
+        _orig_masq=$(uci get "firewall.@zone[${LAN_INDEX}].masq" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
+        _orig_mtu=$(uci get "firewall.@zone[${LAN_INDEX}].mtu_fix" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
+        _orig_aaaa=$(uci get dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
         printf "ORIG_LAN_MASQ='%s'\nORIG_LAN_MTU_FIX='%s'\nORIG_FILTER_AAAA='%s'\n" "$_orig_masq" "$_orig_mtu" "$_orig_aaaa" > /etc/sing-box/.network_baseline.bak
     fi
 
@@ -212,7 +212,7 @@ SYSCTL_EOF
             if grep -qE "^nameserver[[:space:]]+(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.)" "$_RESOLV_FILE" 2>/dev/null; then
                 say "${YELLOW}[二级路由防旁路] 检测到 WAN 上游 DNS 为私网地址，配置 Dnsmasq 上游为 223.5.5.5 确保进入 tun0 hijack-dns...${NC}"
                 if [ ! -f /etc/sing-box/.dnsmasq_upstream.bak ]; then
-                    _orig_nr=$(uci get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo "")
+                    _orig_nr=$(uci get dhcp.@dnsmasq[0].noresolv 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
                     printf "ORIG_NORESOLV='%s'\n" "$_orig_nr" > /etc/sing-box/.dnsmasq_upstream.bak
                 fi
                 uci set dhcp.@dnsmasq[0].noresolv='1' 2>/dev/null || true

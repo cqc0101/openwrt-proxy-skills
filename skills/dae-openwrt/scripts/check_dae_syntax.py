@@ -49,16 +49,34 @@ def check_dae_syntax(filepath):
     lines = [_strip_comments(l) for l in raw_lines]
     content = "\n".join(lines)
 
-    # 1. 检查双引号与未闭合的单引号 (单引号词法铁律；ext:"xxx" 除外)
+    # 1. 检查双引号、未闭合的单引号以及花括号 { } 配对平衡
+    brace_depth = 0
     for idx, line in enumerate(lines, 1):
         if not line:
             continue
         if line.count("'") % 2 != 0:
             errors.append(f"第 {idx} 行存在未配对闭合的单引号: {line}。请检查密码或名称中是否含有未转义的 '。")
+        in_sq = False
+        in_dq = False
+        for ch in line:
+            if ch == "'" and not in_dq:
+                in_sq = not in_sq
+            elif ch == '"' and not in_sq:
+                in_dq = not in_dq
+            elif not in_sq and not in_dq:
+                if ch == "{":
+                    brace_depth += 1
+                elif ch == "}":
+                    brace_depth -= 1
+                    if brace_depth < 0:
+                        errors.append(f"第 {idx} 行存在多余的右花括号 '}}': {line}")
+                        brace_depth = 0
         matches = re.findall(r'([\w\'\-]+:\s*"[^"]*"|->\s*"[^"]*")', line)
         for m in matches:
             if not m.startswith('ext:'):
                 errors.append(f"第 {idx} 行疑似违反单引号规范: {m}。建议统一使用单引号 '...'（ext:\"file.dat:tag\" 除外）。")
+    if brace_depth != 0:
+        errors.append(f"[语法块未闭合] 配置文件中存在 {brace_depth} 个未闭合的左花括号 '{{'，请检查 global/node/dns/routing 块是否缺少 '}}'！")
 
     # 2. 检查 lan_interface 与 wan_interface 绑定
     if "lan_interface" not in content:

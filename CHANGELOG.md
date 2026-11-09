@@ -2,6 +2,30 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.5.3] - 2026-11-09
+
+### Reality 凭据完备性、Shadowsocks SIP002 Obfs 插件、旁路网关 IPv6 校验与 204 项 QA 矩阵 (Protocol Enforcement & Syntax Hardening)
+
+- **[高危] Reality 节点公钥 (pbk/public_key) 与 SNI 严格完备性门禁**：
+  - parse_node.py (sing-box & dae) 针对 VLESS Reality 协议，缺少 pbk 关键参数时严格抛出 ValueError，彻底杜绝缺少公钥导致 sing-box / dae 启动崩溃；
+  - sub_parser.py 解析 Clash 订阅中 
+eality-opts 时，强制校验 public-key 必须存在且非空，非法节点安全隔离并记录日志；
+  - check_config.py 静态检测增强：深度扫描所有 
+eality 出站，若 	ls.reality.public_key 或 	ls.server_name 为空直接标记 [致命] VLESS Reality 缺少 public_key 或 server_name 并阻断下发。
+- **[特性] Shadowsocks SIP002 obfs-local 插件原生支持与未知插件拦截**：
+  - parse_node.py 原生解析 plugin=obfs-local;obfs=http;obfs-host=...，提取 plugin、plugin_opts 并注入 sing-box 配置；Clash 配置中兼容解析 plugin: obfs 及其 options；
+  - 严格校验插件类型，对未受支持的插件（如 shadow-tls 等）安全报错抛出异常。
+- **[规范] 旁路由网关 IP 严格 ip_interface 校验与 IPv6 支持**：
+  - uto_config.py 与 sub_to_dae.py 旁路由模式下的 --main-router-ip 参数全面升级为 ipaddress.ip_interface 严格解析；
+  - 支持标准 IPv4 / IPv6 地址及带掩码 CIDR（如 d00::1/128），拦截任意畸变非 IP 字符串。
+- **[死锁防护] DNS 上游解析器 domain_resolver 自环死锁检测**：
+  - check_config.py 深入探测 DNS 服务器的 domain_resolver 字段，若指向其自身的 	ag（自环循环引用），严格输出 [自环死锁] 并阻断下发。
+- **[语法] check_dae_syntax.py 嵌套花括号 {} 平衡检测与 SKILL.md 看门狗时序优化**：
+  - 增强 dae 配置文件结构合法性审计，精准识别并拦截因漏写关闭花括号 } 导致的配置解析中断；
+  - dae-openwrt/SKILL.md 优化看门狗执行时序：将 45 秒防失联看门狗前移至替换配置与 reload 之前启动，杜绝 eBPF 生效即锁死 SSH 导致看门狗未能启动的单点故障。
+- **[测试] 单元测试矩阵扩充至 204 项**：
+  - 新增 Reality 公钥校验、SIP002 obfs、IPv6 bypass、DNS 自环死锁与未闭合花括号等系列测试用例，全量 204 项单元测试 100% 满分通过，12 轮压力测试全部 PASS。
+
 ## [0.5.2] - 2026-11-09
 
 ### 进程与管道弹性、物理硬件自适应与全链路超时硬化 (Resilience & Hardware Adaptability)

@@ -165,13 +165,15 @@ ssh root@192.168.1.1 "cat > /tmp/config.dae.test && chmod 600 /tmp/config.dae.te
 # 2. 远端沙盒严格语法校验（注意：dae 不支持 -c 参数，直接传文件路径）
 ssh root@192.168.1.1 "dae validate /tmp/config.dae.test"
 
-# 3. 校验通过后备份快照、原子替换配置并执行无感平滑热重载
+# 3. 启动路由器本地 45 秒防失联看门狗 (必须在替换配置与 reload 前启动，防止 eBPF 规则异常导致 SSH 锁死)
+ssh root@192.168.1.1 "sh -s -- --watchdog" < scripts/setup_openwrt_network.sh
+
+# 4. 备份快照、原子替换配置并执行无感平滑热重载
 # - OpenWrt/ImmortalWrt procd 管理（原生 dae 包）：使用 /etc/init.d/dae reload
 # - 官方裸二进制（非 procd 管理）：使用 dae reload
 ssh root@192.168.1.1 "[ -f /etc/dae/config.dae ] && cp /etc/dae/config.dae /tmp/config.dae.bak; mv /tmp/config.dae.test /etc/dae/config.dae && chmod 600 /etc/dae/config.dae && ( [ -x /etc/init.d/dae ] && uci set dae.config.enabled='1' 2>/dev/null && uci commit dae 2>/dev/null && /etc/init.d/dae reload || dae reload )"
 
-# 4. 启动本地看门狗、执行网络闭环脚本并在确认连通后解除看门狗
-ssh root@192.168.1.1 "sh -s -- --watchdog" < scripts/setup_openwrt_network.sh
+# 5. 执行网络闭环脚本并在全新 SSH 连接确认连通后解除看门狗
 ssh root@192.168.1.1 "sh -s" < scripts/setup_openwrt_network.sh
 ssh root@192.168.1.1 "sh -s -- --confirm" < scripts/setup_openwrt_network.sh
 ```

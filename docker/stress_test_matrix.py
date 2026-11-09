@@ -305,7 +305,7 @@ def round_5_tag_sanitization():
     log_banner("Round 5: 【对抗注入】保留关键字 (direct/auto) 与重复节点名清洗测试")
     dup_node1 = "hysteria2://pwd@198.51.100.1:34589?sni=example.com#direct"
     dup_node2 = "hysteria2://pwd@198.51.100.1:34589?sni=example.com#direct"
-    dup_node3 = "vless://pwd@198.51.100.1:34588?security=reality&sni=example.com#auto"
+    dup_node3 = "vless://pwd@198.51.100.1:34588?security=reality&sni=example.com&pbk=mock_pbk#auto"
 
     out_file = os.path.join(tempfile.gettempdir(), "r5_dedup.json")
     auto_conf = os.path.join(SB_DIR, "scripts", "auto_config.py")

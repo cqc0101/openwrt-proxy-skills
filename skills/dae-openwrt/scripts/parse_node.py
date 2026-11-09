@@ -224,7 +224,9 @@ def parse_vless(uri_str):
         outbound["flow"] = flow
 
     if security == "reality":
-        pbk = params.get("pbk", [""])[0]
+        pbk = params.get("pbk", [""])[0].strip()
+        if not pbk:
+            raise ValueError(f"VLESS Reality 节点缺少必要的公钥参数 (pbk): {uri_str[:40]}...")
         sid = params.get("sid", [""])[0]
         sni = params.get("sni", [""])[0]
         fp = params.get("fp", ["chrome"])[0]
@@ -405,6 +407,24 @@ def parse_shadowsocks(uri_str):
         "method": method,
         "password": password
     }
+    params = urllib.parse.parse_qs(parsed.query)
+    raw_plugin = params.get("plugin", [""])[0].strip()
+    if raw_plugin:
+        if ";" in raw_plugin:
+            pl_name, pl_opts = raw_plugin.split(";", 1)
+        else:
+            pl_name, pl_opts = raw_plugin, ""
+        pl_norm = pl_name.strip().lower()
+        if pl_norm in ("obfs-local", "simple-obfs", "obfs"):
+            outbound["plugin"] = "obfs-local"
+            if pl_opts:
+                outbound["plugin_opts"] = pl_opts
+        elif pl_norm == "v2ray-plugin":
+            outbound["plugin"] = "v2ray-plugin"
+            if pl_opts:
+                outbound["plugin_opts"] = pl_opts
+        else:
+            raise ValueError(f"Shadowsocks 不支持的插件类型 (拒绝静默丢弃): {pl_name!r}")
     return outbound
 
 

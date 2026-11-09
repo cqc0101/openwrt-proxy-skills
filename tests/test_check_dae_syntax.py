@@ -169,5 +169,16 @@ routing {
         self.assertTrue(any("未配对闭合的单引号" in e for e in errors), errors)
 
 
+
+    def test_unbalanced_curly_braces_flagged(self):
+        cfg = (
+            "global { lan_interface: br-lan\n wan_interface: auto }\n"
+            "routing {\n"
+            "  pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct\n"
+        )
+        errors, _ = check(cfg)
+        self.assertTrue(any("未闭合的左花括号" in e for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()

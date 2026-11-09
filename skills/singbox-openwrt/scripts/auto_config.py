@@ -433,7 +433,10 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     # 5. 旁路由拓扑 (Bypass Gateway) 适配
     if topology == "bypass":
         if main_router_ip:
-            cidr = f"{main_router_ip}/32" if "/" not in main_router_ip else main_router_ip
+            try:
+                cidr = str(ipaddress.ip_interface(str(main_router_ip).strip()))
+            except ValueError as e:
+                raise ValueError(f"非法的旁路由主网关 IP (--main-router-ip={main_router_ip!r}): {e}")
             route_rules = config.get("route", {}).get("rules", [])
             route_insert_idx = 0
             for idx, rr in enumerate(route_rules):

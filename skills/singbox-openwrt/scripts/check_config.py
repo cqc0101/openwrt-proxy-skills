@@ -176,8 +176,11 @@ def check_config_obj(cfg):
         if s_detour and s_detour not in all_outbounds:
             errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 detour 指向未定义的 outbound: '{s_detour}'！")
         s_resolver = s.get("domain_resolver")
-        if s_resolver and s_resolver not in dns_servers:
-            errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 指向未定义的 DNS server: '{s_resolver}'！")
+        if s_resolver:
+            if s_resolver not in dns_servers:
+                errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 指向未定义的 DNS server: '{s_resolver}'！")
+            elif s.get("tag") and s_resolver == s.get("tag"):
+                errors.append(f"[自环死锁] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 不能指向自身 '{s_resolver}'！")
 
     # 3. 检查 outbounds 模块及内部引用
     for idx, ob in enumerate(outbounds):
@@ -218,11 +221,19 @@ def check_config_obj(cfg):
             if ttype and ttype not in ("ws", "grpc", "http", "httpupgrade", "quic"):
                 errors.append(f"[非法传输层] outbound[{idx}]({ob_tag}) 的 transport.type '{ttype}' 不受 sing-box 标准传输层支持（仅支持 ws/grpc/http/httpupgrade/quic）！")
 
-        # 检查代理节点端口范围合法性 (1..65535)
+        # 检查代理节点端口范围合法性 (1..65535) 与 Reality 必填字段
         if ob_type in ("vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls") and "server_port" in ob:
             sp = ob.get("server_port")
             if not isinstance(sp, int) or isinstance(sp, bool) or not (1 <= sp <= 65535):
                 errors.append(f"[非法端口] outbound[{idx}]({ob_tag}) 的 server_port '{sp}' 超出合法端口范围 (1-65535)！")
+        tls_cfg = ob.get("tls")
+        if isinstance(tls_cfg, dict):
+            reality_cfg = tls_cfg.get("reality")
+            if isinstance(reality_cfg, dict) and reality_cfg.get("enabled") is True:
+                if not str(reality_cfg.get("public_key") or "").strip():
+                    errors.append(f"[Reality 配置残缺] outbound[{idx}]({ob_tag}) 启用了 Reality，但缺少 public_key！")
+                if not str(tls_cfg.get("server_name") or "").strip():
+                    errors.append(f"[Reality 配置残缺] outbound[{idx}]({ob_tag}) 启用了 Reality，但缺少 tls.server_name (SNI)！")
 
     # 4. 检查 inbounds 模块
     for idx, ib in enumerate(inbounds):

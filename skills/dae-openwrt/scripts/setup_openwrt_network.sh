@@ -117,10 +117,10 @@ run_dae_hardening() {
         _orig_masq=""
         _orig_mtu=""
         if [ -n "$LAN_INDEX" ]; then
-            _orig_masq=$(uci get "firewall.@zone[${LAN_INDEX}].masq" 2>/dev/null || echo "")
-            _orig_mtu=$(uci get "firewall.@zone[${LAN_INDEX}].mtu_fix" 2>/dev/null || echo "")
+            _orig_masq=$(uci get "firewall.@zone[${LAN_INDEX}].masq" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
+            _orig_mtu=$(uci get "firewall.@zone[${LAN_INDEX}].mtu_fix" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
         fi
-        _orig_aaaa=$(uci get dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || echo "")
+        _orig_aaaa=$(uci get dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
         printf "ORIG_LAN_MASQ='%s'\nORIG_LAN_MTU_FIX='%s'\nORIG_FILTER_AAAA='%s'\n" "$_orig_masq" "$_orig_mtu" "$_orig_aaaa" > /etc/dae/.network_baseline.bak
     fi
 
@@ -162,8 +162,8 @@ SYSCTL_EOF
     say "${BLUE}[2/5] 关闭流量分载 (Flow Offloading，防止报文跳过 eBPF 探针)...${NC}"
     if command -v uci >/dev/null 2>&1; then
         if [ ! -f /etc/dae/.flow_offload.bak ]; then
-            _sw=$(uci get firewall.@defaults[0].flow_offloading 2>/dev/null || echo "")
-            _hw=$(uci get firewall.@defaults[0].flow_offloading_hw 2>/dev/null || echo "")
+            _sw=$(uci get firewall.@defaults[0].flow_offloading 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
+            _hw=$(uci get firewall.@defaults[0].flow_offloading_hw 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
             printf "ORIG_SW_OFFLOAD='%s'\nORIG_HW_OFFLOAD='%s'\n" "$_sw" "$_hw" > /etc/dae/.flow_offload.bak
         fi
         uci set firewall.@defaults[0].flow_offloading='0' 2>/dev/null || true

@@ -285,5 +285,14 @@ class TestAuditHardeningAutoConfig(unittest.TestCase):
         tags = [o["tag"] for o in cfg["outbounds"] if o["type"] == "trojan"]
         self.assertEqual(len(tags), len(set(tags)), f"出站标签发生碰撞: {tags}")
 
+
+    def test_bypass_ipv6_and_invalid_main_router_ip_rejected(self):
+        cfg_v6 = build_config(version="1.14", dns_mode="fakeip", topology="bypass", main_router_ip="fd00::1")
+        cidrs = [r.get("ip_cidr") for r in cfg_v6["route"]["rules"] if r.get("ip_cidr")]
+        self.assertIn(["fd00::1/128"], cidrs)
+        with self.assertRaises(ValueError):
+            build_config(version="1.14", dns_mode="fakeip", topology="bypass", main_router_ip="not-an-ip")
+
+
 if __name__ == "__main__":
     unittest.main()

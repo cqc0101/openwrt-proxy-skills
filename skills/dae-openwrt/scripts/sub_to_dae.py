@@ -5,6 +5,7 @@ dae 节点与完整配置生成器 (支持输出 node 语法块，或注入 open
 自包含：本技能自带 sub_parser.py / parse_node.py / check_dae_syntax.py。
 """
 
+import ipaddress
 import os
 import re
 import sys
@@ -54,7 +55,12 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology=
     if wan_iface and wan_iface != "auto":
         merged = re.sub(r"(?m)^(\s*wan_interface:\s*)\S+", lambda m: f"{m.group(1)}{wan_iface}", merged)
     if topology == "bypass" and main_router_ip:
-        gw_ip = str(main_router_ip).strip()
+        raw_gw = str(main_router_ip).strip()
+        try:
+            gw_if = ipaddress.ip_interface(raw_gw)
+            gw_ip = str(gw_if.ip) if "/" not in raw_gw else str(gw_if)
+        except ValueError as e:
+            raise ValueError(f"非法的旁路由主网关 IP (--main-router-ip={main_router_ip!r}): {e}")
         merged = re.sub(
             r"(?m)^(\s*pname\([^)]*dnsmasq[^)]*\)[^\n]*->\s*must_direct\s*)$",
             lambda m: f"{m.group(1)}\n    dip({gw_ip}) -> direct",

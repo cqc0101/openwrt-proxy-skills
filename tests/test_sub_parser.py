@@ -482,5 +482,44 @@ proxies:
         self.assertIn("alpn=h2,http%2F1.1", dae_out)
 
 
+
+    def test_clash_ss_plugin_and_reality_missing_pbk_filtered(self):
+        from sub_parser import parse_clash_proxy, to_dae_nodes
+        ob_obfs = parse_clash_proxy({
+            "name": "SS-Obfs",
+            "type": "ss",
+            "server": "example.com",
+            "port": 8388,
+            "cipher": "aes-256-gcm",
+            "password": "secret",
+            "plugin": "obfs",
+            "plugin-opts": {"mode": "tls", "host": "cloudflare.com"},
+        })
+        self.assertEqual(ob_obfs["plugin"], "obfs-local")
+        self.assertEqual(ob_obfs["plugin_opts"], "obfs=tls;obfs-host=cloudflare.com")
+        self.assertIn("plugin=obfs-local", to_dae_nodes([ob_obfs]))
+
+        # Unsupported SS plugin must be rejected, not silently downgraded
+        self.assertEqual(parse_clash_proxy({
+            "name": "SS-ShadowTLS",
+            "type": "ss",
+            "server": "example.com",
+            "port": 8388,
+            "cipher": "aes-256-gcm",
+            "password": "secret",
+            "plugin": "shadow-tls",
+        }), {})
+
+        # Reality without public-key must be rejected
+        self.assertEqual(parse_clash_proxy({
+            "name": "Bad-Reality",
+            "type": "vless",
+            "server": "example.com",
+            "port": 443,
+            "uuid": "11111111-2222-3333-4444-555555555555",
+            "reality-opts": {"short-id": "1234"},
+        }), {})
+
+
 if __name__ == "__main__":
     unittest.main()
