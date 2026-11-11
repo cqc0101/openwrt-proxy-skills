@@ -67,16 +67,16 @@
 技能按 `<agentsHome>/skills/<技能名>/SKILL.md` 发现，因此指向仓库内的 `skills/` 子目录：
 
 ```powershell
-# 1. 设置仓库本地存放路径
+# 1. 设置仓库本地存放路径（可按需修改盘符与路径）
 $repoDir = "C:\openwrt-proxy-skills"
 
 # 2. 从 GitHub 克隆仓库
 git clone https://github.com/cqc0101/openwrt-proxy-skills.git $repoDir
 
-# 3. 确保上级目录存在，若旧链接/目录已存在则先安全解绑
+# 3. 确保上级目录存在；若旧链接已存在则安全移除（不影响源文件）
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents" | Out-Null
 if (Test-Path "$env:USERPROFILE\.agents\skills") {
-    cmd /c rmdir "$env:USERPROFILE\.agents\skills"
+    (Get-Item "$env:USERPROFILE\.agents\skills").Delete()
 }
 
 # 4. 创建目录联接 (Junction)，修改仓库内容后即时生效
