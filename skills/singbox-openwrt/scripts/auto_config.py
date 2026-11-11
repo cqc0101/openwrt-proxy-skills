@@ -257,7 +257,7 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
         wan_iface = str(wan_iface).strip()
         if not wan_iface or wan_iface.startswith("-") or not re.match(r"^[a-zA-Z0-9_.\-@:]+$", wan_iface):
             raise ValueError(f"非法的 WAN 接口名称 (--wan-iface={wan_iface!r})")
-        # 显式 WAN 接口模式：缺 nfqueue 模块的内核（真机验证：Oray X1 Pro / ImmortalWrt SNAPSHOT）
+        # 显式 WAN 接口模式：缺 nfqueue 模块的内核（真机验证：标准 ARM64 软路由硬件 / ImmortalWrt SNAPSHOT）
         # auto_detect_interface 的自保会失效，直连流量被 TUN 自捕获（国内全 RST）
         config["route"].pop("auto_detect_interface", None)
         config["route"]["default_interface"] = wan_iface

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""x1pro 真机与 Docker 本地高强度对抗测试矩阵 (Stress Test Matrix v3.1)。
+"""OpenWrt 硬件网关与 Docker 本地高强度对抗测试矩阵 (Stress Test Matrix v3.1)。
 
 执行 12 轮工业级极限对抗与可靠性回归测试：
 Round 1:  【真机基线】零状态全新部署 (FakeIP 模式)
@@ -41,9 +41,9 @@ SB_DIR = os.path.join(REPO, "skills", "singbox-openwrt")
 DAE_DIR = os.path.join(REPO, "skills", "dae-openwrt")
 DOCKER_DIR = os.path.join(REPO, "docker")
 
-ROUTER_IP = os.getenv("OPENWRT_TEST_HOST", os.getenv("ROUTER_IP", "192.168.6.1"))
+ROUTER_IP = os.getenv("OPENWRT_TEST_HOST", os.getenv("ROUTER_IP", "192.168.1.1"))
 ROUTER_PORT = int(os.getenv("OPENWRT_TEST_PORT", "22"))
-KEY_PATH = os.getenv("OPENWRT_TEST_KEY", os.path.join(REPO, ".deploy_key", "id_ed25519"))
+KEY_PATH = os.getenv("OPENWRT_TEST_KEY", os.path.expanduser("~/.ssh/id_rsa"))
 
 TEST_NODE_HY2 = os.getenv("TEST_NODE_HY2", "hysteria2://mock_secret@198.51.100.1:34589?sni=example.com#Mock-Hysteria2")
 TEST_NODE_REALITY = os.getenv("TEST_NODE_REALITY", "vless://00000000-0000-0000-0000-000000000000@198.51.100.1:34588?security=reality&sni=www.microsoft.com&fp=chrome&pbk=mock_pbk&sid=mock_sid&type=tcp&flow=xtls-rprx-vision#Mock-Reality")
@@ -520,12 +520,12 @@ def round_12_full_unit_test_regression():
 # 主入口与安全门控
 # ------------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="x1pro 真机与 Docker 自动化极限可靠性压力测试矩阵")
+    parser = argparse.ArgumentParser(description="OpenWrt 硬件网关与 Docker 自动化极限可靠性压力测试矩阵")
     parser.add_argument("--allow-destructive", action="store_true", help="显式允许对目标软路由执行真实破坏性测试与服务重载（默认仅运行安全本地测试与计划打印）")
     args = parser.parse_args()
 
     print("=" * 70)
-    print(" x1pro 软路由与 Docker 自动化极限可靠性压力测试矩阵 (v3.1)")
+    print(" OpenWrt 硬件网关与 Docker 自动化极限可靠性压力测试矩阵 (v3.1)")
     print(f" 目标路由器: {ROUTER_IP}:{ROUTER_PORT}")
     print(f" 运行模式: {'【真机破坏性压测模式】' if args.allow_destructive else '【DRY-RUN 安全演练模式】'}")
     print("=" * 70)

@@ -1,7 +1,7 @@
-# 真机验证报告 — Oray X1 Pro (ImmortalWrt SNAPSHOT)
+# 真机验证报告 — ARM64 软路由网关 (ImmortalWrt SNAPSHOT)
 
 - 验证日期：2026-11-08
-- 设备：Oray X1 Pro，ImmortalWrt SNAPSHOT r0-3e24625，mediatek/filogic aarch64
+- 设备：标准 ARM64 软路由硬件网关，ImmortalWrt SNAPSHOT r0-3e24625，aarch64
 - 内核：6.18.44；内存 495MB；overlay 43.7M（可用 35.8M）；包管理器 **apk**（SNAPSHOT 主分支）
 - 网络：br-lan=192.168.10.1（LAN），eth0=192.0.2.220（上行 DHCP，上游为 192.0.2.1）
 - 授权范围：仅本从路由设备可读写；未触碰上游网关（192.0.2.1）与外部服务器。

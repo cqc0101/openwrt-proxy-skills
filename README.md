@@ -130,7 +130,7 @@ python docker/stress_test_matrix.py
 
 测试覆盖：模板字段与引用完整性、节点解析、订阅清洗、生成器端到端与静态校验、两个检查脚本、文档链接、shell 语法与行尾规范。GitHub Actions 在推送与 PR 时对多个 Python 版本执行同一套测试。
 
-真机验证记录（Oray X1 Pro / ImmortalWrt SNAPSHOT / sing-box 1.14.3）见 [docs/validation-report-x1pro.md](docs/validation-report-x1pro.md)。
+真机验证记录（ARM64 软路由网关 / ImmortalWrt SNAPSHOT / sing-box 1.14.3）见 [docs/validation-report.md](docs/validation-report.md)。
 
 ## 致谢与第三方内容
 

@@ -70,14 +70,14 @@ class TestModularMixins(unittest.TestCase):
         rules_str = json.dumps(rules)
         self.assertIn("hijack-dns", rules_str, "路由规则必须显式劫持 DNS")
         self.assertIn("sniff", rules_str, "路由首部必须嗅探流量")
-        self.assertNotIn("x1pro.lan", rules_str, "严禁残留个人设备特定域名")
+        self.assertNotIn("privatedomain.lan", rules_str, "严禁残留个人设备特定域名")
 
     def test_dns_base_has_no_nonstandard_preferred_by(self):
         path = os.path.join(MIXINS_DIR, "dns_base.json")
         with open(path, "r", encoding="utf-8") as f:
             raw = f.read()
         self.assertNotIn("preferred_by", raw, "dns.rules 严禁包含非标字段 preferred_by")
-        self.assertNotIn("x1pro.lan", raw, "dns.rules 严禁残留个人设备特定域名")
+        self.assertNotIn("privatedomain.lan", raw, "dns.rules 严禁残留个人设备特定域名")
 
 
 

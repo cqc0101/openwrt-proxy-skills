@@ -60,7 +60,7 @@ class TestDocLinks(unittest.TestCase):
                     full = os.path.join(root, file)
                     rel = os.path.relpath(full, REPO).replace("\\", "/")
                     # 排除本测试文件自身
-                    if rel in ("tests/test_docs.py", "CHANGELOG.md", "HARDENING_REPORT.md", "docs/validation-report-x1pro.md"):
+                    if rel in ("tests/test_docs.py", "CHANGELOG.md", "HARDENING_REPORT.md", "docs/validation-report.md"):
                         continue
                     with open(full, "r", encoding="utf-8", errors="replace") as f:
                         for lineno, line in enumerate(f, 1):
