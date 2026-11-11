@@ -67,12 +67,22 @@
 技能按 `<agentsHome>/skills/<技能名>/SKILL.md` 发现，因此指向仓库内的 `skills/` 子目录：
 
 ```powershell
-# Windows（junction 方式，修改仓库内容后即时生效）
-# 注意：把 <仓库路径> 换成你 clone 本仓库的实际位置，例如 D:\openwrt-proxy-skills
-cmd /c rmdir "$env:USERPROFILE\.agents\skills"           # 仅移除链接本身，不影响目标目录
+# 1. 设置仓库本地存放路径
+$repoDir = "C:\openwrt-proxy-skills"
+
+# 2. 从 GitHub 克隆仓库
+git clone https://github.com/cqc0101/openwrt-proxy-skills.git $repoDir
+
+# 3. 确保上级目录存在，若旧链接/目录已存在则先安全解绑
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents" | Out-Null
+if (Test-Path "$env:USERPROFILE\.agents\skills") {
+    cmd /c rmdir "$env:USERPROFILE\.agents\skills"
+}
+
+# 4. 创建目录联接 (Junction)，修改仓库内容后即时生效
 New-Item -ItemType Junction `
   -Path   "$env:USERPROFILE\.agents\skills" `
-  -Target "<仓库路径>\skills"
+  -Target "$repoDir\skills"
 ```
 
 `~/.agents` 同时是 DSH 的 agents home。如果其它工具（例如 Antigravity）也在使用该目录，请先确认。
