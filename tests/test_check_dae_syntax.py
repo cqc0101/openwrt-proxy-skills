@@ -230,5 +230,84 @@ routing {
         self.assertTrue(any("ghost_dns" in e for e in errors), errors)
 
 
+
+    def test_single_quoted_group_and_upstream_targets_checked(self):
+        """验证 check_dae_syntax.py 对单引号包裹的策略组与 DNS 上游引用执行准确的悬空检测与匹配。"""
+        content = """
+global {
+    lan_interface: br-lan
+    wan_interface: auto
+}
+node {
+    'n1': 'vless://uuid@1.1.1.1:443#n1'
+}
+group {
+    'my-proxy' {
+        policy: min_moving_avg
+    }
+}
+dns {
+    upstream {
+        'ali-dns': 'udp://223.5.5.5:53'
+    }
+    routing {
+        request {
+            qname(geosite:cn) -> ali-dns
+            fallback: 'non-existent-dns'
+        }
+    }
+}
+routing {
+    pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct
+    domain(geosite:google) -> my-proxy
+    fallback: 'non-existent-group'
+}
+"""
+        errors, _ = check(content)
+        self.assertTrue(any("non-existent-group" in e for e in errors), f"应拦截悬空的单引号策略组: {errors}")
+        self.assertFalse(any("my-proxy" in e for e in errors), f"不应误报已定义的单引号策略组: {errors}")
+        self.assertTrue(any("non-existent-dns" in e for e in errors), f"应拦截悬空的单引号 DNS 上游: {errors}")
+        self.assertFalse(any("ali-dns" in e for e in errors), f"不应误报已定义的单引号 DNS 上游: {errors}")
+
+
+    def test_routing_to_defined_node_is_valid(self):
+        """dae 路由规则直接指向 node {} 中已定义的独立节点应判定为合法，不报悬空策略组错误。"""
+        cfg = (
+            "global { lan_interface: br-lan\n wan_interface: auto }\n"
+            "node { 'my_vps': 'vless://u@1.1.1.1:443?security=none#my_vps' }\n"
+            "group { proxy { policy: min_moving_avg } }\n"
+            "routing {\n"
+            "  pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct\n"
+            "  domain('netflix.com') -> my_vps\n"
+            "  domain('google.com') -> proxy\n"
+            "}\n"
+        )
+        errors, _ = check(cfg)
+        self.assertFalse(any("悬空" in e for e in errors), errors)
+
+    def test_arrow_inside_quotes_and_inline_multi_groups_upstreams_and_bare_node(self):
+        """引号内的 '->' 不应被误判为路由目标；单行多 group/upstream 定义与无键名裸节点 #Tag 引用均应被正确识别。"""
+        cfg = (
+            "global { lan_interface: br-lan\n wan_interface: auto }\n"
+            "node {\n"
+            "  'hk_2': 'vless://u@1.1.1.1:443?sec=none#It\\'s#1'\n"
+            "  'vless://u@2.2.2.2:443?sec=none#MyBareNode'\n"
+            "}\n"
+            "group { proxy { policy: min_moving_avg } ai { policy: random } }\n"
+            "dns {\n"
+            "  upstream { alidns: 'udp://223.5.5.5:53' googledns: 'tcp://8.8.8.8:53' }\n"
+            "  routing { request { qname(geosite:cn) -> alidns\n qname(geosite:google) -> googledns\n fallback: alidns } }\n"
+            "}\n"
+            "routing {\n"
+            "  pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct\n"
+            "  domain('test->not_an_outbound.com') -> proxy\n"
+            "  domain('openai.com') -> ai\n"
+            "  domain('netflix.com') -> MyBareNode\n"
+            "  fallback: proxy\n"
+            "}\n"
+        )
+        errors, _ = check(cfg)
+        self.assertEqual(errors, [], f"不应产生误报: {errors}")
+
 if __name__ == "__main__":
     unittest.main()

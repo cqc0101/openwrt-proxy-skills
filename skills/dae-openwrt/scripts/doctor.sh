@@ -136,6 +136,10 @@ add_issue() {
     i_desc="$4"
     i_action="$5"
 
+    case "$ISSUES_JSON" in
+        *"\"id\":\"$i_id\""*) return 0 ;;
+    esac
+
     ISSUE_COUNT=$((ISSUE_COUNT + 1))
     if [ "$i_sev" = "error" ]; then
         OVERALL_SEVERITY="error"

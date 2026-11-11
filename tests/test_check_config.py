@@ -310,5 +310,48 @@ class TestAuditHardeningCheckConfig(unittest.TestCase):
         self.assertTrue(any("ghost-dns" in e for e in errs2), errs2)
 
 
+
+    def test_multi_hop_dns_and_outbound_detour_cycles_blocked(self):
+        """验证 check_config.py 能够拦截多跳 DNS domain_resolver 循环 (A->B->A) 与 outbound detour 循环。"""
+        with open(os.path.join(TEMPLATES, "openwrt-1.13-tun-fakeip.json"), "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["dns"]["servers"].append({"tag": "dns-a", "type": "https", "server": "a.com", "domain_resolver": "dns-b"})
+        cfg["dns"]["servers"].append({"tag": "dns-b", "type": "https", "server": "b.com", "domain_resolver": "dns-a"})
+        cfg["outbounds"].append({"tag": "ob-a", "type": "vless", "server": "1.1.1.1", "server_port": 443, "uuid": "u1", "detour": "ob-b"})
+        cfg["outbounds"].append({"tag": "ob-b", "type": "vless", "server": "2.2.2.2", "server_port": 443, "uuid": "u2", "detour": "ob-a"})
+        for ob in cfg["outbounds"]:
+            if ob.get("tag") == "proxy":
+                ob["outbounds"] = ["auto"]
+            elif ob.get("tag") == "auto":
+                ob["outbounds"] = ["proxy"]
+        errors, _ = check_config_obj(cfg)
+        self.assertTrue(any("循环死锁" in e for e in errors), f"未拦截多跳 DNS domain_resolver 循环: {errors}")
+        self.assertTrue(any("detour 存在多跳循环引用" in e for e in errors), f"未拦截多跳 outbound detour 循环: {errors}")
+        self.assertTrue(any("策略组" in e and "循环引用" in e for e in errors), f"未拦截策略组 selector/urltest 互相引用环路: {errors}")
+
+
+    def test_tuic_outbound_missing_password_blocked(self):
+        """TUIC 出站缺少 password 必须被 check_config 静态拦截。"""
+        errs, _ = run({
+            "outbounds": [{
+                "type": "tuic", "tag": "tuic-nopass", "server": "1.2.3.4", "server_port": 443,
+                "uuid": "00000000-0000-0000-0000-000000000000", "password": "",
+            }]
+        })
+        self.assertTrue(any("缺少有效的 password" in e for e in errs), errs)
+
+    def test_domain_dns_server_without_any_resolver_blocked(self):
+        """域名型 DNS Server (如 DoH/DoT) 既无自身 domain_resolver 也无 route.default_domain_resolver 时必须被拦截。"""
+        errs, _ = run({
+            "dns": {
+                "servers": [
+                    {"tag": "google-dot", "type": "tls", "server": "dns.google"}
+                ]
+            },
+            "route": {"auto_detect_interface": True},
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        })
+        self.assertTrue(any("既未指定 domain_resolver" in e for e in errs), errs)
+
 if __name__ == "__main__":
     unittest.main()

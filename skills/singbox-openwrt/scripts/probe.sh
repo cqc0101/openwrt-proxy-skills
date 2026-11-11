@@ -122,8 +122,8 @@ SWAP_KB=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
 TOTAL_SWAP=$(( ${SWAP_KB:-0} / 1024 ))
 
 # 闪存/存储评估 (MB)：兼容 /overlay 独立挂载与挂载于 / 根分区两种形态
-FREE_ROM=0
-if df -m /overlay >/dev/null 2>&1; then
+FREE_ROM=""
+if [ -d /overlay ] && df -m /overlay >/dev/null 2>&1; then
     FREE_ROM=$(df -m /overlay 2>/dev/null | awk 'NR>1 && NF>=4 {print $(NF-2)}' | tail -n 1)
 fi
 if [ -z "$FREE_ROM" ] && df -m / >/dev/null 2>&1; then

@@ -75,5 +75,35 @@ class TestDnsDoctorScripts(unittest.TestCase):
                           f"{sh_path} 缺少精确 IPv6 多冒号提取逻辑")
 
 
+
+    def test_bracketed_ipv6_and_canary_unspecified_support(self):
+        """diagnose_dns.sh 必须支持剥离带端口或裸方括号的 IPv6 地址，并在 Canary 阻断审计中识别 :: 未指定地址。"""
+        for sdir in (SINGBOX_SCRIPTS, DAE_SCRIPTS):
+            sh_path = os.path.join(sdir, "diagnose_dns.sh")
+            with open(sh_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn(r'sub(/^\[/, "", tok)', content, f"{sh_path} 缺少方括号前缀剥离")
+            self.assertIn(r'sub(/\](:[0-9]+)?$/, "", tok)', content, f"{sh_path} 缺少方括号与端口后缀剥离")
+            self.assertIn('"$CANARY_IP" = "::"', content, f"{sh_path} 缺少对 IPv6 未指定阻断地址 :: 的识别")
+
+
+    def test_step4_aaaa_awk_regex_precision(self):
+        """第 4 关 AAAA 响应提取正则必须包含多冒号精确匹配，杜绝宽泛单冒号单词误伤。"""
+        for sdir in (SINGBOX_SCRIPTS, DAE_SCRIPTS):
+            sh_path = os.path.join(sdir, "diagnose_dns.sh")
+            with open(sh_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertEqual(content.count("tok ~ /:.*:/ || tok ~ /^::/ || tok ~ /::$/"), 2,
+                             f"{sh_path} 存在未加固的宽泛 IPv6 正则")
+
+    def test_query_ips_nslookup_fallback_not_short_circuited_by_server_address(self):
+        """query_ips 检查 127.0.0.1 响应是否有效时不得使用恒匹配首行 Server Address 的 'Address.*:'，必须检查 Name:/answer:/NXDOMAIN。"""
+        for sdir in (SINGBOX_SCRIPTS, DAE_SCRIPTS):
+            sh_path = os.path.join(sdir, "diagnose_dns.sh")
+            with open(sh_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertNotIn('grep -qE "Address.*:"', content)
+            self.assertIn("Name:|answer:|NXDOMAIN|can't find", content)
+
 if __name__ == "__main__":
     unittest.main()

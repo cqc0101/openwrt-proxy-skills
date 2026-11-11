@@ -8,6 +8,7 @@ dae 配置文件 5 条铁律静态合规检测工具（启发式检查）
 import sys
 import os
 import re
+import urllib.parse
 
 # 中文 Windows 控制台 (cp936) 无法编码 emoji/部分字符，统一重配为 UTF-8 输出
 for _s in (sys.stdout, sys.stderr):
@@ -18,14 +19,22 @@ for _s in (sys.stdout, sys.stderr):
 
 
 def _strip_comments(line: str) -> str:
-    """感知单双引号边界剥离行首与行尾 # 注释，防止误截断节点 URI 中的 #fragment。"""
+    """感知单双引号边界与反斜杠转义剥离行首与行尾 # 注释，防止误截断节点 URI 中的 #fragment。"""
     s = line.strip()
     if s.startswith("#"):
         return ""
     in_single = False
     in_double = False
     out = []
-    for ch in s:
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\" and (in_single or in_double) and i + 1 < n:
+            out.append(ch)
+            out.append(s[i + 1])
+            i += 2
+            continue
         if ch == "'" and not in_double:
             in_single = not in_single
             out.append(ch)
@@ -36,7 +45,83 @@ def _strip_comments(line: str) -> str:
             break
         else:
             out.append(ch)
+        i += 1
     return "".join(out).strip()
+
+
+def _mask_quoted_strings(text: str) -> str:
+    """将单双引号内部的内容掩码为空格（保留引号定界符与换行），防止规则参数或节点 URI 内的 ->、{、}、: 干扰语法结构解析。"""
+    out = []
+    in_s = False
+    in_d = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and (in_s or in_d) and i + 1 < n:
+            out.append("  ")
+            i += 2
+            continue
+        if c == "'" and not in_d:
+            in_s = not in_s
+            out.append(c)
+        elif c == '"' and not in_s:
+            in_d = not in_d
+            out.append(c)
+        elif in_s or in_d:
+            out.append(" " if c != "\n" else "\n")
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _extract_named_block(text, block_name, start_pos=0):
+    masked = _mask_quoted_strings(text)
+    pat = re.compile(r"\b" + re.escape(block_name) + r"\s*\{")
+    m = pat.search(masked, start_pos)
+    if not m:
+        return None, -1, -1
+    depth = 1
+    i = m.end()
+    while i < len(masked) and depth > 0:
+        c = masked[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    return (text[m.end():i - 1] if depth == 0 else None), m.start(), i
+
+
+def _extract_rule_targets(body: str):
+    targets = []
+    for r_line in body.splitlines():
+        r_line = r_line.strip()
+        if not r_line:
+            continue
+        for m_fb in re.finditer(r"\bfallback:\s*['\"]?([a-zA-Z0-9_-]+)['\"]?", r_line):
+            targets.append(m_fb.group(1))
+        in_s = False
+        in_d = False
+        i_idx = 0
+        while i_idx < len(r_line):
+            c_ch = r_line[i_idx]
+            if c_ch == "\\" and (in_s or in_d) and i_idx + 1 < len(r_line):
+                i_idx += 2
+                continue
+            if c_ch == "'" and not in_d:
+                in_s = not in_s
+            elif c_ch == '"' and not in_s:
+                in_d = not in_d
+            elif not in_s and not in_d:
+                if r_line[i_idx:i_idx+2] == "->":
+                    after_str = r_line[i_idx+2:].strip()
+                    m_tgt = re.match(r"^['\"]?([a-zA-Z0-9_-]+)['\"]?", after_str)
+                    if m_tgt:
+                        targets.append(m_tgt.group(1))
+            i_idx += 1
+    return targets
 
 
 def check_dae_syntax(filepath):
@@ -91,7 +176,6 @@ def check_dae_syntax(filepath):
         warnings.append("[网卡绑定提醒] global 块中未声明 'wan_interface: auto'。")
 
     # 3. 检查 must_direct 防环（宿主机 DNS 组件保护）
-    #    允许 pname(...) 与 -> must_direct 跨行书写或存在 && 条件
     has_dnsmasq_protect = re.search(r'pname\([^)]*dnsmasq[^)]*\)[^->\}]*->\s*must_direct', content, re.DOTALL)
     if not has_dnsmasq_protect:
         errors.append("[DNS 死循环高危] routing 规则中未发现针对 dnsmasq 的 'must_direct' 放行规则！"
@@ -116,50 +200,39 @@ def check_dae_syntax(filepath):
                                   "可信上游白名单放行（'upstream(...) -> accept'），会导致无限递归重查！")
                     break
 
-    # 5.5 检查 group 与 dns.upstream 引用完整性（当对应定义块存在时拦截悬空目标）
-    def _extract_named_block(text, block_name, start_pos=0):
-        pat = re.compile(r"\b" + re.escape(block_name) + r"\s*\{")
-        m = pat.search(text, start_pos)
-        if not m:
-            return None, -1
-        depth = 1
-        i = m.end()
-        in_s, in_d = False, False
-        while i < len(text) and depth > 0:
-            c = text[i]
-            if c == "'" and not in_d:
-                in_s = not in_s
-            elif c == '"' and not in_s:
-                in_d = not in_d
-            elif not in_s and not in_d:
-                if c == "{":
-                    depth += 1
-                elif c == "}":
-                    depth -= 1
-            i += 1
-        return (text[m.end():i - 1] if depth == 0 else None), i
+    # 5.5 检查 group、node 与 dns.upstream 引用完整性（基于引号掩码 AST 提取，杜绝引号内字符误判）
+    node_body, _, _ = _extract_named_block(content, "node")
+    defined_nodes = set()
+    if node_body is not None:
+        defined_nodes = set(re.findall(r"['\"\s]?([a-zA-Z0-9_-]+)['\"\s]?\s*:", node_body))
+        for uri_m in re.findall(r"'((?:\\.|[^'])*)'|\"((?:\\.|[^\"])*)\"", node_body):
+            uri_s = uri_m[0] or uri_m[1]
+            if "#" in uri_s:
+                frag = urllib.parse.unquote(uri_s.split("#", 1)[1].strip())
+                if frag:
+                    defined_nodes.add(frag)
 
-    group_body, _ = _extract_named_block(content, "group")
+    group_body, _, _ = _extract_named_block(content, "group")
     if group_body is not None:
-        defined_groups = set(re.findall(r"(?m)^\s*([a-zA-Z0-9_\-]+)\s*\{", group_body))
+        defined_groups = set(re.findall(r"['\"\s]?([a-zA-Z0-9_-]+)['\"\s]?\s*\{", group_body))
         builtin_outbounds = {"direct", "must_direct", "block", "must_rules"}
-        # 查找顶层 routing 块（排除 dns 内部的 routing 块）
-        dns_body, _ = _extract_named_block(content, "dns")
-        content_without_dns = content.replace(dns_body, "") if dns_body else content
-        rt_body, _ = _extract_named_block(content_without_dns, "routing")
+        valid_outbounds = builtin_outbounds | defined_groups | defined_nodes
+        dns_body, dns_s, dns_e = _extract_named_block(content, "dns")
+        content_without_dns = (content[:dns_s] + content[dns_e:]) if dns_s != -1 else content
+        rt_body, _, _ = _extract_named_block(content_without_dns, "routing")
         if rt_body:
-            for tgt in re.findall(r"->\s*([a-zA-Z0-9_\-]+)", rt_body) + re.findall(r"(?m)^\s*fallback:\s*([a-zA-Z0-9_\-]+)", rt_body):
-                if tgt not in builtin_outbounds and tgt not in defined_groups:
-                    errors.append(f"[悬空策略组引用] routing 规则引用了未在 group 块中定义的出站组: '{tgt}'！")
+            for tgt in _extract_rule_targets(rt_body):
+                if tgt not in valid_outbounds:
+                    errors.append(f"[悬空出站引用] routing 规则引用了未在 group 或 node 块中定义的出站目标: '{tgt}'！")
 
-    dns_body, _ = _extract_named_block(content, "dns")
+    dns_body, _, _ = _extract_named_block(content, "dns")
     if dns_body is not None:
-        up_body, _ = _extract_named_block(dns_body, "upstream")
-        dns_rt_body, _ = _extract_named_block(dns_body, "routing")
+        up_body, _, _ = _extract_named_block(dns_body, "upstream")
+        dns_rt_body, _, _ = _extract_named_block(dns_body, "routing")
         if up_body is not None and dns_rt_body is not None:
-            defined_ups = set(re.findall(r"(?m)^\s*([a-zA-Z0-9_\-]+)\s*:", up_body))
-            builtin_dns_actions = {"accept", "reject", "asis", "must_asis"}
-            for tgt in re.findall(r"->\s*([a-zA-Z0-9_\-]+)", dns_rt_body) + re.findall(r"(?m)^\s*fallback:\s*([a-zA-Z0-9_\-]+)", dns_rt_body):
+            defined_ups = set(re.findall(r"['\"\s]?([a-zA-Z0-9_-]+)['\"\s]?\s*:", up_body))
+            builtin_dns_actions = {"accept", "reject", "asis", "must_asis", "must_rules"}
+            for tgt in _extract_rule_targets(dns_rt_body):
                 if tgt not in builtin_dns_actions and tgt not in defined_ups:
                     errors.append(f"[悬空 DNS 上游引用] dns.routing 引用了未在 upstream 块中定义的 DNS 上游: '{tgt}'！")
 

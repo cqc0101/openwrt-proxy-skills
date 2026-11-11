@@ -680,5 +680,232 @@ proxies:
         self.assertEqual(p["custom:meta:tag"], "special_value")
 
 
+
+    def test_pure_python_clash_yaml_empty_scalar_and_trailing_keys(self):
+        """验证纯 Python YAML 解析器不会吞没空标量键（如 flow: 或末尾孤立键名）。"""
+        from sub_parser import parse_clash_yaml_pure_python
+        yaml_text = """
+proxies:
+  - name: node_with_empty_key
+    type: vless
+    server: 1.1.1.1
+    port: 443
+    flow:
+    network: ws
+    ws-opts:
+      path: /ws
+      headers:
+        host: example.com
+    trailing_empty:
+"""
+        proxies = parse_clash_yaml_pure_python(yaml_text)
+        self.assertEqual(len(proxies), 1)
+        p = proxies[0]
+        self.assertEqual(p["name"], "node_with_empty_key")
+        self.assertIn("flow", p, "flow 键不应被同级或后续属性吞没")
+        self.assertIsNone(p["flow"])
+        self.assertEqual(p["network"], "ws")
+        self.assertIn("trailing_empty", p, "末尾孤立空键不应丢失")
+        self.assertIsNone(p["trailing_empty"])
+
+    def test_vmess_to_dae_bare_ipv6_host(self):
+        """验证 VMess 节点导出为 dae 节点时，v2rayN base64(JSON) 的 add 字段必须为裸 host（无方括号）。"""
+        from sub_parser import to_dae_nodes
+        import json, base64
+        nodes = [{
+            "type": "vmess",
+            "tag": "v6_vmess",
+            "server": "[2404:6800:4005:80a::200e]",
+            "server_port": 443,
+            "uuid": "11111111-2222-3333-4444-555555555555"
+        }]
+        dae_out = to_dae_nodes(nodes)
+        self.assertIn("v6_vmess", dae_out)
+        b64_part = dae_out.split("vmess://")[1].split("'", 1)[0]
+        data = json.loads(base64.b64decode(b64_part).decode('utf-8'))
+        self.assertEqual(data["add"], "2404:6800:4005:80a::200e", "VMess add 字段严禁包含方括号")
+
+    def test_clash_ws_transport_lowercase_host_header(self):
+        """验证 Clash 解析器兼容 ws-opts 下小写 host 或 headers.host。"""
+        from sub_parser import parse_clash_proxy
+        raw_p = {
+            "name": "ws_test",
+            "type": "vmess",
+            "server": "example.com",
+            "port": 443,
+            "uuid": "11111111-2222-3333-4444-555555555555",
+            "network": "ws",
+            "ws-opts": {
+                "path": "/ws",
+                "headers": {
+                    "host": "cdn.example.com"
+                }
+            }
+        }
+        ob = parse_clash_proxy(raw_p)
+        self.assertEqual(ob["transport"]["headers"]["Host"], "cdn.example.com")
+
+
+    def test_pure_python_clash_yaml_indentless_list_nested_anchor_and_multi_merge(self):
+        """验证纯 Python YAML 解析器支持同缩进列表 (indent-less list)、多层嵌套锚点、节点内联锚点及多锚点合并。"""
+        from sub_parser import parse_clash_yaml_pure_python
+        yaml_text = """
+base_ws: &base_ws
+  port: 443
+  tls: true
+  ws-opts:
+    path: /v2?a=1:2
+    headers:
+      Host: cdn.example.com
+
+extra_smux: &extra_smux
+  smux:
+    enabled: true
+    protocol: smux
+
+proxies:
+  - &inline_node
+    name: node1
+    type: vless
+    server: 1.1.1.1
+    uuid: 11111111-2222-3333-4444-555555555555
+    network: ws
+    alpn:
+    - h2
+    - http/1.1
+    <<: [*base_ws, *extra_smux]
+  - <<: *inline_node
+    name: node2
+    server: 2.2.2.2
+  - {name: node3, type: vless, server: 3.3.3.3, uuid: 11111111-2222-3333-4444-555555555555, "custom:key": "val:1", <<: [*base_ws, *extra_smux]}
+"""
+        proxies = parse_clash_yaml_pure_python(yaml_text)
+        self.assertEqual(len(proxies), 3)
+        self.assertEqual(proxies[0]["alpn"], ["h2", "http/1.1"])
+        self.assertEqual(proxies[0]["ws-opts"]["headers"]["Host"], "cdn.example.com")
+        self.assertEqual(proxies[0]["smux"], {"enabled": True, "protocol": "smux"})
+        self.assertEqual(proxies[1]["name"], "node2")
+        self.assertEqual(proxies[1]["server"], "2.2.2.2")
+        self.assertEqual(proxies[1]["ws-opts"]["path"], "/v2?a=1:2")
+        self.assertEqual(proxies[2]["custom:key"], "val:1")
+        self.assertEqual(proxies[2]["ws-opts"]["headers"]["Host"], "cdn.example.com")
+
+    def test_h2_multi_host_round_trip_in_to_dae_nodes(self):
+        """验证 HTTP/H2 传输层多域名列表在导出 dae 节点时完整保留，不丢失第 2 个起的主机名。"""
+        from parse_node import parse_uri
+        from sub_parser import to_dae_nodes
+        uri = "vless://11111111-2222-3333-4444-555555555555@example.com:443?security=tls&type=http&path=/h2&host=a.com,b.com#VLESSH2"
+        ob1 = parse_uri(uri)
+        dae_txt = to_dae_nodes([ob1])
+        dae_uri = dae_txt.splitlines()[1].split(": '", 1)[1].rstrip("'").replace("%27", "'")
+        ob2 = parse_uri(dae_uri)
+        self.assertEqual(ob2["transport"]["host"], ["a.com", "b.com"])
+
+
+    def test_pure_python_clash_yaml_cross_anchor_order_and_inline_item_anchors(self):
+        """验证流式锚点与块式锚点跨顺序引用、多锚点优先级及 - &anchor { ... } / - &anchor name: ... 语法。"""
+        from sub_parser import parse_clash_yaml_pure_python
+        yaml_text = """
+b1: &b1
+  port: 443
+  network: ws
+b2: &b2 {<<: *b1, tls: true, port: 8443}
+
+proxies:
+  - &p_flow {name: node_flow, type: vless, server: 1.1.1.1, uuid: u1, <<: [*b1, *b2]}
+  - &p_block name: node_block
+    type: vless
+    server: 2.2.2.2
+    uuid: u2
+    <<: *p_flow
+  - name: node_inherit_block
+    server: 3.3.3.3
+    <<: *p_block
+"""
+        res = parse_clash_yaml_pure_python(yaml_text)
+        self.assertEqual(len(res), 3)
+        # [*b1, *b2] 中 b1 在前，因此 port 必须取 b1 的 443 而非被 b2 的 8443 覆盖，同时继承 b2 的 tls: True
+        self.assertEqual(res[0]["port"], 443)
+        self.assertTrue(res[0]["tls"])
+        self.assertEqual(res[0]["network"], "ws")
+        self.assertEqual(res[1]["name"], "node_block")
+        self.assertEqual(res[1]["port"], 443)
+        self.assertEqual(res[2]["name"], "node_inherit_block")
+        self.assertEqual(res[2]["type"], "vless")
+
+
+    def test_clash_proxy_missing_credentials_filtered(self):
+        """Clash 节点缺少 uuid/password 等必要鉴权凭证时必须被隔离过滤，绝不能生成空凭证坏节点冲毁整份配置。"""
+        self.assertEqual(parse_clash_proxy({"name": "bad1", "type": "vless", "server": "1.1.1.1", "port": 443}), {})
+        self.assertEqual(parse_clash_proxy({"name": "bad2", "type": "vmess", "server": "1.1.1.1", "port": 443}), {})
+        self.assertEqual(parse_clash_proxy({"name": "bad3", "type": "trojan", "server": "1.1.1.1", "port": 443}), {})
+        self.assertEqual(parse_clash_proxy({"name": "bad4", "type": "hysteria2", "server": "1.1.1.1", "port": 443}), {})
+        self.assertEqual(parse_clash_proxy({"name": "bad5", "type": "tuic", "server": "1.1.1.1", "port": 443, "uuid": "u1"}), {})
+
+    def test_to_dae_nodes_vmess_ipv6_bare_add_and_sni(self):
+        """to_dae_nodes 导出 vmess:// 时，IPv6 必须通过 _bare_host 剥离方括号，符合 v2rayN JSON 规范与 RFC 6066 SNI 规范。"""
+        import base64, json
+        node = {
+            "type": "vmess", "tag": "V6-VMess", "server": "[240e:123:456::1]", "server_port": 443,
+            "uuid": "11111111-2222-3333-4444-555555555555",
+            "tls": {"enabled": True, "server_name": "[240e:123:456::1]"}
+        }
+        out = to_dae_nodes([node])
+        line = [l for l in out.splitlines() if "vmess://" in l][0]
+        b64 = line.split("vmess://")[1].split("'", 1)[0]
+        data = json.loads(base64.b64decode(b64).decode())
+        self.assertEqual(data["add"], "240e:123:456::1")
+        self.assertEqual(data["sni"], "240e:123:456::1")
+
+    def test_pure_python_yaml_block_anchors_multi_merge_and_alias_refs(self):
+        """验证纯 Python YAML 解析器支持多层块级锚点 (&common)、多锚点列表合并 (<<: [*a1, *a2])、属性直接别名 (*ws_common) 及转义引号行内注释。"""
+        from sub_parser import parse_clash_yaml_pure_python
+        yaml_text = '''
+a1: &a1
+  type: vless
+  tls: true
+a2: &a2
+  network: ws
+  ws-opts:
+    path: /ws_from_block_anchor
+    headers:
+      Host: cdn.block.com
+
+proxies:
+  - name: "Multi \\\"#1\\\" Anchor" # comment after escaped quote
+    <<: [*a1, *a2]
+    server: 1.1.1.1
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+  - name: 'Single \'\'#2\'\' Quote' # comment after doubled single quote
+    type: vless
+    server: 2.2.2.2
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    tls: true
+    network: ws
+    ws-opts: &ws_shared
+      path: /shared_v2
+      headers:
+        Host: shared.host.com
+  - name: "Alias-Ref-Node"
+    type: vless
+    server: 3.3.3.3
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    tls: true
+    network: ws
+    ws-opts: *ws_shared
+'''
+        proxies = parse_clash_yaml_pure_python(yaml_text)
+        self.assertEqual(len(proxies), 3)
+        self.assertEqual(proxies[0]["name"], 'Multi "#1" Anchor')
+        self.assertEqual(proxies[0]["type"], "vless")
+        self.assertEqual(proxies[0]["ws-opts"]["path"], "/ws_from_block_anchor")
+        self.assertEqual(proxies[1]["name"], "Single '#2' Quote")
+        self.assertEqual(proxies[2]["name"], "Alias-Ref-Node")
+        self.assertIsInstance(proxies[2]["ws-opts"], dict)
+        self.assertEqual(proxies[2]["ws-opts"]["path"], "/shared_v2")
+
 if __name__ == "__main__":
     unittest.main()

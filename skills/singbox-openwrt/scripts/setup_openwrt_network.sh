@@ -173,6 +173,7 @@ BOOTGUARD_EOF
             uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
             uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         fi
+        uci del_list firewall.@zone[${LAN_INDEX}].device='tun0' 2>/dev/null || true
         clean_dns_redirects
         rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
         if [ -f /etc/sing-box/.dnsmasq_upstream.bak ]; then

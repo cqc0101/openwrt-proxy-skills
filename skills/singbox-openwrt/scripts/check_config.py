@@ -185,11 +185,29 @@ def check_config_obj(cfg):
         if s_detour and s_detour not in all_outbounds:
             errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 detour 指向未定义的 outbound: '{s_detour}'！")
         s_resolver = s.get("domain_resolver")
+        if isinstance(s_resolver, dict):
+            s_resolver = s_resolver.get("server")
         if s_resolver:
             if s_resolver not in dns_servers:
                 errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 指向未定义的 DNS server: '{s_resolver}'！")
             elif s.get("tag") and s_resolver == s.get("tag"):
                 errors.append(f"[自环死锁] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 不能指向自身 '{s_resolver}'！")
+            elif s.get("tag"):
+                # 检测多跳循环引用 (如 A -> B -> A)
+                visited = {s.get("tag")}
+                curr_r = s_resolver
+                dns_map = {ds.get("tag"): (ds.get("domain_resolver", {}).get("server") if isinstance(ds.get("domain_resolver"), dict) else ds.get("domain_resolver")) for ds in (dns.get("servers") or []) if isinstance(ds, dict) and ds.get("tag")}
+                while curr_r:
+                    if curr_r in visited:
+                        errors.append(f"[循环死锁] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 存在循环引用链路 ('{s.get('tag')}' -> ... -> '{curr_r}')！")
+                        break
+                    visited.add(curr_r)
+                    curr_r = dns_map.get(curr_r)
+
+        elif s_type in ("udp", "tcp", "tls", "https", "h3", "quic"):
+            s_srv_addr = str(s.get("server") or "").strip()
+            if s_srv_addr and not _is_ip_literal(s_srv_addr) and not route.get("default_domain_resolver"):
+                errors.append(f"[解析死锁风险] dns.servers[{idx}]({s.get('tag')}) 的 server 为域名 '{s_srv_addr}'，但既未指定 domain_resolver 也未配置 route.default_domain_resolver！")
 
     # 3. 检查 outbounds 模块及内部引用
     for idx, ob in enumerate(outbounds):
@@ -211,6 +229,26 @@ def check_config_obj(cfg):
                         errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 default 指向 '{def_tag}'，但该标签不在其 outbounds 列表中！")
                 elif ob_type == "urltest" and "default" in ob:
                     errors.append(f"[非法字段] outbound[{idx}]({ob_tag}) 类型为 urltest，不支持 'default' 字段（仅 selector 支持）！")
+                # 检测策略组间是否存在闭合环路 (如 proxy 包含 auto 且 auto 包含 proxy)
+                if ob_tag:
+                    group_map = {
+                        o.get("tag"): [x for x in (o.get("outbounds") or []) if isinstance(x, str)]
+                        for o in outbounds
+                        if isinstance(o, dict) and o.get("type") in ("selector", "urltest") and o.get("tag")
+                    }
+                    stack_g = [(ch, [ob_tag, ch]) for ch in sub_obs if ch in group_map and ch != ob_tag]
+                    visited_g = set()
+                    while stack_g:
+                        curr_g, path_g = stack_g.pop()
+                        if curr_g == ob_tag:
+                            errors.append(f"[循环引用] 策略组 outbound[{idx}]({ob_tag}) 的 outbounds 存在多跳循环引用链路 ({' -> '.join(path_g)})！")
+                            break
+                        if curr_g in visited_g:
+                            continue
+                        visited_g.add(curr_g)
+                        for nxt_g in group_map.get(curr_g, []):
+                            if nxt_g == ob_tag or (nxt_g in group_map and nxt_g not in visited_g):
+                                stack_g.append((nxt_g, path_g + [nxt_g]))
 
         # 检查代理链与 detour 引用完整性
         ob_detour = ob.get("detour")
@@ -219,6 +257,16 @@ def check_config_obj(cfg):
                 errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 detour 指向未定义的 outbound: '{ob_detour}'！")
             elif ob_tag and ob_detour == ob_tag:
                 errors.append(f"[自环引用] outbound[{idx}]({ob_tag}) 的 detour 不能指向自身！")
+            elif ob_tag:
+                visited_dt = {ob_tag}
+                curr_dt = ob_detour
+                dt_map = {o.get("tag"): o.get("detour") for o in outbounds if isinstance(o, dict) and o.get("tag")}
+                while curr_dt:
+                    if curr_dt in visited_dt:
+                        errors.append(f"[循环引用] outbound[{idx}]({ob_tag}) 的 detour 存在多跳循环引用链路 ('{ob_tag}' -> ... -> '{curr_dt}')！")
+                        break
+                    visited_dt.add(curr_dt)
+                    curr_dt = dt_map.get(curr_dt)
 
         # network 字段只接受 tcp/udp；ws/grpc 必须走 transport（常见笔误）
         net = ob.get("network")
@@ -250,7 +298,7 @@ def check_config_obj(cfg):
                     errors.append(f"[非法端口] outbound[{idx}]({ob_tag}) 的 server_port '{sp}' 超出合法端口范围 (1-65535)！")
             if ob_type in ("vless", "vmess", "tuic") and not str(ob.get("uuid") or "").strip():
                 errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) ({ob_type}) 缺少有效的 uuid！")
-            if ob_type in ("trojan", "shadowsocks", "hysteria2", "anytls") and not str(ob.get("password") or "").strip():
+            if ob_type in ("trojan", "shadowsocks", "hysteria2", "anytls", "tuic") and not str(ob.get("password") or "").strip():
                 errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) ({ob_type}) 缺少有效的 password！")
             if ob_type == "shadowsocks" and not str(ob.get("method") or "").strip():
                 errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) (shadowsocks) 缺少有效的加密方式 method！")

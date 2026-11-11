@@ -206,5 +206,29 @@ class TestSharedScriptsConsistency(unittest.TestCase):
                              "probe.sh 不得仅凭静态文件 wing.db 永久判定 daed_running=1")
 
 
+
+    def test_doctor_issue_deduplication(self):
+        """doctor.sh 必须实现 issue ID 去重，防止多重检测规则命中时输出重复问题及错误计数膨胀。"""
+        for base in (SINGBOX, DAE):
+            doc_txt = _read(os.path.join(base, "doctor.sh"))
+            self.assertIn('case "$ISSUES_JSON" in', doc_txt)
+            self.assertIn('$i_id', doc_txt)
+            self.assertIn('return 0 ;;', doc_txt)
+
+    def test_setup_network_revert_cleans_tun0(self):
+        """setup_openwrt_network.sh --revert 必须从 firewall lan zone 中注销 tun0，彻底杜绝虚拟网卡残留。"""
+        net_txt = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
+        self.assertIn("uci del_list firewall.@zone[${LAN_INDEX}].device='tun0'", net_txt)
+
+
+    def test_probe_rom_free_fallback(self):
+        """probe.sh 在 /overlay 不存在时必须正确回退到 df -m /，不得因 FREE_ROM=0 初始非空而跳过回退导致 rom_free_mb 恒为 0。"""
+        for base in (SINGBOX, DAE):
+            probe_path = os.path.join(base, "probe.sh")
+            p_txt = _read(probe_path)
+            self.assertIn('FREE_ROM=""', p_txt)
+            self.assertIn('if [ -d /overlay ] && df -m /overlay', p_txt)
+            self.assertIn('if [ -z "$FREE_ROM" ] && df -m /', p_txt)
+
 if __name__ == "__main__":
     unittest.main()

@@ -59,20 +59,23 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology=
         merged = re.sub(r"(?m)^(\s*lan_interface:\s*)\S+", lambda m: f"{m.group(1)}{lan_iface.strip()}", merged)
     if wan_iface and wan_iface != "auto":
         merged = re.sub(r"(?m)^(\s*wan_interface:\s*)\S+", lambda m: f"{m.group(1)}{wan_iface.strip()}", merged)
-    if topology == "bypass" and main_router_ip:
-        raw_gw = str(main_router_ip).strip()
-        try:
-            gw_if = ipaddress.ip_interface(raw_gw)
-            gw_ip = str(gw_if.ip) if "/" not in raw_gw else str(gw_if)
-        except ValueError as e:
-            raise ValueError(f"非法的旁路由主网关 IP (--main-router-ip={main_router_ip!r}): {e}")
-        gw_expr = f"'{gw_ip}'" if (":" in gw_ip or "/" in gw_ip) else gw_ip
-        merged = re.sub(
-            r"(?m)^(\s*pname\([^)]*dnsmasq[^)]*\)[^\n]*->\s*must_direct\s*)$",
-            lambda m: f"{m.group(1)}\n    dip({gw_expr}) -> direct",
-            merged,
-            count=1,
-        )
+    if topology == "bypass":
+        if not main_router_ip:
+            print("[!] 提示: 旁路由模式 (--topology bypass) 未指定 --main-router-ip，建议指定主路由 IP 以配置直接放行规则。", file=sys.stderr)
+        else:
+            raw_gw = str(main_router_ip).strip()
+            try:
+                gw_if = ipaddress.ip_interface(raw_gw)
+                gw_ip = str(gw_if.ip) if "/" not in raw_gw else str(gw_if)
+            except ValueError as e:
+                raise ValueError(f"非法的旁路由主网关 IP (--main-router-ip={main_router_ip!r}): {e}")
+            gw_expr = f"'{gw_ip}'" if (":" in gw_ip or "/" in gw_ip) else gw_ip
+            merged = re.sub(
+                r"(?m)^(\s*pname\([^)]*dnsmasq[^)]*\)[^\n]*->\s*must_direct\s*)$",
+                lambda m: f"{m.group(1)}\n    dip({gw_expr}) -> direct",
+                merged,
+                count=1,
+            )
     if ram_mb is not None:
         if isinstance(ram_mb, bool) or int(ram_mb) <= 0:
             raise ValueError(f"--ram-mb 必须为正整数 (> 0)，当前值: {ram_mb!r}")

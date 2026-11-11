@@ -171,8 +171,9 @@ def _apply_clash_transport(ob: Dict[str, Any], p: Dict[str, Any], allow_udp: boo
             "path": ws_opts.get("path", "/") or "/"
         }
         headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
-        if "Host" in headers and headers["Host"] is not None:
-            ob["transport"]["headers"] = {"Host": headers["Host"]}
+        host_val = ws_opts.get("host") or (headers.get("Host") if "Host" in headers else headers.get("host"))
+        if host_val:
+            ob["transport"]["headers"] = {"Host": str(host_val)}
         return True
     if network == "grpc":
         grpc_opts = p.get("grpc-opts") if isinstance(p.get("grpc-opts"), dict) else {}
@@ -279,7 +280,9 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         return ob
 
     elif ptype == "trojan":
-        password = str(p.get("password") or "")
+        password = str(p.get("password") or "").strip()
+        if not password:
+            return {}
         sni = str(p.get("sni") or p.get("servername") or server)
         ob = {
             "type": "trojan",
@@ -300,7 +303,9 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         return ob
 
     elif ptype in ("hysteria2", "hy2"):
-        password = str(p.get("password") or p.get("auth") or "")
+        password = str(p.get("password") or p.get("auth") or "").strip()
+        if not password:
+            return {}
         sni = str(p.get("sni") or p.get("servername") or server)
         ob = {
             "type": "hysteria2",
@@ -332,7 +337,9 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         return ob
 
     elif ptype == "vless":
-        uuid = str(p.get("uuid") or "")
+        uuid = str(p.get("uuid") or "").strip()
+        if not uuid:
+            return {}
         flow = str(p.get("flow") or "")
         tls_enabled = bool(p.get("tls", False))
 
@@ -380,7 +387,9 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         return ob
 
     elif ptype == "vmess":
-        uuid = str(p.get("uuid") or "")
+        uuid = str(p.get("uuid") or "").strip()
+        if not uuid:
+            return {}
         raw_aid = p.get("alterId") if p.get("alterId") is not None else p.get("aid", 0)
         try:
             alter_id = int(raw_aid if raw_aid is not None else 0)
@@ -412,6 +421,9 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
 
     elif ptype == "tuic":
         uuid = str(p.get("uuid") or "").strip()
+        password = str(p.get("password") or "").strip()
+        if not uuid or not password:
+            return {}
         password = str(p.get("password") or "").strip()
         if not uuid:
             return {}
@@ -461,34 +473,59 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _strip_yaml_comment(line: str) -> str:
-    """引号感知剥离 YAML 行内注释（仅当 # 位于行首或紧跟空白字符且不在单双引号内时剥离）。"""
+    """引号与转义感知剥离 YAML 行内注释（仅当 # 位于行首或紧跟空白字符且不在单双引号内时剥离）。"""
     in_sq = False
     in_dq = False
     out = []
-    for idx, ch in enumerate(line):
+    i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if ch == "\\" and in_dq and i + 1 < n:
+            out.append(ch)
+            out.append(line[i + 1])
+            i += 2
+            continue
         if ch == "'" and not in_dq:
+            if in_sq and i + 1 < n and line[i + 1] == "'":
+                out.append("''")
+                i += 2
+                continue
             in_sq = not in_sq
             out.append(ch)
         elif ch == '"' and not in_sq:
             in_dq = not in_dq
             out.append(ch)
-        elif ch == "#" and not in_sq and not in_dq and (idx == 0 or line[idx - 1] in (" ", "\t")):
+        elif ch == "#" and not in_sq and not in_dq and (i == 0 or line[i - 1] in (" ", "\t")):
             break
         else:
             out.append(ch)
+        i += 1
     return "".join(out).rstrip()
 
 
 def _split_yaml_flow(s: str, sep: str = ",") -> List[str]:
-    """按顶层分隔符拆分 YAML 流式表达式，严格感知 {}、[] 与单双引号嵌套边界。"""
+    """按顶层分隔符拆分 YAML 流式表达式，严格感知 {}、[]、单双引号嵌套与转义边界。"""
     parts = []
     curr = []
     brace_depth = 0
     bracket_depth = 0
     in_sq = False
     in_dq = False
-    for ch in s:
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\" and in_dq and i + 1 < n:
+            curr.append(ch)
+            curr.append(s[i + 1])
+            i += 2
+            continue
         if ch == "'" and not in_dq:
+            if in_sq and i + 1 < n and s[i + 1] == "'":
+                curr.append("''")
+                i += 2
+                continue
             in_sq = not in_sq
             curr.append(ch)
         elif ch == '"' and not in_sq:
@@ -514,6 +551,7 @@ def _split_yaml_flow(s: str, sep: str = ",") -> List[str]:
                 curr.append(ch)
         else:
             curr.append(ch)
+        i += 1
     if curr or s.endswith(sep):
         tail = "".join(curr).strip()
         if tail:
@@ -521,11 +559,16 @@ def _split_yaml_flow(s: str, sep: str = ",") -> List[str]:
     return parts
 
 
-def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Dict[str, Any]]) -> Any:
-    """解析 YAML 标量、内联列表 [...] 或内联字典 {...}（递归支持嵌套与锚点引用）。"""
+def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Any]) -> Any:
+    """解析 YAML 标量、别名引用 (*alias)、内联列表 [...] 或内联字典 {...}（递归支持嵌套与锚点引用）。"""
     v = val_str.strip()
     if not v:
         return ""
+    if v.startswith("*") and len(v) > 1 and " " not in v:
+        ref = v[1:].strip()
+        if ref in anchors:
+            import copy as _cp
+            return _cp.deepcopy(anchors[ref])
     if v.startswith("{") and v.endswith("}"):
         return _parse_yaml_flow_map(v[1:-1], anchors)
     if v.startswith("[") and v.endswith("]"):
@@ -533,8 +576,10 @@ def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Dict[str, Any]])
         if not inner:
             return []
         return [_parse_yaml_scalar_or_flow(x, anchors) for x in _split_yaml_flow(inner, ",")]
-    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-        return v[1:-1]
+    if v.startswith('"') and v.endswith('"') and len(v) >= 2:
+        return v[1:-1].replace('\\"', '"').replace('\\\\', '\\')
+    if v.startswith("'") and v.endswith("'") and len(v) >= 2:
+        return v[1:-1].replace("''", "'")
     vl = v.lower()
     if vl in ("null", "~"):
         return None
@@ -550,21 +595,37 @@ def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Dict[str, Any]])
     return v
 
 
+def _merge_yaml_anchors(target: Dict[str, Any], v_s: str, anchors: Dict[str, Dict[str, Any]]):
+    """支持单个锚点 (<<: *a) 或多锚点列表 (<<: [*a, *b]) 合并（遵循 YAML 标准：列表中排在前面的锚点优先级更高）。"""
+    import copy as _copy
+    v = v_s.strip()
+    refs: List[str] = []
+    if v.startswith("*"):
+        refs.append(v[1:].strip())
+    elif v.startswith("[") and v.endswith("]"):
+        for item in v[1:-1].split(","):
+            it = item.strip()
+            if it.startswith("*"):
+                refs.append(it[1:].strip())
+    for ref in refs:
+        if ref in anchors:
+            for ak, av in anchors[ref].items():
+                if ak not in target:
+                    target[ak] = _copy.deepcopy(av)
+
+
 def _parse_yaml_flow_map(inner: str, anchors: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """解析花括号内部 k: v 列表，支持嵌套字典/列表与 <<: *anchor 继承（显式字段优先于锚点默认值）。"""
+    """解析花括号内部 k: v 列表，支持带冒号引号键名、嵌套字典/列表与 <<: *anchor 继承（显式字段优先于锚点默认值）。"""
     res: Dict[str, Any] = {}
     explicit: Dict[str, Any] = {}
     for part in _split_yaml_flow(inner, ","):
         if ":" not in part:
             continue
-        k, v = part.split(":", 1)
+        k, v = _split_yaml_kv(part)
         k_s = k.strip().strip("\"'")
         v_s = v.strip()
-        if k_s == "<<" and v_s.startswith("*"):
-            ref = v_s[1:].strip()
-            if ref in anchors:
-                for ak, av in anchors[ref].items():
-                    res[ak] = av
+        if k_s == "<<":
+            _merge_yaml_anchors(res, v_s, anchors)
         else:
             explicit[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
     res.update(explicit)
@@ -572,10 +633,19 @@ def _parse_yaml_flow_map(inner: str, anchors: Dict[str, Dict[str, Any]]) -> Dict
 
 
 def _split_yaml_kv(s: str) -> Tuple[str, str]:
-    """安全分离 YAML 键值对，兼容引号包裹的键名（即使键名中含冒号）与包含 URL/路径的值。"""
+    """安全分离 YAML 键值对，兼容引号包裹的键名（含转义引号与冒号）与包含 URL/路径的值。"""
     s = s.strip()
     if s.startswith("'"):
-        end_q = s.find("'", 1)
+        i = 1
+        end_q = -1
+        while i < len(s):
+            if s[i] == "'":
+                if i + 1 < len(s) and s[i + 1] == "'":
+                    i += 2
+                    continue
+                end_q = i
+                break
+            i += 1
         if end_q != -1:
             colon_idx = s.find(":", end_q)
             if colon_idx != -1:
@@ -584,7 +654,10 @@ def _split_yaml_kv(s: str) -> Tuple[str, str]:
         i = 1
         end_q = -1
         while i < len(s):
-            if s[i] == '"' and s[i - 1] != "\\":
+            if s[i] == "\\" and i + 1 < len(s):
+                i += 2
+                continue
+            if s[i] == '"':
                 end_q = i
                 break
             i += 1
@@ -613,37 +686,128 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
     clean_lines = [_strip_yaml_comment(raw_l) for raw_l in text.splitlines()]
     anchors: Dict[str, Dict[str, Any]] = {}
 
-    # 1. 扫描流式锚点: key: &anchor { k: v, ... }
-    for l in clean_lines:
-        m = re.match(r"^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*\{(.*)\}\s*$", l)
-        if m:
-            anchors[m.group(2)] = _parse_yaml_flow_map(m.group(3), anchors)
+    # 1. 预备锚点容器（在下方单遍顺序扫描中统一解析流式与块式锚点，确保跨形态先后引用 100% 互通）
 
-    # 2. 扫描缩进块式锚点: key: &anchor
+    def _parse_indented_block(norm_lines: List[Tuple[int, str]]) -> Dict[str, Any]:
+        import copy as _copy
+        if not norm_lines:
+            return {}
+        p_dict: Dict[str, Any] = {}
+        stack: List[Tuple[int, Any, str]] = [(norm_lines[0][0], p_dict, "dict")]
+        pending_key: Optional[str] = None
+        pending_anchor: Optional[str] = None
+        inline_anchor_name: Optional[str] = None
+
+        for indent, s in norm_lines:
+            if s.startswith("&"):
+                if ":" not in s:
+                    inline_anchor_name = s[1:].strip()
+                    continue
+                m_anc = re.match(r"^&([a-zA-Z0-9_-]+)\s+(.*)$", s)
+                if m_anc:
+                    inline_anchor_name = m_anc.group(1)
+                    s = m_anc.group(2).strip()
+
+            if pending_key is not None:
+                if indent > stack[-1][0] or (indent == stack[-1][0] and s.startswith("-")):
+                    parent_indent, parent_container, parent_type = stack[-1]
+                    if s.startswith("-"):
+                        child_list: List[Any] = []
+                        parent_container[pending_key] = child_list
+                        if pending_anchor:
+                            anchors[pending_anchor] = child_list
+                        stack.append((indent, child_list, "list"))
+                    else:
+                        child_dict: Dict[str, Any] = {}
+                        parent_container[pending_key] = child_dict
+                        if pending_anchor:
+                            anchors[pending_anchor] = child_dict
+                        stack.append((indent, child_dict, "dict"))
+                    pending_key = None
+                    pending_anchor = None
+                else:
+                    stack[-1][1][pending_key] = None
+                    pending_key = None
+                    pending_anchor = None
+
+            while len(stack) > 1 and indent < stack[-1][0]:
+                stack.pop()
+            while len(stack) > 1 and stack[-1][2] == "list" and not s.startswith("-"):
+                stack.pop()
+
+            cur_indent, cur_container, cur_type = stack[-1]
+
+            if cur_type == "list" and s.startswith("-"):
+                val_str = s[1:].strip()
+                val = _parse_yaml_scalar_or_flow(val_str, anchors)
+                cur_container.append(val)
+                continue
+
+            k, v = _split_yaml_kv(s)
+            k_s = k.strip().strip("\"'")
+            v_s = v.strip()
+
+            item_anchor = None
+            if v_s.startswith("&"):
+                m_anc_v = re.match(r"^&([a-zA-Z0-9_-]+)(?:\s+(.*))?$", v_s)
+                if m_anc_v:
+                    item_anchor = m_anc_v.group(1)
+                    v_s = (m_anc_v.group(2) or "").strip()
+
+            if not v_s:
+                pending_key = k_s
+                pending_anchor = item_anchor
+                continue
+
+            if k_s == "<<":
+                _merge_yaml_anchors(cur_container, v_s, anchors)
+                pending_key = None
+                pending_anchor = None
+            else:
+                parsed_val = _parse_yaml_scalar_or_flow(v_s, anchors)
+                cur_container[k_s] = parsed_val
+                if item_anchor:
+                    anchors[item_anchor] = parsed_val
+                pending_key = None
+                pending_anchor = None
+
+        if pending_key is not None and stack:
+            stack[-1][1][pending_key] = None
+            pending_key = None
+            pending_anchor = None
+
+        if inline_anchor_name:
+            anchors[inline_anchor_name] = _copy.deepcopy(p_dict)
+
+        return p_dict
+
+    # 2. 按文档顺序扫描流式锚点 (key: &a {...}) 与缩进块式锚点 (key: &a)
     i = 0
     while i < len(clean_lines):
         line = clean_lines[i]
+        m_flow = re.match(r"^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*\{(.*)\}\s*$", line)
+        if m_flow:
+            anchors[m_flow.group(2)] = _parse_yaml_flow_map(m_flow.group(3), anchors)
+            i += 1
+            continue
         m = re.match(r"^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*$", line)
         if m:
             a_name = m.group(2)
             base_indent = len(line) - len(line.lstrip())
-            props: Dict[str, Any] = {}
+            anchor_norm: List[Tuple[int, str]] = []
             i += 1
             while i < len(clean_lines):
                 sub_line = clean_lines[i]
-                if not sub_line.strip():
+                stripped_sub = sub_line.strip()
+                if not stripped_sub:
                     i += 1
                     continue
                 sub_indent = len(sub_line) - len(sub_line.lstrip())
                 if sub_indent <= base_indent:
                     break
-                k, v = _split_yaml_kv(sub_line)
-                k_s = k.strip().strip("\"'")
-                v_s = v.strip()
-                if v_s:
-                    props[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
+                anchor_norm.append((sub_indent, stripped_sub))
                 i += 1
-            anchors[a_name] = props
+            anchors[a_name] = _parse_indented_block(anchor_norm)
             continue
         i += 1
 
@@ -692,11 +856,15 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
     parsed_proxies: List[Dict[str, Any]] = []
     for item_lines in raw_items:
         first = item_lines[0].strip()
-        # 情况 A: 单行内联 - { ... }（支持嵌套花括号）
-        inline_m = re.match(r"^-\s*\{(.*)\}\s*$", first)
+        # 情况 A: 单行内联 - { ... } 或 - &anchor { ... }（支持嵌套花括号与内联锚点）
+        inline_m = re.match(r"^-\s*(?:&([a-zA-Z0-9_-]+)\s*)?\{(.*)\}\s*$", first)
         if inline_m:
-            p_dict = _parse_yaml_flow_map(inline_m.group(1), anchors)
+            import copy as _copy
+            a_inline, flow_body = inline_m.group(1), inline_m.group(2)
+            p_dict = _parse_yaml_flow_map(flow_body, anchors)
             if p_dict:
+                if a_inline:
+                    anchors[a_inline] = _copy.deepcopy(p_dict)
                 parsed_proxies.append(p_dict)
             continue
 
@@ -720,56 +888,7 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
         if not norm_lines:
             continue
 
-        p_dict: Dict[str, Any] = {}
-        stack: List[Tuple[int, Any, str]] = [(norm_lines[0][0], p_dict, "dict")]
-        pending_key: Optional[str] = None
-
-        for indent, s in norm_lines:
-            if pending_key is not None and indent > stack[-1][0]:
-                parent_indent, parent_container, parent_type = stack[-1]
-                if s.startswith("-"):
-                    child_list: List[Any] = []
-                    parent_container[pending_key] = child_list
-                    stack.append((indent, child_list, "list"))
-                else:
-                    child_dict: Dict[str, Any] = {}
-                    parent_container[pending_key] = child_dict
-                    stack.append((indent, child_dict, "dict"))
-                pending_key = None
-
-            while len(stack) > 1 and indent < stack[-1][0]:
-                stack.pop()
-
-            cur_indent, cur_container, cur_type = stack[-1]
-
-            if cur_type == "list":
-                if s.startswith("-"):
-                    val_str = s[1:].strip()
-                    val = _parse_yaml_scalar_or_flow(val_str, anchors)
-                    cur_container.append(val)
-                    continue
-                else:
-                    while len(stack) > 1 and cur_type == "list":
-                        stack.pop()
-                        cur_indent, cur_container, cur_type = stack[-1]
-
-            k, v = _split_yaml_kv(s)
-            k_s = k.strip().strip("\"'")
-            v_s = v.strip()
-
-            if not v_s:
-                pending_key = k_s
-                continue
-
-            if k_s == "<<" and v_s.startswith("*"):
-                ref = v_s[1:].strip()
-                if ref in anchors:
-                    for ak, av in anchors[ref].items():
-                        cur_container.setdefault(ak, av)
-            else:
-                cur_container[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
-                pending_key = None
-
+        p_dict = _parse_indented_block(norm_lines)
         if p_dict:
             parsed_proxies.append(p_dict)
 
@@ -963,9 +1082,9 @@ def _dae_transport_query(n: Dict[str, Any]) -> str:
         q = f"&type=http&path={path}"
         host = transport.get("host")
         if isinstance(host, (list, tuple)):
-            host = host[0] if host else ""
+            host = ",".join(str(x).strip() for x in host if str(x).strip())
         if host:
-            q += f"&host={_q(host)}"
+            q += f"&host={_q(host, safe=',')}"
         return q
     return ""
 
@@ -1076,7 +1195,7 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             vm = {
                 "v": "2",
                 "ps": tag,
-                "add": server,
+                "add": _bare_host(server),
                 "port": str(port),
                 "id": uuid,
                 "aid": str(alter_id),
@@ -1086,7 +1205,7 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
                 "host": ws_host,
                 "path": path,
                 "tls": "tls" if tls.get("enabled") else "",
-                "sni": (tls.get("server_name") or server) if tls.get("enabled") else ""
+                "sni": _bare_host(tls.get("server_name") or server) if tls.get("enabled") else ""
             }
             if alpn_vals:
                 vm["alpn"] = ",".join(str(a) for a in alpn_vals if a)

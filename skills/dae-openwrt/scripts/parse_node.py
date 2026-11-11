@@ -593,8 +593,8 @@ def parse_tuic(uri_str):
     if ":" in uuid and not password:
         uuid, password = uuid.split(":", 1)
     server = parsed.hostname
-    if not server or not uuid:
-        raise ValueError(f"无法解析 TUIC 节点地址 (缺少有效主机或 UUID): {uri_str[:40]}...")
+    if not server or not uuid or not password:
+        raise ValueError(f"无法解析 TUIC 节点地址 (缺少有效主机、UUID 或密码): {uri_str[:40]}...")
     port = _safe_port(parsed, 443)
     raw_frag = urllib.parse.unquote(parsed.fragment).strip() if parsed.fragment else ""
     tag = raw_frag or f"tuic-{server}"

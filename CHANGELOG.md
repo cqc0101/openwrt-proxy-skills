@@ -2,6 +2,71 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.5.9] - 2026-11-11
+
+### 第六轮极限边界审计、深度双分支合流与状态机全量清零 (Round 6 Unified Convergence & Zero-Bug Release)
+
+- **[高危] 双分支深度合流：攻克纯 Python YAML 引擎多锚点与属性别名解引用闭环 (R6-01, R5-02)**：
+  - 彻底打通单遍扫描与跨形态锚点继承，修复流式字典合并多锚点 `<<: [*a, *b]` 优先级反转（遵循 YAML 标准由前往后合并、首见键保留）；
+  - 补齐属性级直接别名引用（如 `ws-opts: *ws_shared`、`tls: *tls_cfg`），支持标量与子字典无损解引用展开；
+  - 完善转义引号边界感知（`"` 与单引号双写 `''` 转义），彻底杜绝含 `#` 节点名或密码在行内注释剥离时被截断。
+- **[高危] 补齐 `check_config.py` 对策略组图环路与域名型 DNS 解析死锁的多层门禁 (R6-02, R5-08)**：
+  - 引入有向图 DFS 环路检测，彻底阻断 `selector` 与 `urltest` 策略组多跳互相包含死锁（如 `proxy -> auto -> proxy`）；
+  - 阻断域名型 DNS Server（如 DoH/DoT/QUIC）在既无自身 `domain_resolver` 也无全局 `route.default_domain_resolver` 时的启动死锁；
+  - 强制校验 TUIC 出站 `uuid` 与 `password` 必填凭证，杜绝空凭证残缺节点引发启动崩溃。
+- **[高危] 重构 `check_dae_syntax.py` 规则目标精准提取引擎与引号安全掩码 (R6-03, R5-04, R5-05)**：
+  - 引入状态机提取真实 `->` 与 `fallback:` 动作，彻底消除规则参数内含 `->`（如 `domain('test->bad.com')`）导致的虚假策略组报错；
+  - 完整支持单引号与双引号包裹的策略组与 DNS 上游（`'my-proxy'`、`'ali-dns'`）悬空检测；
+  - 支持单行多个 `group` / `upstream` 定义解析，并自动提取 `node {}` 中已定义独立节点与裸 URI 锚点 `#Tag` 纳入合法出站集合。
+- **[中危] 修复 `probe.sh` 在 `/overlay` 非独立分区时 `rom_free_mb` 恒定误报为 0 的缺陷 (R6-04, R5-06)**：
+  - 规范 `FREE_ROM` 初始化与非纯数字字符过滤，在 `/overlay` 未挂载时正确无缝回退读取根目录 `/` 剩余空间。
+- **[中危] 提升 `diagnose_dns.sh` 与 `doctor.sh` 鲁棒性与诊断精度 (R6-05, R5-07, R4-01)**：
+  - 修复 `diagnose_dns.sh` 中 `query_ips` 匹配 `nslookup` 响应头导致回退分支失效的缺陷，改由响应特征段判断；
+  - 补齐 Step 2 与 Step 4 双位置 IPv6 高精度多冒号提取与带方括号 IP / `::` 未指定 Canary 阻断识别；
+  - `doctor.sh` 实现 issue ID 全局去重，杜绝多重规则触发时错误计数翻倍。
+- **[清理] 闭环 `setup_openwrt_network.sh` 的 `--revert` 清理逻辑 (R6-06, R4-03)**：
+  - `--revert` 还原时自动从 `firewall.@zone[LAN].device` 注销 `tun0`，杜绝失效虚拟网卡残留。
+- **[单测] 单元测试矩阵扩充至 251 项 (全量 PASS)**：
+  - 融合双分支所有边界对抗测试与深度单测，全量 251 项单测 100% 满分通过，12 轮压力测试矩阵无未捕获异常。
+
+## [0.5.8] - 2026-11-11
+
+### 第五轮极限对抗审计、自检回溯与深层状态机漏洞清零 (Round 5 Deep Self-Audit & State Machine Remediation)
+
+- **[高危] 修复 `sub_parser.py` 纯 Python YAML 引擎在同缩进列表 (Indent-less List) 场景下将列表项腐化为字典空键的缺陷 (R5-01)**：
+  - 原状态机仅在 `indent > stack[-1][0]` 时进入子容器，当遇到标准 YAML 同缩进列表（如 `alpn:` 下一行同缩进写 `- h2`）时，上一轮回退逻辑会误将 `alpn` 置为 `None`，并把 `- h2` 拆成 `{'- h2': None}` 非法字典键；现已支持 `indent == stack[-1][0] and s.startswith("-")` 自动压入列表容器。
+- **[高危] 修复 `sub_parser.py` 块式锚点定义不支持多层嵌套、内联节点锚点及多锚点列表合并的缺陷 (R5-02)**：
+  - 原步骤 2 锚点扫描使用扁平循环，导致 `&anchor` 内的 `ws-opts -> headers -> Host` 被错误拍平到顶层；现统一复用缩进栈引擎 `_parse_indented_block`，并新增对 `- &anchor` 节点内联锚点、`<<: [*a, *b]` 多锚点数组合并及流式字典引号冒号键名（`_split_yaml_kv`）的完整支持。
+- **[中危] 修复 `sub_parser.py` 在导出 dae HTTP/H2 节点时截断多域名 Host 列表的缺陷 (R5-03)**：
+  - 原 `_dae_transport_query` 对 `http`/`h2` 传输层的 `host` 列表仅取 `host[0]`，导致多域名负载配置在转换后丢失第 2 个起的全部域名；现改为 `",".join(...)` 完整保留并安全转义。
+- **[中危] 修复 `check_dae_syntax.py` 无法识别单引号包裹的策略组与 DNS 上游名称的漏检盲区 (R5-04)**：
+  - 原正则 `[a-zA-Z0-9_\-]+` 无法匹配 `-> 'my-proxy'` 或 `'ali-dns':`，导致单引号包裹的悬空引用完全逃逸静态审计；现已支持可选单/双引号包裹并在比对前剥离引号。
+- **[中危] 补齐 `check_config.py` 对多跳 `dns.servers.domain_resolver` 循环与 `outbound.detour` 循环的阻断检测 (R5-05)**：
+  - 原门禁仅拦截 `A -> A` 直接自引用，无法发现 `A -> B -> A` 多跳死锁环路及字典形态 `domain_resolver: {"server": "..."}`；现已引入图遍历环路检测，彻底阻断多跳死锁。
+
+## [0.5.7] - 2026-11-10
+
+### 第四轮极限白盒审计、深水区残余缺陷全量清零与测试矩阵扩充 (Round 4 Deep White-Box Hardening)
+
+- **[中危] 消除 `doctor.sh` 针对 `daed` 进程重复追加 `daed_conflict` 错误导致计数翻倍的缺陷 (R4-01)**：
+  - 原 `doctor.sh` 在 `SERVICE_NAME != "sing-box"` 与 `SERVICE_NAME == "dae"` 两个分支中均检测并添加 `daed_conflict`，当以 `doctor.sh dae` 检查时导致该 issue 在 JSON 列表中重复记录两次且 ERRORS 计数翻倍；现已在 `add_issue` 入口增加 ID 去重检查，彻底杜绝重复 issue。
+- **[中危] 根除 `diagnose_dns.sh` 无法识别方括号 IPv6 与 Canary 阻断未识别 `::` 的盲区 (R4-02)**：
+  - 在 awk 提取 IP 地址逻辑中新增对 `[2404:...]` / `[2404:...]:53` 前缀 `[` 与后缀 `](:port)?` 的剥离；
+  - 同步将 Step 4 (AAAA 检测) 的 awk 正则升级为要求至少两个冒号或 `::` 缩写，消除单冒号十六进制单词误报；
+  - 在 Step 6 Canary 阻断审计中补充识别 IPv6 未指定地址 `::`（与 `0.0.0.0` 具备等价阻断效力），杜绝 IPv6 环境下误报 Canary 泄漏。
+- **[中危] 修复 `setup_openwrt_network.sh` 在 `--revert` 时残留 `tun0` 接口配置的漏洞 (R4-03)**：
+  - `setup_openwrt_network.sh` 部署时向 `firewall.@zone[LAN].device` 追加 `tun0`，但 `--revert` 还原时未执行 `uci del_list firewall.@zone[LAN].device='tun0'`，导致卸载还原后防火墙持久残留已失效的 `tun0` 设备；现已在 `--revert` 中补齐注销。
+- **[高危] 修复 `sub_parser.py` 纯 Python YAML 引擎在同级/末尾空标量键下静默丢失键名的缺陷 (R4-04)**：
+  - 当 YAML 中包含 `flow:` 或末尾孤立属性时，由于其后无深缩进子块，原逻辑 `pending_key` 被同级后续键或循环结束直接覆盖，导致属性静默丢失；现增加同级与循环结束时的空值回写机制，确保解析结果符合 YAML 标准。
+- **[中危] 规范 `sub_parser.py` 导出 dae VMess 节点地址中的 IPv6 裸主机格式并增强 ws-opts host 兼容性 (R4-05)**：
+  - `to_dae_nodes` 导出 `vmess://` 的 JSON 负载时，`add` 字段统一使用 `_bare_host(server)` 剔除方括号；并在 `_apply_clash_transport` 中兼容小写 `host` 与 `headers.host`。
+- **[防误伤] 重构 `check_dae_syntax.py` 顶层 `routing` 块提取机制 (R4-06)**：
+  - 改用精确字符区间切片剔除 `dns { ... }` 块，彻底根除原 `content.replace(dns_body, "")` 在存在相同注释或规则片段时的全局误替换风险。
+- **[体验] 补充 `sub_to_dae.py` 旁路由模式未配主网关 IP 时的控制台提示 (R4-07)**：
+  - 与 `auto_config.py` 保持一致，当 `--topology bypass` 未传 `--main-router-ip` 时输出明确的指引建议。
+- **[单测] 单元测试矩阵扩充至 235 项 (全量 PASS)**：
+  - 新增 6 项对抗性回归单测，全量覆盖本次审计的所有修复项。
+
 ## [0.5.6] - 2026-11-09
 
 ### 第三轮极限白盒审计、深水区加固与残余漏洞全量清零 (Merged Hardened & White-Box Release)

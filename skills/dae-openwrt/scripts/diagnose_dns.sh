@@ -136,7 +136,7 @@ query_ips() {
     _raw=""
     if [ "$RESOLVE_TOOL" = "nslookup" ]; then
         _raw=$(run_nslookup "$_domain" 127.0.0.1)
-        if ! printf '%s\n' "$_raw" | grep -qE "Address.*:" 2>/dev/null; then
+        if ! printf '%s\n' "$_raw" | grep -qE "Name:|answer:|NXDOMAIN|can't find" 2>/dev/null; then
             _raw=$(run_nslookup "$_domain")
         fi
     elif [ "$RESOLVE_TOOL" = "dig" ]; then
@@ -154,6 +154,8 @@ query_ips() {
             for (i = 1; i <= NF; i++) {
                 tok = $i
                 sub(/#.*/, "", tok)
+                sub(/^\[/, "", tok)
+                sub(/\](:[0-9]+)?$/, "", tok)
                 sub(/:$/, "", tok)
                 if (tok ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) {
                     sub(/:[0-9]+$/, "", tok)
@@ -241,8 +243,10 @@ if [ "$RESOLVE_TOOL" = "nslookup" ]; then
             for (i = 1; i <= NF; i++) {
                 tok = $i
                 sub(/#.*/, "", tok)
+                sub(/^\[/, "", tok)
+                sub(/\](:[0-9]+)?$/, "", tok)
                 sub(/:$/, "", tok)
-                if (tok ~ /^[0-9a-fA-F:]*:[0-9a-fA-F:]+$/) {
+                if (tok ~ /^[0-9a-fA-F:]+$/ && (tok ~ /:.*:/ || tok ~ /^::/ || tok ~ /::$/)) {
                     print tok
                 }
             }
@@ -305,7 +309,7 @@ say "\n${CYAN}[6/7] 审计 DoH Canary 与 Apple Private Relay 阻断状态...${N
 CANARY_IPS=$(query_ips "use-application-dns.net")
 CANARY_IP=$(printf '%s\n' "$CANARY_IPS" | head -n 1)
 
-if [ -z "$CANARY_IP" ] || [ "$CANARY_IP" = "0.0.0.0" ]; then
+if [ -z "$CANARY_IP" ] || [ "$CANARY_IP" = "0.0.0.0" ] || [ "$CANARY_IP" = "::" ]; then
     pass "Firefox DoH Canary 域名已成功阻断 (use-application-dns.net -> REJECT/NXDOMAIN)，强制浏览器遵循网关 DNS 分流！"
 else
     case "$CANARY_IP" in

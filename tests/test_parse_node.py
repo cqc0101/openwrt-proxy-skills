@@ -366,5 +366,11 @@ class TestAuditHardeningParseNode(unittest.TestCase):
             parse_vmess(f"vmess://{b64}")
 
 
+
+    def test_tuic_missing_password_rejected(self):
+        """TUIC 节点缺少 password 时必须抛出 ValueError，严禁生成空密码残缺节点。"""
+        with self.assertRaises(ValueError):
+            parse_uri("tuic://00000000-0000-0000-0000-000000000000@1.1.1.1:443#bad_tuic")
+
 if __name__ == "__main__":
     unittest.main()
