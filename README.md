@@ -31,6 +31,7 @@
 | [modular-blocks.md](skills/singbox-openwrt/references/modular-blocks.md) | 模块化规则积木与主路由/旁路由/指定设备分流等复杂拓扑组装指南 |
 | [dae-rules-and-syntax.md](skills/dae-openwrt/references/dae-rules-and-syntax.md) | dae 5 条语义与拓扑铁律、路由语法、网卡绑定约束与 DNS 重查白名单 |
 | [troubleshooting.md](skills/dae-openwrt/references/troubleshooting.md) | dae 常见故障诊断排查手册与内核 eBPF 日志特征速查 |
+| [warnings-and-limitations.md](docs/warnings-and-limitations.md) | 生产环境已知边界、架构限制、版本演进、避坑与安全免责警告 |
 
 ## 目录结构
 
@@ -99,6 +100,18 @@ cp -r skills/singbox-openwrt skills/dae-openwrt ~/.claude/skills/
 - 缓存文件固定放在 `/tmp` 下，避免向闪存写入；
 - TUN 模式需要在防火墙中放行 `tun0`；
 - dae 需要内核 5.15+ 与 BTF，不满足时建议改用 sing-box。
+
+## ⚠️ 使用须知与架构边界（用户必读）
+
+为确保生产环境软路由高可用与网络稳定，请在部署前仔细阅读以下关键边界与安全提示（技术细则见 [docs/warnings-and-limitations.md](docs/warnings-and-limitations.md)）：
+
+1. **GitHub 认证凭据与隐私隔离保证**：用户的 GitHub 访问凭据（Token / SSH Key）由操作系统底层（Windows 凭据管理器 / SSH Agent）加密隔离，Git 机制物理级禁止打包 `.git` 内部配置；个人真实节点与敏感文件受 `.gitignore` 保护，绝无泄露风险。
+2. **sing-box 版本演进前瞻警告**：基准模板深度稳定覆盖 sing-box 1.13 与 1.14 架构；针对后续可能推出的重大版本（如 1.15+），**现有模板或将重新适配**，切勿盲目跨大版本替换二进制，升级前必须先在沙盒环境验证配置。
+3. **Clash YAML 锚点降级解析边界**：纯 Python 正则降级解析器支持常规单行标量与缩进列表锚点，但面对部分机场深度复合的多重锚点合并（如 `<<: [*a, *b]`）等极端语法可能受限，软路由建议预装 `python3-pyyaml` 获取 100% 完整解析能力。
+4. **daed (Web 面板) 与 原生 dae (CLI) 二选一铁律**：严禁同时使用 Web 面板管理和脚本外部覆写 `/etc/dae/config.dae`，面板 SQLite 托管与外部文本配置会发生竞争覆写，请二选一。
+5. **弱硬件路由性能与闪存寿命保护**：百级订阅默认截断至前 12 个节点以防弱内存路由 OOM；低配设备加载 eBPF 建议配置 Swap 交换空间；全链路在 `/tmp` 内存虚拟盘缓冲以保护 SPI 闪存寿命。
+6. **FakeIP 引导与 DNS 循环防环**：严禁将 `domain_resolver` 指向自身为 `fakeip` 的上游服务器；生产部署前务必使用 `check_config.py` 与 `check_dae_syntax.py` 执行静态门禁校验。
+7. **旁路由与 IPv6 假死防护**：旁路由网关模式部署必须携带 `--bypass` 自动注入物理网卡 MASQUERADE 动态伪装；建议开启 Dnsmasq `filter_aaaa=1` 避免国内双栈访问转圈假死。
 
 ## 测试
 
