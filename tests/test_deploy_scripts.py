@@ -223,12 +223,39 @@ class TestSharedScriptsConsistency(unittest.TestCase):
 
     def test_probe_rom_free_fallback(self):
         """probe.sh 在 /overlay 不存在时必须正确回退到 df -m /，不得因 FREE_ROM=0 初始非空而跳过回退导致 rom_free_mb 恒为 0。"""
+        import subprocess, json
         for base in (SINGBOX, DAE):
             probe_path = os.path.join(base, "probe.sh")
             p_txt = _read(probe_path)
             self.assertIn('FREE_ROM=""', p_txt)
             self.assertIn('if [ -d /overlay ] && df -m /overlay', p_txt)
             self.assertIn('if [ -z "$FREE_ROM" ] && df -m /', p_txt)
+        res = subprocess.run(["sh", os.path.join(SINGBOX, "probe.sh"), "--json"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(res.returncode, 0)
+        data = json.loads(res.stdout)
+        self.assertGreater(data["hardware"]["rom_free_mb"], 0)
+
+
+    def test_bypass_to_normal_mode_restores_orig_masq_and_boot_guard_reverts_network(self):
+        """从 --bypass 切换回普通主路由模式时必须恢复 ORIG_LAN_MASQ (清理残留 masq=1)，且 99-proxy-boot-guard 必须触发 --revert。"""
+        for base in (SINGBOX, DAE):
+            net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
+            self.assertIn("elif", net_txt)
+            self.assertIn(".network_baseline.bak", net_txt)
+            self.assertIn("setup_openwrt_network.sh --revert", net_txt)
+
+
+    def test_confirm_watchdog_and_revert_precede_lan_index_error_gate(self):
+        """R7-06: --confirm / --watchdog / --revert 必须位于 LAN_INDEX 为空报错退出门禁之前，防止防火墙异常时无法解除看门狗。"""
+        for base_dir in (SINGBOX, DAE):
+            net_txt = _read(os.path.join(base_dir, "setup_openwrt_network.sh"))
+            confirm_pos = net_txt.index('if [ "$ACTION_FLAG" = "--confirm" ]; then')
+            watchdog_pos = net_txt.index('if [ "$ACTION_FLAG" = "--watchdog" ]; then')
+            revert_pos = net_txt.index('if [ "$ACTION_FLAG" = "--revert" ]; then')
+            lan_gate_pos = net_txt.index('未在 /etc/config/firewall 中找到 lan zone')
+            self.assertLess(confirm_pos, lan_gate_pos)
+            self.assertLess(watchdog_pos, lan_gate_pos)
+            self.assertLess(revert_pos, lan_gate_pos)
 
 if __name__ == "__main__":
     unittest.main()

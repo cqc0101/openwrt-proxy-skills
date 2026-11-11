@@ -44,7 +44,7 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology=
     tpl_file = template_path or TEMPLATE_PATH
     if not os.path.isfile(tpl_file):
         raise FileNotFoundError(f"找不到 dae 模板文件: {tpl_file}")
-    with open(tpl_file, "r", encoding="utf-8") as f:
+    with open(tpl_file, "r", encoding="utf-8-sig") as f:
         tpl_text = f.read()
 
     node_block = to_dae_nodes(nodes)
@@ -120,14 +120,18 @@ def main():
         sys.exit(1)
 
     if args.full:
-        out_text = build_full_dae_config(
-            nodes,
-            lan_iface=args.lan_iface,
-            wan_iface=args.wan_iface,
-            topology=args.topology,
-            main_router_ip=args.main_router_ip,
-            ram_mb=args.ram_mb,
-        )
+        try:
+            out_text = build_full_dae_config(
+                nodes,
+                lan_iface=args.lan_iface,
+                wan_iface=args.wan_iface,
+                topology=args.topology,
+                main_router_ip=args.main_router_ip,
+                ram_mb=args.ram_mb,
+            )
+        except ValueError as e:
+            print(f"[FATAL] 参数校验失败: {e}", file=sys.stderr)
+            sys.exit(1)
         with tempfile.NamedTemporaryFile("w", suffix=".dae", delete=False, encoding="utf-8") as tf:
             tf.write(out_text)
             tmp_dae = tf.name

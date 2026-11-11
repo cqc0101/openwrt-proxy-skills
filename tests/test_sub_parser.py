@@ -907,5 +907,195 @@ proxies:
         self.assertIsInstance(proxies[2]["ws-opts"], dict)
         self.assertEqual(proxies[2]["ws-opts"]["path"], "/shared_v2")
 
+    def test_top_level_scalar_and_list_anchors_and_spaced_inline_anchor_indent(self):
+        """验证顶层单行标量/流列表锚点、多行块列表锚点以及带多空格 -   &p1 节点锚点不会破坏嵌套字典缩进。"""
+        from sub_parser import parse_clash_yaml_pure_python, to_dae_nodes
+        yaml_text = '''
+common_uuid: &shared_uuid 11111111-2222-3333-4444-555555555555
+common_port: &shared_port 8443
+common_alpn_flow: &shared_alpn_flow [h2, http/1.1]
+common_alpn_block: &shared_alpn_block
+  - h2
+  - http/1.1
+
+proxies:
+  -   &p1
+    name: n1
+    type: vless
+    server: 1.1.1.1
+    port: *shared_port
+    uuid: *shared_uuid
+    ws-opts:
+      path: /p1
+      headers:
+        Host: p1.example.com
+    tls: true
+    alpn: *shared_alpn_block
+  - <<: *p1
+    name: n2
+    alpn: *shared_alpn_flow
+'''
+        proxies = parse_clash_yaml_pure_python(yaml_text)
+        self.assertEqual(len(proxies), 2)
+        self.assertEqual(proxies[0]["port"], 8443)
+        self.assertEqual(proxies[0]["uuid"], "11111111-2222-3333-4444-555555555555")
+        self.assertEqual(proxies[0]["ws-opts"]["path"], "/p1")
+        self.assertEqual(proxies[0]["ws-opts"]["headers"]["Host"], "p1.example.com")
+        self.assertEqual(proxies[0]["alpn"], ["h2", "http/1.1"])
+        self.assertEqual(proxies[1]["alpn"], ["h2", "http/1.1"])
+        # 同时验证 to_dae_nodes 拒绝导出缺少 uuid/password 的残缺字典
+        dae_out = to_dae_nodes([
+            {"type": "vless", "tag": "bad_vless", "server": "1.1.1.1", "server_port": 443},
+            {"type": "trojan", "tag": "bad_trojan", "server": "1.1.1.1", "server_port": 443},
+            {"type": "tuic", "tag": "bad_tuic", "server": "1.1.1.1", "server_port": 443, "uuid": "u1"},
+        ])
+        self.assertEqual(dae_out.strip(), "node {\n}")
+
+
+    def test_dict_anchor_not_polluted_by_sibling_list_and_skipped_node_does_not_steal_tag(self):
+        """验证字典块级锚点不会吞并同缩进的兄弟列表项、支持 proxies 外的列表项锚点 (- &base)，且 to_dae_nodes 跳过坏节点时不挤占合法节点标签序号。"""
+        from sub_parser import parse_clash_yaml_pure_python, to_dae_nodes
+        yaml_text = '''
+templates:
+  - &base_tpl
+    type: vless
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+  - &ws_sibling
+    ws-opts: &ws_dict
+      path: /clean
+  - sibling_item_after_dict_anchor
+
+proxies:
+  - <<: *base_tpl
+    <<: *ws_sibling
+    name: "node'1'"
+    server: 1.1.1.1
+'''
+        proxies = parse_clash_yaml_pure_python(yaml_text)
+        self.assertEqual(len(proxies), 1)
+        self.assertEqual(proxies[0]["name"], "node'1'")
+        self.assertEqual(proxies[0]["ws-opts"], {"path": "/clean"})
+
+        # 验证 to_dae_nodes 跳过残缺节点时不会把下一个同名合法节点变成 HK-2，同时拦截缺 pbk 的 Reality 节点
+        dae_out = to_dae_nodes([
+            {"type": "vless", "tag": "HK", "server": "1.1.1.1", "server_port": 443, "uuid": ""},
+            {"type": "vless", "tag": "HK", "server": "1.1.1.1", "server_port": 443, "uuid": "u-1", "tls": {"enabled": True, "reality": {"enabled": True, "public_key": ""}}},
+            {"type": "vless", "tag": "HK", "server": "1.1.1.1", "server_port": 443, "uuid": "u-1"},
+        ])
+        self.assertIn("'HK':", dae_out)
+        self.assertNotIn("'HK-2':", dae_out)
+
+
+    def test_utf8_bom_all_formats_and_seven_protocol_round_trip_and_hy2_edge_cases(self):
+        """R7-02 & R7-03: 验证 UTF-8 BOM 全形态订阅解析、Hysteria2 列表/反转端口与 auto 带宽校验、以及 7 大协议 Clash->sing-box->dae->sing-box 往返无损。"""
+        import base64, re
+        from parse_node import parse_uri
+        from sub_parser import parse_clash_proxy, to_dae_nodes, parse_clash_yaml_pure_python, parse_subscription_text
+
+        # 1) UTF-8 BOM in URI list, Base64 outer, Base64 inner, and Clash YAML
+        uri_bom = "\ufeffvless://11111111-2222-3333-4444-555555555555@1.1.1.1:443?security=none#bom_uri"
+        self.assertEqual(len(parse_subscription_text(uri_bom)), 1)
+        b64_raw = base64.b64encode(uri_bom.encode("utf-8")).decode("ascii")
+        self.assertEqual(len(parse_subscription_text("\ufeff" + b64_raw)), 1)
+        yaml_bom = "\ufeffproxies:\n  - {name: n1, type: vless, server: 1.1.1.1, port: 443, uuid: 11111111-2222-3333-4444-555555555555}"
+        self.assertEqual(len(parse_clash_yaml_pure_python(yaml_bom)), 1)
+        self.assertEqual(len(parse_subscription_text(yaml_bom)), 1)
+
+        # 2) Hysteria2 list ports, invalid range rejection, and up: auto handling
+        hy2_valid = parse_clash_proxy({
+            "name": "HY2-List", "type": "hysteria2", "server": "4.4.4.4", "port": 443,
+            "password": "secret", "ports": ["20000-30000", "40000-50000"], "up": "auto", "down": "100 Mbps"
+        })
+        self.assertEqual(hy2_valid["server_ports"], ["20000:30000", "40000:50000"])
+        self.assertNotIn("up_mbps", hy2_valid)
+        self.assertEqual(hy2_valid["down_mbps"], 100)
+
+        hy2_bad_range = parse_clash_proxy({
+            "name": "HY2-Bad", "type": "hysteria2", "server": "4.4.4.4", "port": 443,
+            "password": "secret", "ports": "50000-20000"
+        })
+        self.assertEqual(hy2_bad_range, {})
+
+        # 3) 7-protocol Clash -> sing-box -> dae -> sing-box lossless round-trip
+        clash_samples = [
+            {
+                "name": "VLESS-Reality", "type": "vless", "server": "1.1.1.1", "port": 443,
+                "uuid": "11111111-2222-3333-4444-555555555555", "tls": True, "flow": "xtls-rprx-vision",
+                "servername": "www.microsoft.com", "client-fingerprint": "safari",
+                "reality-opts": {"public-key": "pbk123", "short-id": "ab12"}, "alpn": ["h2", "http/1.1"]
+            },
+            {
+                "name": "VLESS-WS-TLS", "type": "vless", "server": "2.2.2.2", "port": 8443,
+                "uuid": "11111111-2222-3333-4444-555555555555", "tls": True, "servername": "ws.example.com",
+                "client-fingerprint": "firefox", "skip-cert-verify": True, "network": "ws",
+                "ws-opts": {"path": "/vless-ws", "headers": {"Host": "cdn.example.com"}}, "alpn": ["http/1.1"]
+            },
+            {
+                "name": "VMess-gRPC-TLS", "type": "vmess", "server": "2001:db8::1", "port": 443,
+                "uuid": "11111111-2222-3333-4444-555555555555", "alterId": 0, "cipher": "auto",
+                "tls": True, "servername": "grpc.example.com", "client-fingerprint": "chrome",
+                "skip-cert-verify": True, "network": "grpc", "grpc-opts": {"grpc-service-name": "my_grpc_svc"},
+                "alpn": ["h2"]
+            },
+            {
+                "name": "Trojan-HTTPUpgrade", "type": "trojan", "server": "3.3.3.3", "port": 443,
+                "password": "tr_pass:with:colons", "sni": "tr.example.com", "client-fingerprint": "edge",
+                "skip-cert-verify": True, "network": "httpupgrade",
+                "httpupgrade-opts": {"path": "/up", "host": "up.example.com"}, "alpn": ["http/1.1"]
+            },
+            {
+                "name": "HY2-Hopping", "type": "hysteria2", "server": "4.4.4.4", "port": 443,
+                "password": "hy2:pass", "sni": "hy2.example.com", "skip-cert-verify": True,
+                "ports": ["20000-30000", "40000-50000"],
+                "obfs": "salamander", "obfs-password": "obfs_secret", "alpn": ["h3"]
+            },
+            {
+                "name": "TUIC-v5", "type": "tuic", "server": "5.5.5.5", "port": 8443,
+                "uuid": "11111111-2222-3333-4444-555555555555", "password": "tuic_secret",
+                "sni": "tuic.example.com", "congestion-controller": "bbr", "udp-relay-mode": "quic",
+                "skip-cert-verify": True, "alpn": ["h3"]
+            },
+            {
+                "name": "AnyTLS-Node", "type": "anytls", "server": "6.6.6.6", "port": 443,
+                "password": "anytls_secret", "sni": "any.example.com",
+                "skip-cert-verify": True, "alpn": ["h2", "http/1.1"]
+            },
+            {
+                "name": "SS-Plugin", "type": "ss", "server": "7.7.7.7", "port": 8388,
+                "cipher": "2022-blake3-aes-128-gcm", "password": "ss_secret_key",
+                "plugin": "obfs", "plugin-opts": {"mode": "tls", "host": "bing.com"}
+            },
+        ]
+        for sample in clash_samples:
+            sb1 = parse_clash_proxy(sample)
+            self.assertTrue(sb1, f"Failed to parse {sample['name']}")
+            dae_block = to_dae_nodes([sb1])
+            m = re.search(r"'[^']+':\s*'([^']+)'", dae_block)
+            self.assertIsNotNone(m, f"Failed to export dae URI for {sample['name']}: {dae_block}")
+            sb2 = parse_uri(m.group(1))
+            self.assertEqual(sb1, sb2, f"Round-trip mismatch for {sample['name']}")
+
+
+    def test_to_dae_nodes_nested_none_resilience_and_bool_max_nodes_rejected(self):
+        """验证 to_dae_nodes 在 tls/reality/utls/obfs/transport/alter_id 显式为 None 或非字典时零崩溃，且拦截布尔型 max_nodes=True。"""
+        from sub_parser import to_dae_nodes, filter_nodes, parse_clash_proxy
+        for ntype in ("vless", "vmess", "trojan", "hysteria2", "tuic", "anytls", "shadowsocks"):
+            out = to_dae_nodes([{
+                "type": ntype, "tag": None, "server": "1.1.1.1", "server_port": 443,
+                "uuid": "u1", "password": "p1", "method": "aes-128-gcm",
+                "alter_id": None,
+                "tls": {"enabled": True, "reality": None, "utls": None, "alpn": [None, 123, "h2"]},
+                "obfs": {"type": "salamander", "password": None},
+                "transport": {"type": "ws", "path": None, "headers": None, "host": None},
+                "server_ports": [None, "20000:30000"],
+            }])
+            self.assertIn("'node':", out)
+            self.assertNotIn("'None':", out)
+        with self.assertRaises(ValueError):
+            filter_nodes([], max_nodes=True)
+        vm_bool_aid = parse_clash_proxy({"name": "v", "type": "vmess", "server": "1.1.1.1", "port": 443, "uuid": "u1", "alterId": True})
+        self.assertEqual(vm_bool_aid["alter_id"], 0)
+
 if __name__ == "__main__":
     unittest.main()

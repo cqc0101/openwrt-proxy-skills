@@ -2,6 +2,52 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
+## [0.6.1] - 2026-11-11
+
+### 第七轮全栈属性模糊测试、全协议往返无损对齐与发布级终审闭环 (Property-Based Fuzzing & Release Candidate)
+
+- **[高危] 为 `check_config.py` 注入全字段异构类型守卫、FakeIP 引导死锁拦截与 Hysteria2 `server_ports` 范围校验 (R7-01)**：
+  - 为 `tag`、`route.default_domain_resolver`、`route.default_http_client`、`route.final`、`route.rules[].outbound/rule_set`、`dns.final`、`dns.rules[].server/rule_set`、`dns.servers[].detour/domain_resolver`、`outbounds[].outbounds/default/detour/domain_resolver`、`http_clients[].detour`、`route.rule_set[].download_detour` 全面增加 `isinstance(..., str)` 类型守卫，彻底根除手改 JSON 误传数组/对象触发 `TypeError: unhashable type: 'list'/'dict'` 崩溃的缺陷；
+  - 拦截 `default_domain_resolver` / `domain_resolver` 指向 `type: "fakeip"` 服务器的自环死锁配置，识别出站节点自身 `domain_resolver`，并新增 `hysteria2` `server_ports` 范围格式（`起:止` 且 `1 <= 起 <= 止 <= 65535`）与 `inbounds[].address` 类型校验。
+- **[高危] 全链路剥离 UTF-8 BOM (`\ufeff`) 并统一升级 `utf-8-sig` 文件读取 (R7-02)**：
+  - 在 `safe_b64decode`、`_b64_decode`、`parse_uri`、`parse_subscription_text`、`parse_clash_yaml_pure_python`、`_extract_clash_proxies` 入口剥离 `\ufeff`，并将本地订阅与配置文件读取统一升级为 `utf-8-sig`，彻底解决 Windows 记事本/PowerShell 保存的带 BOM 订阅或配置文件解析返回 0 节点的问题。
+- **[中危] 补齐 Hysteria2 列表型/反转端口跳跃门禁与 7 大协议 `Clash <-> sing-box <-> dae <-> URI` 往返无损对齐 (R7-03)**：
+  - `_normalize_port_ranges` 原生支持 Clash Meta 列表型 `ports: ["20000-30000", "40000-50000"]` 与字符串格式，遇到任意反转或越界端口段立即拒绝，杜绝坏节点静默混入；
+  - `parse_clash_proxy` 仅在带宽数值 `> 0` 时写入 `up_mbps` / `down_mbps`（避免 `up: auto` 产生非法 `0`），并补齐 VLESS / Trojan / VMess 的 `utls` (`client-fingerprint`) 映射与 URI/JSON 导出，实现 7 大协议全字段往返 100% 一致；
+  - 修复 `sub_parser.py` 块级字典锚点越界吞并同缩进列表项的边界问题，恢复 `_unquote_yaml_key` 精确剥离，并确保 `to_dae_nodes` 跳过残缺节点时不挤占合法同名节点序号。
+- **[中危] 增强 `check_dae_syntax.py` 单引号上游死循环检测、连字符条件兼容与转义反斜杠闭合识别 (R7-04)**：
+  - 升级 `response` 私网重查死循环正则以拦截单引号包裹的目标（如 `ip(geoip:private) -> 'googledns'`），将 `[^->\}]*` / `[^->\n]*` 替换为 `(?:(?!->)[^{}])*` 兼容带 `-` 的规则条件（如 `dport(53-5353)`），修正末尾转义反斜杠 `'pass\\'` 的引号闭合判定，并将空节点池检测统一收口至 `_extract_named_block`。
+- **[中危] 统一 `diagnose_dns.sh` 第 4 关 AAAA 探测回退判据与多冒号 IPv6 正则 (R7-05)**：
+  - 第 4 关 `nslookup` 分支统一采用 `Name:|answer:|NXDOMAIN|can't find` 判断有效响应，`dig` 分支补齐空输出回退与 `^([0-9a-fA-F]*:){2,}[0-9a-fA-F]*$` 精确正则。
+- **[中危] 调整 `setup_openwrt_network.sh` 控制流顺序并补齐模式切换与断电重启基线恢复 (R7-06)**：
+  - 将 `--confirm`、`--watchdog`、`--revert` 移至 `LAN_INDEX` 非空检查之前，确保防火墙配置异常时仍可可靠解除看门狗并执行回滚；从 `--bypass` 切回主路由模式时自动恢复 `ORIG_LAN_MASQ`，并在 `99-proxy-boot-guard` 中联动触发 `--revert`。
+- **[修复] 根除中文 Windows (`cp936`/`gbk`) 控制台下 `subprocess.run(..., text=True)` 后台 `_readerthread` 抛出 `UnicodeDecodeError` 的隐患**：
+  - 为全仓库所有 `subprocess.run(..., text=True)` 调用显式注入 `encoding="utf-8", errors="replace"`，并在 `test_structure.py` 中新增 AST 语法树扫描门禁单测，确保在中文 Windows PowerShell / CMD 下零异常运行。
+- **[单测] 全量单元测试矩阵扩充至 266 项 (100% PASS)**：
+  - 完整保留 `.github/workflows/ci.yml`、`.gitignore`、`.gitattributes`，清理全部 `__pycache__` 缓存，266 项单测、5 阶段 Mock 仿真流水线与 12 轮压力测试矩阵全量通过。
+
+## [0.6.0] - 2026-11-11
+
+### 第六轮合流代码终审、正则污染与缩进基线修复闭环 (Deep Post-Merge Adversarial Audit & Zero-Defect Release)
+
+- **[高危] 修复 `check_dae_syntax.py` 合流后未掩码 URI/正则导致悬空引用漏报及引号内 `fallback:` 误报 (R6-AUDIT-01)**：
+  - `0.5.9` 合流版移除了 `node_body`、`up_body`、`group_body` 的引号掩码，导致 `node` URI 中的 `vless:` / `.4:443`、`upstream` URL 中的 `udp:` / `.com:53` 以及 `group` 内部 `regex: '^HK0{1,2}$'` 被误提取为已定义节点/上游/策略组，致使 `-> vless`、`-> udp`、`fallback: com` 等真实悬空引用逃逸；同时 `_extract_rule_targets` 在引号状态机外匹配 `fallback:`，导致 `domain(keyword: 'fallback: xxx')` 触发假阳性报错；
+  - 现已新增引号与冒号状态机函数 `_extract_kv_keys`、花括号层级感知函数 `_extract_group_names`，并将 `fallback:` 检测移入 `_extract_rule_targets` 的引号外分支，实现单/双引号组名支持与零误报/零漏报的完全统一。
+- **[高危] 补齐 `sub_parser.py` 顶层单行标量/流列表锚点 (`key: &a val`) 与多行块列表锚点支持 (R6-AUDIT-02)**：
+  - 原步骤 2 锚点预扫描仅匹配 `key: &a {...}` 与行尾无值的 `key: &a`，导致顶层定义的单行标量锚点（如 `common_port: &p 8443`）或列表锚点（`common_alpn: &a [h2, http/1.1]`）被漏扫，且多行块列表锚点被 `_parse_indented_block` 当作字典解析；
+  - 现已将单行锚点扫描推广至任意标量/流式结构，并在 `_parse_indented_block` 中支持纯列表块锚点与流式字典内属性级 `&anchor` 注册。
+- **[高危] 修复 `sub_parser.py` 独立行节点锚点 (`-   &p1`) 锁定错误根缩进导致子字典 `ws-opts` 被拍平的缺陷 (R6-AUDIT-03)**：
+  - 当节点首行为带多空格的独立锚点（如 `  -   &p1`，列号为 6）而下一行属性键缩进为 4 时，原 `_parse_indented_block` 将根栈缩进 `stack[0][0]` 固定为 `6`，导致缩进为 6 的 `ws-opts` 子属性 `path: /p1` 因 `6 > 6` 为假而被拍平至顶层、`ws-opts` 变为 `None`；
+  - 现已在跳过独立锚点行后，将 `stack[0][0]` 动态对齐至首个真实属性键的缩进列。
+- **[中危] 恢复 `to_dae_nodes` 缺失鉴权凭证过滤门禁并清理 `parse_clash_proxy` 合流冗余代码 (R6-AUDIT-04)**：
+  - 恢复 `to_dae_nodes` 中对 `vless`/`vmess`/`tuic` 的 `uuid` 判空与 `hysteria2`/`trojan`/`shadowsocks`/`tuic`/`anytls` 的 `password` 判空过滤，清理 `parse_clash_proxy` 中 `tuic` 分支重复的 3 行判空代码。
+- **[中危] 修复 `check_config.py` 在 `route.default_domain_resolver` 为字典格式时抛出 `TypeError` 崩溃的缺陷 (R6-AUDIT-05)**：
+  - 兼容 sing-box 1.12+ 字典形式的 `route.default_domain_resolver: {"server": "..."}`，消除 `resolver not in dns_servers` 触发的 `unhashable type: 'dict'` 异常。
+- **[低危] 加固 `diagnose_dns.sh` 的 `dig` 分支 IPv6 过滤与回退逻辑，清理 `setup_openwrt_network.sh` 重复指令及 `__pycache__` (R6-AUDIT-06)**：
+  - `diagnose_dns.sh` 的 `dig` 分支支持 `@127.0.0.1` 空输出回退并修正 IPv6 多冒号/双冒号正则（支持 `::`）；移除 `setup_openwrt_network.sh` 中重复的 `uci del_list ... tun0`；全面清理测试目录 `__pycache__` 字节码缓存。
+- **[单测] 单元测试矩阵扩充至 254 项 (全量 PASS)**：
+  - 新增覆盖上述全部 6 项深层缺陷的对抗回归单测与真实 `/bin/sh` 子进程探针验证。
+
 ## [0.5.9] - 2026-11-11
 
 ### 第六轮极限边界审计、深度双分支合流与状态机全量清零 (Round 6 Unified Convergence & Zero-Bug Release)

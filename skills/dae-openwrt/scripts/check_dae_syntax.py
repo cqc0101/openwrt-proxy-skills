@@ -94,14 +94,96 @@ def _extract_named_block(text, block_name, start_pos=0):
     return (text[m.end():i - 1] if depth == 0 else None), m.start(), i
 
 
+def _extract_kv_keys(body: str):
+    """在引号感知状态机下提取 node / upstream 块中的键名（支持裸键名与单/双引号包裹键名，绝不误匹配冒号后的 URI 内容）。"""
+    keys = set()
+    for raw_l in body.splitlines():
+        l = raw_l.strip()
+        if not l:
+            continue
+        # 支持单行多个 key: 'val' 定义：扫描引号外的 ':'，并提取紧邻 ':' 左侧的标识符或引号包裹标识符
+        in_s = False
+        in_d = False
+        i = 0
+        seg_start = 0
+        while i < len(l):
+            ch = l[i]
+            if ch == "\\" and (in_s or in_d) and i + 1 < len(l):
+                i += 2
+                continue
+            if ch == "'" and not in_d:
+                in_s = not in_s
+            elif ch == '"' and not in_s:
+                in_d = not in_d
+            elif not in_s and not in_d and ch == ":":
+                left = l[seg_start:i].strip()
+                m_k = re.search(r"(?:^|\s)['\"]?([a-zA-Z0-9_-]+)['\"]?$", left)
+                if m_k:
+                    keys.add(m_k.group(1))
+                # 跳过冒号右侧的引号值或非空白 token
+                j = i + 1
+                while j < len(l) and l[j].isspace():
+                    j += 1
+                if j < len(l) and l[j] in ("'", '"'):
+                    q_ch = l[j]
+                    j += 1
+                    while j < len(l):
+                        if l[j] == "\\" and j + 1 < len(l):
+                            j += 2
+                            continue
+                        if l[j] == q_ch:
+                            j += 1
+                            break
+                        j += 1
+                else:
+                    while j < len(l) and not l[j].isspace():
+                        j += 1
+                seg_start = j
+                i = j
+                continue
+            i += 1
+    return keys
+
+
+def _extract_group_names(group_body: str):
+    """在引号与花括号层级感知下提取 group 块顶层定义的策略组名（支持单/双引号包裹组名，忽略组内 filter 正则如 '{1,2}'）。"""
+    groups = set()
+    in_s = False
+    in_d = False
+    depth = 0
+    i = 0
+    seg_start = 0
+    while i < len(group_body):
+        ch = group_body[i]
+        if ch == "\\" and (in_s or in_d) and i + 1 < len(group_body):
+            i += 2
+            continue
+        if ch == "'" and not in_d:
+            in_s = not in_s
+        elif ch == '"' and not in_s:
+            in_d = not in_d
+        elif not in_s and not in_d:
+            if ch == "{":
+                if depth == 0:
+                    left = group_body[seg_start:i].strip()
+                    m_g = re.search(r"(?:^|\s)['\"]?([a-zA-Z0-9_-]+)['\"]?$", left)
+                    if m_g:
+                        groups.add(m_g.group(1))
+                depth += 1
+            elif ch == "}":
+                depth = max(0, depth - 1)
+                if depth == 0:
+                    seg_start = i + 1
+        i += 1
+    return groups
+
+
 def _extract_rule_targets(body: str):
     targets = []
     for r_line in body.splitlines():
         r_line = r_line.strip()
         if not r_line:
             continue
-        for m_fb in re.finditer(r"\bfallback:\s*['\"]?([a-zA-Z0-9_-]+)['\"]?", r_line):
-            targets.append(m_fb.group(1))
         in_s = False
         in_d = False
         i_idx = 0
@@ -120,6 +202,11 @@ def _extract_rule_targets(body: str):
                     m_tgt = re.match(r"^['\"]?([a-zA-Z0-9_-]+)['\"]?", after_str)
                     if m_tgt:
                         targets.append(m_tgt.group(1))
+                elif r_line[i_idx:].startswith("fallback:") and (i_idx == 0 or not re.match(r"[a-zA-Z0-9_-]", r_line[i_idx - 1])):
+                    after_fb = r_line[i_idx + len("fallback:"):].strip()
+                    m_fb = re.match(r"^['\"]?([a-zA-Z0-9_-]+)['\"]?", after_fb)
+                    if m_fb:
+                        targets.append(m_fb.group(1))
             i_idx += 1
     return targets
 
@@ -128,7 +215,7 @@ def check_dae_syntax(filepath):
     errors = []
     warnings = []
 
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, 'r', encoding='utf-8-sig') as f:
         raw_lines = f.readlines()
 
     lines = [_strip_comments(l) for l in raw_lines]
@@ -141,10 +228,15 @@ def check_dae_syntax(filepath):
             continue
         in_sq = False
         in_dq = False
-        for idx_c, ch in enumerate(line):
-            if ch == "'" and not in_dq and (idx_c == 0 or line[idx_c - 1] != "\\"):
+        idx_c = 0
+        while idx_c < len(line):
+            ch = line[idx_c]
+            if ch == "\\" and (in_sq or in_dq) and idx_c + 1 < len(line):
+                idx_c += 2
+                continue
+            if ch == "'" and not in_dq:
                 in_sq = not in_sq
-            elif ch == '"' and not in_sq and (idx_c == 0 or line[idx_c - 1] != "\\"):
+            elif ch == '"' and not in_sq:
                 in_dq = not in_dq
             elif not in_sq and not in_dq:
                 if ch == "{":
@@ -154,11 +246,13 @@ def check_dae_syntax(filepath):
                     if brace_depth < 0:
                         errors.append(f"第 {idx} 行存在多余的右花括号 '}}': {line}")
                         brace_depth = 0
+            idx_c += 1
         if in_sq:
             errors.append(f"第 {idx} 行存在未配对闭合的单引号: {line}。请检查密码或名称中是否含有未转义的 '。")
         if in_dq:
             errors.append(f"第 {idx} 行存在未配对闭合的双引号: {line}。")
-        line_no_ext = re.sub(r'ext:\s*"[^"]*"', "", line)
+        line_no_sq = re.sub(r"'((?:\\.|[^'])*)'", "''", line)
+        line_no_ext = re.sub(r'ext:\s*"[^"]*"', "", line_no_sq)
         if '"' in line_no_ext:
             matches = re.findall(r'([\w\'\-]+:\s*"[^"]*"|->\s*"[^"]*"|\w+\([^)]*"[^"]*"[^)]*\))', line_no_ext)
             if matches:
@@ -176,7 +270,7 @@ def check_dae_syntax(filepath):
         warnings.append("[网卡绑定提醒] global 块中未声明 'wan_interface: auto'。")
 
     # 3. 检查 must_direct 防环（宿主机 DNS 组件保护）
-    has_dnsmasq_protect = re.search(r'pname\([^)]*dnsmasq[^)]*\)[^->\}]*->\s*must_direct', content, re.DOTALL)
+    has_dnsmasq_protect = re.search(r'pname\([^)]*dnsmasq[^)]*\)(?:(?!->)[^{}])*->\s*must_direct', content, re.DOTALL)
     if not has_dnsmasq_protect:
         errors.append("[DNS 死循环高危] routing 规则中未发现针对 dnsmasq 的 'must_direct' 放行规则！"
                       "在 OpenWrt 上，宿主机 DNS 组件的 53 端口流量必须于规则顶部放行，否则极易形成 DNS 回环死锁。")
@@ -188,13 +282,20 @@ def check_dae_syntax(filepath):
                         "在 dae 语义中，'既不属于 A 也不属于 B' 必须合并写在同一行内"
                         "（如 '!domain(geosite:a, geosite:b) -> proxy'），拆成两行会变成 OR 逻辑，大量流量被误送代理。")
 
-    # 5. 检查 DNS 污染重查闭环
+    # 5. 检查 DNS 污染重查闭环（使用引号与花括号配对感知的 _extract_named_block，防止正则量词 '{1,2}' 提前截断 response 块）
     if "ip(geoip:private)" in content:
-        resp_blocks = re.findall(r'response\s*\{([^}]*)\}', content, flags=re.S)
+        resp_blocks = []
+        _r_pos = 0
+        while _r_pos < len(content):
+            _rb, _, _r_end = _extract_named_block(content, "response", _r_pos)
+            if _rb is None or _r_end <= _r_pos:
+                break
+            resp_blocks.append(_rb)
+            _r_pos = _r_end
         for block in resp_blocks:
-            m_relookup = re.search(r'ip\(geoip:private\)[^->\n]*->\s*(?!accept\b|reject\b)\w+', block)
+            m_relookup = re.search(r"ip\(geoip:private\)(?:(?!->)[^\n])*->\s*['\"]?(?!accept\b|reject\b|asis\b|must_asis\b)[a-zA-Z0-9_-]+", block)
             if m_relookup:
-                m_accept = re.search(r'upstream\([^)]*\)\s*->\s*accept', block)
+                m_accept = re.search(r"upstream\([^)]*\)\s*->\s*['\"]?accept\b", block)
                 if not m_accept or m_accept.start() >= m_relookup.start():
                     errors.append("[DNS 投毒死循环高危] 配置了私网 IP 污染重查，但 response 块中缺少位于其前的"
                                   "可信上游白名单放行（'upstream(...) -> accept'），会导致无限递归重查！")
@@ -204,7 +305,7 @@ def check_dae_syntax(filepath):
     node_body, _, _ = _extract_named_block(content, "node")
     defined_nodes = set()
     if node_body is not None:
-        defined_nodes = set(re.findall(r"['\"\s]?([a-zA-Z0-9_-]+)['\"\s]?\s*:", node_body))
+        defined_nodes = _extract_kv_keys(node_body)
         for uri_m in re.findall(r"'((?:\\.|[^'])*)'|\"((?:\\.|[^\"])*)\"", node_body):
             uri_s = uri_m[0] or uri_m[1]
             if "#" in uri_s:
@@ -213,8 +314,8 @@ def check_dae_syntax(filepath):
                     defined_nodes.add(frag)
 
     group_body, _, _ = _extract_named_block(content, "group")
-    if group_body is not None:
-        defined_groups = set(re.findall(r"['\"\s]?([a-zA-Z0-9_-]+)['\"\s]?\s*\{", group_body))
+    defined_groups = _extract_group_names(group_body) if group_body is not None else set()
+    if group_body is not None or node_body is not None:
         builtin_outbounds = {"direct", "must_direct", "block", "must_rules"}
         valid_outbounds = builtin_outbounds | defined_groups | defined_nodes
         dns_body, dns_s, dns_e = _extract_named_block(content, "dns")
@@ -230,18 +331,16 @@ def check_dae_syntax(filepath):
         up_body, _, _ = _extract_named_block(dns_body, "upstream")
         dns_rt_body, _, _ = _extract_named_block(dns_body, "routing")
         if up_body is not None and dns_rt_body is not None:
-            defined_ups = set(re.findall(r"['\"\s]?([a-zA-Z0-9_-]+)['\"\s]?\s*:", up_body))
+            defined_ups = _extract_kv_keys(up_body)
             builtin_dns_actions = {"accept", "reject", "asis", "must_asis", "must_rules"}
             for tgt in _extract_rule_targets(dns_rt_body):
                 if tgt not in builtin_dns_actions and tgt not in defined_ups:
                     errors.append(f"[悬空 DNS 上游引用] dns.routing 引用了未在 upstream 块中定义的 DNS 上游: '{tgt}'！")
 
     # 6. 检查 node 与 subscription 是否同时为空（模板未注入真实节点提醒）
-    if re.search(r'\bnode\s*\{', content) and re.search(r'\bsubscription\s*\{', content):
-        node_bodies = re.findall(r'\bnode\s*\{([^}]*)\}', content, flags=re.S)
-        sub_bodies = re.findall(r'\bsubscription\s*\{([^}]*)\}', content, flags=re.S)
-        has_active_node = any(b.strip() for b in node_bodies) or any(b.strip() for b in sub_bodies)
-        if not has_active_node:
+    sub_body, _, _ = _extract_named_block(content, "subscription")
+    if node_body is not None and sub_body is not None:
+        if not node_body.strip() and not sub_body.strip():
             warnings.append("[空节点池提醒] node 与 subscription 块均为空，部署前请使用 sub_to_dae.py 注入真实节点或订阅。")
 
     return errors, warnings

@@ -49,8 +49,8 @@ except ImportError:
 
 
 def safe_b64decode(s: str) -> str:
-    """安全解码 Base64 字符串（同时兼容标准与 urlsafe 字母表，支持 UTF-8 与 GB18030）"""
-    s = re.sub(r"\s+", "", s or "")
+    """安全解码 Base64 字符串（同时兼容标准与 urlsafe 字母表，支持 UTF-8 (含 BOM 剥离) 与 GB18030）"""
+    s = re.sub(r"\s+", "", (s or "").replace("\ufeff", ""))
     if not s:
         return ""
     missing_padding = len(s) % 4
@@ -64,7 +64,7 @@ def safe_b64decode(s: str) -> str:
         except Exception:
             return ""
     try:
-        return raw.decode('utf-8')
+        return raw.decode('utf-8-sig')
     except UnicodeDecodeError:
         try:
             return raw.decode('gb18030')
@@ -127,7 +127,7 @@ def fetch_subscription(url: str, timeout: int = 15) -> str:
                 raise RuntimeError(f"订阅响应体积超过安全上限 ({MAX_SUB_BYTES} bytes)")
             content = _decompress(raw_bytes, resp.headers.get("Content-Encoding", ""))
             try:
-                return content.decode('utf-8')
+                return content.decode('utf-8-sig')
             except UnicodeDecodeError:
                 try:
                     return content.decode('gb18030')
@@ -139,14 +139,22 @@ def fetch_subscription(url: str, timeout: int = 15) -> str:
 
 def _apply_clash_alpn(tls_obj: Dict[str, Any], p: Dict[str, Any]):
     alpn = p.get("alpn")
-    if not alpn:
+    if not alpn or isinstance(alpn, (bool, dict)):
         return
     if isinstance(alpn, list):
-        cleaned = [str(x).strip() for x in alpn if str(x).strip()]
+        cleaned = [str(x).strip() for x in alpn if x is not None and not isinstance(x, (bool, dict, list)) and str(x).strip()]
+    elif isinstance(alpn, str):
+        cleaned = [x.strip() for x in alpn.split(",") if x.strip()]
     else:
-        cleaned = [x.strip() for x in str(alpn).split(",") if x.strip()]
+        cleaned = []
     if cleaned:
         tls_obj["alpn"] = cleaned
+
+
+def _apply_clash_utls(tls_obj: Dict[str, Any], p: Dict[str, Any], default_fp: str = ""):
+    fp = str(p.get("client-fingerprint") or p.get("fingerprint") or default_fp).strip()
+    if fp:
+        tls_obj["utls"] = {"enabled": True, "fingerprint": fp}
 
 
 def _apply_clash_smux(ob: Dict[str, Any], p: Dict[str, Any]):
@@ -210,8 +218,12 @@ def _apply_clash_transport(ob: Dict[str, Any], p: Dict[str, Any], allow_udp: boo
             "path": path_val or "/"
         }
         raw_host = h2_opts.get("host")
-        if raw_host:
-            hosts = [str(x).strip() for x in (raw_host if isinstance(raw_host, list) else [raw_host]) if str(x).strip()]
+        if raw_host and not isinstance(raw_host, (bool, dict)):
+            hosts = [
+                str(x).strip()
+                for x in (raw_host if isinstance(raw_host, list) else [raw_host])
+                if x is not None and not isinstance(x, (bool, dict, list)) and str(x).strip()
+            ]
             if hosts:
                 ob["transport"]["host"] = hosts
         return True
@@ -297,6 +309,7 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
             }
         }
         _apply_clash_alpn(ob["tls"], p)
+        _apply_clash_utls(ob["tls"], p)
         if not _apply_clash_transport(ob, p, allow_udp=False):
             return {}
         _apply_clash_smux(ob, p)
@@ -320,18 +333,23 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
             }
         }
         _apply_clash_alpn(ob["tls"], p)
-        ports_spec = p.get("ports") or p.get("mport")
-        if ports_spec:
-            _, port_ranges = _normalize_port_ranges(str(ports_spec))
-            if port_ranges:
-                ob["server_ports"] = port_ranges
-        if p.get("up") is not None:
-            ob["up_mbps"] = int(re.sub(r"[^\d]", "", str(p["up"])) or 0)
-        if p.get("down") is not None:
-            ob["down_mbps"] = int(re.sub(r"[^\d]", "", str(p["down"])) or 0)
-        if p.get("obfs"):
+        ports_spec = p.get("ports") if p.get("ports") is not None else p.get("mport")
+        if ports_spec is not None and str(ports_spec).strip() != "" and ports_spec != []:
+            _, port_ranges = _normalize_port_ranges(ports_spec)
+            if not port_ranges:
+                return {}
+            ob["server_ports"] = port_ranges
+        if p.get("up") is not None and not isinstance(p.get("up"), bool):
+            up_val = int(re.sub(r"[^\d]", "", str(p["up"])) or 0)
+            if up_val > 0:
+                ob["up_mbps"] = up_val
+        if p.get("down") is not None and not isinstance(p.get("down"), bool):
+            down_val = int(re.sub(r"[^\d]", "", str(p["down"])) or 0)
+            if down_val > 0:
+                ob["down_mbps"] = down_val
+        if isinstance(p.get("obfs"), str) and p["obfs"].strip():
             ob["obfs"] = {
-                "type": str(p["obfs"]),
+                "type": p["obfs"].strip(),
                 "password": str(p.get("obfs-password") or "")
             }
         return ob
@@ -381,6 +399,7 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                 "server_name": str(p.get("servername") or p.get("sni") or server),
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
+            _apply_clash_utls(ob["tls"], p, default_fp="chrome")
             _apply_clash_alpn(ob["tls"], p)
 
         _apply_clash_smux(ob, p)
@@ -391,10 +410,13 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         if not uuid:
             return {}
         raw_aid = p.get("alterId") if p.get("alterId") is not None else p.get("aid", 0)
-        try:
-            alter_id = int(raw_aid if raw_aid is not None else 0)
-        except (ValueError, TypeError):
+        if isinstance(raw_aid, bool) or raw_aid is None:
             alter_id = 0
+        else:
+            try:
+                alter_id = int(raw_aid)
+            except (ValueError, TypeError):
+                alter_id = 0
         cipher = str(p.get("cipher") or "auto")
         tls_enabled = bool(p.get("tls", False))
 
@@ -413,6 +435,7 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
                 "server_name": str(p.get("servername") or p.get("sni") or server),
                 "insecure": bool(p.get("skip-cert-verify", False))
             }
+            _apply_clash_utls(ob["tls"], p)
             _apply_clash_alpn(ob["tls"], p)
         if not _apply_clash_transport(ob, p, allow_udp=False):
             return {}
@@ -423,9 +446,6 @@ def parse_clash_proxy(p: Dict[str, Any]) -> Dict[str, Any]:
         uuid = str(p.get("uuid") or "").strip()
         password = str(p.get("password") or "").strip()
         if not uuid or not password:
-            return {}
-        password = str(p.get("password") or "").strip()
-        if not uuid:
             return {}
         sni = str(p.get("sni") or p.get("servername") or server)
         cc = str(p.get("congestion-controller") or p.get("congestion_control") or "bbr")
@@ -595,7 +615,7 @@ def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Any]) -> Any:
     return v
 
 
-def _merge_yaml_anchors(target: Dict[str, Any], v_s: str, anchors: Dict[str, Dict[str, Any]]):
+def _merge_yaml_anchors(target: Dict[str, Any], v_s: str, anchors: Dict[str, Any]):
     """支持单个锚点 (<<: *a) 或多锚点列表 (<<: [*a, *b]) 合并（遵循 YAML 标准：列表中排在前面的锚点优先级更高）。"""
     import copy as _copy
     v = v_s.strip()
@@ -603,12 +623,12 @@ def _merge_yaml_anchors(target: Dict[str, Any], v_s: str, anchors: Dict[str, Dic
     if v.startswith("*"):
         refs.append(v[1:].strip())
     elif v.startswith("[") and v.endswith("]"):
-        for item in v[1:-1].split(","):
+        for item in _split_yaml_flow(v[1:-1], ","):
             it = item.strip()
             if it.startswith("*"):
                 refs.append(it[1:].strip())
     for ref in refs:
-        if ref in anchors:
+        if ref in anchors and isinstance(anchors[ref], dict):
             for ak, av in anchors[ref].items():
                 if ak not in target:
                     target[ak] = _copy.deepcopy(av)
@@ -622,14 +642,33 @@ def _parse_yaml_flow_map(inner: str, anchors: Dict[str, Dict[str, Any]]) -> Dict
         if ":" not in part:
             continue
         k, v = _split_yaml_kv(part)
-        k_s = k.strip().strip("\"'")
+        k_s = _unquote_yaml_key(k)
         v_s = v.strip()
         if k_s == "<<":
             _merge_yaml_anchors(res, v_s, anchors)
         else:
-            explicit[k_s] = _parse_yaml_scalar_or_flow(v_s, anchors)
+            item_anchor = None
+            if v_s.startswith("&"):
+                m_fa = re.match(r"^&([a-zA-Z0-9_-]+)\s+(.+)$", v_s)
+                if m_fa:
+                    item_anchor = m_fa.group(1)
+                    v_s = m_fa.group(2).strip()
+            val_parsed = _parse_yaml_scalar_or_flow(v_s, anchors)
+            explicit[k_s] = val_parsed
+            if item_anchor:
+                import copy as _cp
+                anchors[item_anchor] = _cp.deepcopy(val_parsed)
     res.update(explicit)
     return res
+
+
+def _unquote_yaml_key(k: str) -> str:
+    ks = k.strip()
+    if len(ks) >= 2 and ks[0] == ks[-1] and ks[0] in ("\"", "'"):
+        if ks[0] == "\"":
+            return ks[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        return ks[1:-1].replace("''", "'")
+    return ks
 
 
 def _split_yaml_kv(s: str) -> Tuple[str, str]:
@@ -683,20 +722,26 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
     3. 嵌套流式字典 (- {name: ..., ws-opts: {path: /ws, headers: {Host: a.com}}})
     4. 多级缩进块式字典与列表 (ws-opts -> headers -> Host 及 alpn 多行列表)
     """
-    clean_lines = [_strip_yaml_comment(raw_l) for raw_l in text.splitlines()]
+    text = (text or "").lstrip("\ufeff")
+    clean_lines = [_strip_yaml_comment(raw_l.lstrip("\ufeff")) for raw_l in text.splitlines()]
     anchors: Dict[str, Dict[str, Any]] = {}
 
     # 1. 预备锚点容器（在下方单遍顺序扫描中统一解析流式与块式锚点，确保跨形态先后引用 100% 互通）
 
-    def _parse_indented_block(norm_lines: List[Tuple[int, str]]) -> Dict[str, Any]:
+    def _parse_indented_block(norm_lines: List[Tuple[int, str]]) -> Any:
         import copy as _copy
         if not norm_lines:
             return {}
+        # 若块级锚点本身是一个纯列表（如 common_alpn: &a \n - h2 \n - http/1.1）
+        if all(s.startswith("-") for _, s in norm_lines):
+            res_list = [_parse_yaml_scalar_or_flow(s[1:].strip(), anchors) for _, s in norm_lines]
+            return res_list
         p_dict: Dict[str, Any] = {}
         stack: List[Tuple[int, Any, str]] = [(norm_lines[0][0], p_dict, "dict")]
         pending_key: Optional[str] = None
         pending_anchor: Optional[str] = None
         inline_anchor_name: Optional[str] = None
+        root_indent_locked = False
 
         for indent, s in norm_lines:
             if s.startswith("&"):
@@ -707,6 +752,9 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
                 if m_anc:
                     inline_anchor_name = m_anc.group(1)
                     s = m_anc.group(2).strip()
+            if not root_indent_locked and len(stack) == 1 and not p_dict and pending_key is None:
+                stack[0] = (indent, p_dict, "dict")
+                root_indent_locked = True
 
             if pending_key is not None:
                 if indent > stack[-1][0] or (indent == stack[-1][0] and s.startswith("-")):
@@ -744,7 +792,7 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
                 continue
 
             k, v = _split_yaml_kv(s)
-            k_s = k.strip().strip("\"'")
+            k_s = _unquote_yaml_key(k)
             v_s = v.strip()
 
             item_anchor = None
@@ -781,20 +829,31 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
 
         return p_dict
 
-    # 2. 按文档顺序扫描流式锚点 (key: &a {...}) 与缩进块式锚点 (key: &a)
+    # 2. 按文档顺序扫描单行锚点 (key: &a {...} / [...] / scalar / - &a {...}) 与多行块式锚点 (key: &a / - &a)
     i = 0
     while i < len(clean_lines):
         line = clean_lines[i]
-        m_flow = re.match(r"^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*\{(.*)\}\s*$", line)
-        if m_flow:
-            anchors[m_flow.group(2)] = _parse_yaml_flow_map(m_flow.group(3), anchors)
+        m_inline = re.match(r"^\s*([a-zA-Z0-9_.\-\"']+)\s*:\s*&([a-zA-Z0-9_-]+)\s+(.+?)\s*$", line)
+        if m_inline:
+            anchors[m_inline.group(2)] = _parse_yaml_scalar_or_flow(m_inline.group(3), anchors)
             i += 1
             continue
-        m = re.match(r"^\s*([a-zA-Z0-9_-]+)\s*:\s*&([a-zA-Z0-9_-]+)\s*$", line)
-        if m:
-            a_name = m.group(2)
-            base_indent = len(line) - len(line.lstrip())
-            anchor_norm: List[Tuple[int, str]] = []
+        m_list_flow = re.match(r"^\s*-\s*&([a-zA-Z0-9_-]+)\s*\{(.*)\}\s*$", line)
+        if m_list_flow:
+            anchors[m_list_flow.group(1)] = _parse_yaml_flow_map(m_list_flow.group(2), anchors)
+            i += 1
+            continue
+        m_list_block = re.match(r"^\s*-\s*&([a-zA-Z0-9_-]+)(?:\s+(.*))?$", line)
+        if m_list_block and not (m_list_block.group(2) or "").strip().startswith("{"):
+            a_name = m_list_block.group(1)
+            dash_indent = len(line) - len(line.lstrip())
+            rem = (m_list_block.group(2) or "").strip()
+            anchor_norm = []
+            if rem:
+                dash_idx = line.index("-")
+                after = line[dash_idx + 1:]
+                c_indent = dash_idx + 1 + (len(after) - len(after.lstrip()))
+                anchor_norm.append((c_indent, f"&{a_name} {rem}"))
             i += 1
             while i < len(clean_lines):
                 sub_line = clean_lines[i]
@@ -803,7 +862,28 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
                     i += 1
                     continue
                 sub_indent = len(sub_line) - len(sub_line.lstrip())
-                if sub_indent <= base_indent:
+                if sub_indent <= dash_indent:
+                    break
+                anchor_norm.append((sub_indent, stripped_sub))
+                i += 1
+            if anchor_norm:
+                anchors[a_name] = _parse_indented_block(anchor_norm)
+            continue
+        m = re.match(r"^\s*([a-zA-Z0-9_.\-\"']+)\s*:\s*&([a-zA-Z0-9_-]+)\s*$", line)
+        if m:
+            a_name = m.group(2)
+            base_indent = len(line) - len(line.lstrip())
+            anchor_norm = []
+            i += 1
+            while i < len(clean_lines):
+                sub_line = clean_lines[i]
+                stripped_sub = sub_line.strip()
+                if not stripped_sub:
+                    i += 1
+                    continue
+                sub_indent = len(sub_line) - len(sub_line.lstrip())
+                is_list_anchor = (not anchor_norm) or anchor_norm[0][1].startswith("-")
+                if sub_indent < base_indent or (sub_indent == base_indent and not (is_list_anchor and stripped_sub.startswith("-"))):
                     break
                 anchor_norm.append((sub_indent, stripped_sub))
                 i += 1
@@ -889,7 +969,7 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
             continue
 
         p_dict = _parse_indented_block(norm_lines)
-        if p_dict:
+        if isinstance(p_dict, dict) and p_dict:
             parsed_proxies.append(p_dict)
 
     return parsed_proxies
@@ -897,6 +977,7 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
 
 def _extract_clash_proxies(text: str) -> List[Dict[str, Any]]:
     """从 Clash YAML 文本提取并转换节点列表（优先 PyYAML，无依赖或失败时回退内置解析器）。"""
+    text = (text or "").lstrip("\ufeff")
     results = []
     if HAS_YAML:
         try:
@@ -933,7 +1014,7 @@ def _extract_clash_proxies(text: str) -> List[Dict[str, Any]]:
 
 def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
     """智能解析订阅纯文本（支持 Base64、Clash YAML、Base64 包裹的 Clash YAML、多行 URI）"""
-    text = text.strip()
+    text = (text or "").lstrip("\ufeff").strip()
     if not text:
         return []
 
@@ -958,7 +1039,7 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
     results = []
     lines = text.splitlines()
     for line in lines:
-        line = line.strip()
+        line = line.lstrip("\ufeff").strip()
         if not line or line.startswith("#") or line.startswith("//"):
             continue
         try:
@@ -1024,7 +1105,7 @@ def filter_nodes(nodes: List[Dict[str, Any]],
 
     # 弱路由内存安全冗余：校验 max_nodes 并截取前 max_nodes 个节点
     if max_nodes is not None:
-        if int(max_nodes) < 1:
+        if isinstance(max_nodes, bool) or int(max_nodes) < 1:
             raise ValueError(f"max_nodes 必须为正整数 (>= 1)，当前值: {max_nodes!r}")
         if len(clean_nodes) > int(max_nodes):
             clean_nodes = clean_nodes[:int(max_nodes)]
@@ -1100,69 +1181,79 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
     tag_counts = {}
 
     for n in nodes:
-        raw_tag = n.get("tag", "node")
-        base_tag = re.sub(r"[\s/\\:\*\?\"<>\|']+", '-', str(raw_tag)).strip('-') or "node"
-        cnt = tag_counts.get(base_tag, 0) + 1
-        tag_counts[base_tag] = cnt
-        tag = base_tag if cnt == 1 else f"{base_tag}-{cnt}"
-        while tag in used_tags:
-            cnt += 1
-            tag_counts[base_tag] = cnt
-            tag = f"{base_tag}-{cnt}"
-        used_tags.add(tag)
-
         ntype = n.get("type")
         server = str(n.get("server") or "").strip()
         port = n.get("server_port")
         if not server or isinstance(port, bool) or not isinstance(port, int) or not (1 <= port <= 65535):
             continue
+        raw_tag = n.get("tag") or "node"
+        base_tag = re.sub(r"[\s/\\:\*\?\"<>\|']+", '-', str(raw_tag)).strip('-') or "node"
+        cnt = tag_counts.get(base_tag, 0) + 1
+        tag = base_tag if cnt == 1 else f"{base_tag}-{cnt}"
+        while tag in used_tags:
+            cnt += 1
+            tag = f"{base_tag}-{cnt}"
         frag = _q(tag)
         host = _uri_host(server)   # authority 部分：IPv6 必须 [v6]
         trans_part = _dae_transport_query(n)
         tls_obj = n.get("tls") if isinstance(n.get("tls"), dict) else {}
-        alpn_vals = tls_obj.get("alpn") if isinstance(tls_obj.get("alpn"), list) else []
-        alpn_part = f"&alpn={_q(','.join(str(a) for a in alpn_vals if a), safe=',')}" if alpn_vals else ""
+        reality_obj = tls_obj.get("reality") if isinstance(tls_obj.get("reality"), dict) else {}
+        utls_obj = tls_obj.get("utls") if isinstance(tls_obj.get("utls"), dict) else {}
+        alpn_vals = [str(a).strip() for a in (tls_obj.get("alpn") if isinstance(tls_obj.get("alpn"), list) else []) if a is not None and not isinstance(a, (bool, dict, list)) and str(a).strip()]
+        alpn_part = f"&alpn={_q(','.join(alpn_vals), safe=',')}" if alpn_vals else ""
 
         raw_uri = ""
         if ntype == "hysteria2":
             pw = _q(n.get("password", ""), safe=":")
+            if not pw:
+                continue
             tls = tls_obj
             sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             insecure = "&insecure=1" if tls.get("insecure") else ""
-            obfs = n.get("obfs", {})
+            obfs = n.get("obfs") if isinstance(n.get("obfs"), dict) else {}
             obfs_part = ""
-            if obfs and obfs.get("type"):
-                obfs_part = f"&obfs={_q(obfs.get('type'))}&obfs-password={_q(obfs.get('password', ''))}"
+            if obfs.get("type"):
+                obfs_part = f"&obfs={_q(obfs.get('type'))}&obfs-password={_q(obfs.get('password') or '')}"
             srv_ports = n.get("server_ports") if isinstance(n.get("server_ports"), list) else []
-            mport_part = f"&mport={_q(','.join(str(r).replace(':', '-') for r in srv_ports if r), safe=',-')}" if srv_ports else ""
+            mport_part = f"&mport={_q(','.join(str(r).replace(':', '-') for r in srv_ports if r is not None and str(r).strip()), safe=',-')}" if srv_ports else ""
             raw_uri = f"hysteria2://{pw}@{host}:{port}?sni={sni}{insecure}{alpn_part}{mport_part}{obfs_part}#{frag}"
         elif ntype == "vless":
             uuid = _q(n.get("uuid", ""))
-            flow = _q(n.get("flow", ""))
+            if not uuid:
+                continue
+            flow = _q(n.get("flow") or "")
             tls = tls_obj
             flow_part = f"&flow={flow}" if flow else ""
-            if tls.get("reality", {}).get("enabled"):
-                pbk = _q(tls["reality"].get("public_key", ""))
-                sid = _q(tls["reality"].get("short_id", ""))
+            if reality_obj.get("enabled"):
+                pbk = _q(reality_obj.get("public_key") or "")
+                if not pbk:
+                    continue
+                sid = _q(reality_obj.get("short_id") or "")
                 sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
-                fp = _q(tls.get("utls", {}).get("fingerprint", "chrome"))
+                fp = _q(utls_obj.get("fingerprint") or "chrome")
                 raw_uri = f"vless://{uuid}@{host}:{port}?security=reality&sni={sni}&pbk={pbk}&sid={sid}&fp={fp}{alpn_part}{flow_part}{trans_part}#{frag}"
             elif tls.get("enabled"):
                 sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
-                fp = _q(tls.get("utls", {}).get("fingerprint", "chrome"))
+                fp = _q(utls_obj.get("fingerprint") or "chrome")
                 insecure = "&allowInsecure=1" if tls.get("insecure") else ""
                 raw_uri = f"vless://{uuid}@{host}:{port}?security=tls&sni={sni}&fp={fp}{insecure}{alpn_part}{flow_part}{trans_part}#{frag}"
             else:
                 raw_uri = f"vless://{uuid}@{host}:{port}?security=none{flow_part}{trans_part}#{frag}"
         elif ntype == "trojan":
             pw = _q(n.get("password", ""))
+            if not pw:
+                continue
             tls = tls_obj
             sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             insecure = "&allowInsecure=1" if tls.get("insecure") else ""
-            raw_uri = f"trojan://{pw}@{host}:{port}?sni={sni}{insecure}{alpn_part}{trans_part}#{frag}"
+            tr_fp = utls_obj.get("fingerprint", "") if utls_obj.get("enabled") else ""
+            fp_part = f"&fp={_q(tr_fp)}" if tr_fp else ""
+            raw_uri = f"trojan://{pw}@{host}:{port}?sni={sni}{insecure}{fp_part}{alpn_part}{trans_part}#{frag}"
         elif ntype == "shadowsocks":
             method = n.get("method", "")
             pw = n.get("password", "")
+            if not method or not pw:
+                continue
             userpass = base64.b64encode(f"{method}:{pw}".encode()).decode()
             pl = str(n.get("plugin") or "").strip()
             pl_opts = str(n.get("plugin_opts") or "").strip()
@@ -1172,16 +1263,25 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
                 pl_query = f"/?plugin={_q(full_pl)}"
             raw_uri = f"ss://{userpass}@{host}:{port}{pl_query}#{frag}"
         elif ntype == "vmess":
-            uuid = n.get("uuid", "")
-            security = n.get("security", "auto")
-            alter_id = int(n.get("alter_id", 0))
-            tls = n.get("tls", {})
-            transport = n.get("transport", {})
-            net_type = transport.get("type", "tcp")
+            uuid = str(n.get("uuid") or "").strip()
+            if not uuid:
+                continue
+            security = str(n.get("security") or "auto")
+            raw_aid = n.get("alter_id", 0)
+            if isinstance(raw_aid, bool) or raw_aid is None:
+                alter_id = 0
+            else:
+                try:
+                    alter_id = int(raw_aid)
+                except (ValueError, TypeError):
+                    alter_id = 0
+            tls = tls_obj
+            transport = n.get("transport") if isinstance(n.get("transport"), dict) else {}
+            net_type = str(transport.get("type") or "tcp")
             # gRPC 的服务名存在 service_name；v2rayN 格式用 path 承载 serviceName
-            path = transport.get("path") or transport.get("service_name") or ""
+            path = str(transport.get("path") or transport.get("service_name") or "")
             ws_host = ""
-            headers = transport.get("headers", {})
+            headers = transport.get("headers")
             if isinstance(headers, dict):
                 ws_host = headers.get("Host", "")
                 if isinstance(ws_host, (list, tuple)):
@@ -1189,7 +1289,7 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             if not ws_host and transport.get("host"):
                 raw_th = transport.get("host")
                 if isinstance(raw_th, (list, tuple)):
-                    ws_host = ",".join(str(x) for x in raw_th if x)
+                    ws_host = ",".join(str(x) for x in raw_th if x is not None and str(x).strip())
                 else:
                     ws_host = str(raw_th)
             vm = {
@@ -1202,13 +1302,15 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
                 "scy": security,
                 "net": net_type,
                 "type": "none" if net_type == "tcp" else net_type,
-                "host": ws_host,
+                "host": str(ws_host or ""),
                 "path": path,
                 "tls": "tls" if tls.get("enabled") else "",
                 "sni": _bare_host(tls.get("server_name") or server) if tls.get("enabled") else ""
             }
             if alpn_vals:
-                vm["alpn"] = ",".join(str(a) for a in alpn_vals if a)
+                vm["alpn"] = ",".join(alpn_vals)
+            if utls_obj.get("enabled") and utls_obj.get("fingerprint"):
+                vm["fp"] = str(utls_obj["fingerprint"])
             if tls.get("insecure"):
                 vm["allowInsecure"] = 1
             b64 = base64.b64encode(json.dumps(vm, ensure_ascii=False).encode()).decode()
@@ -1216,7 +1318,9 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
         elif ntype == "tuic":
             uuid = _q(n.get("uuid", ""))
             pw = _q(n.get("password", ""))
-            tls = n.get("tls", {})
+            if not uuid or not pw:
+                continue
+            tls = tls_obj
             sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             cc = _q(n.get("congestion_control") or "bbr")
             urm = _q(n.get("udp_relay_mode") or "native")
@@ -1224,12 +1328,16 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             raw_uri = f"tuic://{uuid}:{pw}@{host}:{port}?congestion_control={cc}&udp_relay_mode={urm}&sni={sni}{insecure}{alpn_part}#{frag}"
         elif ntype == "anytls":
             pw = _q(n.get("password", ""))
+            if not pw:
+                continue
             tls = tls_obj
             sni = _q(_bare_host(tls.get("server_name") or server), safe=".:-")
             insecure = "&insecure=1" if tls.get("insecure") else ""
             raw_uri = f"anytls://{pw}@{host}:{port}?sni={sni}{insecure}{alpn_part}#{frag}"
 
         if raw_uri:
+            tag_counts[base_tag] = cnt
+            used_tags.add(tag)
             # 严格防止 URI 中的单引号破坏 .dae 的 '...' 语法定界符（转为合法 RFC 3986 %27）
             safe_uri = raw_uri.replace("'", "%27")
             lines.append(f"  '{tag}': '{safe_uri}'")

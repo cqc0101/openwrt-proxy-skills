@@ -93,5 +93,36 @@ class TestStructureMatchesDocs(unittest.TestCase):
         self.assertEqual(orphans, [], f"references 下存在未被任何文档引用的孤儿文件: {orphans}")
 
 
+
+    def test_all_subprocess_run_text_calls_specify_utf8_encoding(self):
+        """防止中文 Windows (cp936/gbk) 下 subprocess.run(..., text=True) 因未指定 encoding='utf-8' 在 _readerthread 中抛出 UnicodeDecodeError。"""
+        import ast
+        for root, dirs, files in os.walk(REPO):
+            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__")]
+            for fn in files:
+                if not fn.endswith(".py"):
+                    continue
+                fpath = os.path.join(root, fn)
+                with open(fpath, "r", encoding="utf-8-sig") as f:
+                    tree = ast.parse(f.read(), filename=fpath)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call):
+                        func = node.func
+                        is_sub_run = (
+                            isinstance(func, ast.Attribute)
+                            and func.attr == "run"
+                            and isinstance(func.value, ast.Name)
+                            and func.value.id == "subprocess"
+                        )
+                        if is_sub_run:
+                            kw_map = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+                            if "text" in kw_map and getattr(kw_map["text"], "value", None) is True:
+                                self.assertIn(
+                                    "encoding",
+                                    kw_map,
+                                    f"{fpath}:{node.lineno} 调用 subprocess.run(..., text=True) 必须显式指定 encoding='utf-8' 以兼容中文 Windows GBK 控制台！",
+                                )
+
+
 if __name__ == "__main__":
     unittest.main()

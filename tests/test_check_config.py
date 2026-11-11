@@ -353,5 +353,79 @@ class TestAuditHardeningCheckConfig(unittest.TestCase):
         })
         self.assertTrue(any("既未指定 domain_resolver" in e for e in errs), errs)
 
+    def test_dict_form_route_default_domain_resolver_supported(self):
+        """验证 route.default_domain_resolver 为字典格式 {"server": "..."} 时不会触发 TypeError: unhashable type: 'dict'。"""
+        errs, _ = run({
+            "route": {"default_domain_resolver": {"server": "ghost-dns"}, "auto_detect_interface": True},
+            "dns": {"servers": [{"tag": "alidns", "type": "udp", "server": "223.5.5.5"}]},
+            "inbounds": [],
+            "outbounds": [{"tag": "direct", "type": "direct"}],
+        })
+        self.assertTrue(any("ghost-dns" in e for e in errs), errs)
+
+
+    def test_domain_resolver_pointing_to_fakeip_blocked_and_outbound_domain_resolver_honored(self):
+        """验证 default_domain_resolver / domain_resolver 指向 fakeip 服务器时被拦截，且 outbound 自身 domain_resolver 被 Bootstrap 检查识别。"""
+        errs, _ = run({
+            "route": {"default_domain_resolver": "fakeip-dns", "auto_detect_interface": True},
+            "dns": {"servers": [
+                {"tag": "alidns", "type": "udp", "server": "223.5.5.5"},
+                {"tag": "fakeip-dns", "type": "fakeip", "inet4_range": "198.18.0.0/15"},
+                {"tag": "remote-dns", "type": "https", "server": "dns.google", "domain_resolver": "fakeip-dns"},
+            ]},
+            "inbounds": [],
+            "outbounds": [
+                {"tag": "direct", "type": "direct"},
+                {"tag": "n1", "type": "vless", "server": "node.example.com", "server_port": 443, "uuid": "u-1", "domain_resolver": "fakeip-dns"},
+            ],
+        })
+        self.assertEqual(sum(1 for e in errs if "FakeIP" in e), 3, errs)
+
+        # Outbound with valid domain_resolver should not trigger Bootstrap DNS warning even when route.default_domain_resolver is empty dict
+        errs2, warns2 = run({
+            "route": {"default_domain_resolver": {}, "auto_detect_interface": True, "rules": [{"action": "sniff"}, {"action": "hijack-dns"}]},
+            "dns": {"servers": [{"tag": "alidns", "type": "udp", "server": "223.5.5.5"}]},
+            "inbounds": [],
+            "outbounds": [
+                {"tag": "direct", "type": "direct"},
+                {"tag": "n1", "type": "vless", "server": "node.example.com", "server_port": 443, "uuid": "u-1", "domain_resolver": "alidns"},
+            ],
+        })
+        self.assertEqual(errs2, [])
+        self.assertFalse(any("启动死锁隐患" in w for w in warns2), warns2)
+
+
+    def test_heterogeneous_type_injection_fuzz_and_hy2_server_ports_validation(self):
+        """R7-01: 验证异构 JSON 类型 (list/dict/int/bool) 注入任意引用字段时零崩溃 (不抛 TypeError)，且拦截非法 hysteria2 server_ports。"""
+        fuzz_payloads = [
+            {"route": {"default_domain_resolver": ["alidns"]}},
+            {"route": {"default_domain_resolver": {"server": ["alidns"]}}},
+            {"route": {"default_http_client": ["client"]}},
+            {"route": {"final": ["proxy"]}},
+            {"route": {"rules": [{"outbound": ["proxy"], "rule_set": [["rs1"], 123]}]}},
+            {"route": {"rules": [{"outbound": {"bad": 1}, "rule_set": 999}]}},
+            {"dns": {"final": {"tag": "dns"}, "rules": [{"server": ["alidns"], "rule_set": [{"a": 1}]}]}},
+            {"dns": {"servers": [{"tag": ["t1"], "detour": ["direct"], "domain_resolver": ["alidns"]}]}},
+            {"outbounds": [{"tag": ["ob1"], "type": "selector", "outbounds": [["a"]], "default": ["a"], "detour": ["b"], "domain_resolver": ["c"]}]},
+            {"http_clients": [{"tag": ["hc"], "detour": ["direct"]}]},
+            {"route": {"rule_set": [{"tag": ["rs"], "download_detour": ["direct"]}]}},
+            {"outbounds": [{"tag": "hy2", "type": "hysteria2", "server": "1.1.1.1", "server_port": 443, "password": "p", "server_ports": ["50000:20000", 123]}]},
+            {"inbounds": [{"type": "tun", "address": 12345}]},
+        ]
+        for idx, payload in enumerate(fuzz_payloads):
+            errs, _ = run(payload)
+            self.assertTrue(len(errs) > 0, f"Fuzz case {idx} 应产生阻断错误但返回空: {payload}")
+
+
+    def test_dns_server_port_and_inbound_listen_port_range_validated(self):
+        """验证 dns.servers[].server_port 与 inbounds[].listen_port 越界或布尔值被静态拦截。"""
+        errs, _ = run({
+            "route": {"default_domain_resolver": "alidns", "auto_detect_interface": True},
+            "dns": {"servers": [{"tag": "alidns", "type": "udp", "server": "223.5.5.5", "server_port": 99999}]},
+            "inbounds": [{"type": "mixed", "tag": "in-1", "listen_port": 0}],
+            "outbounds": [{"tag": "direct", "type": "direct"}],
+        })
+        self.assertEqual(sum(1 for e in errs if "[非法端口]" in e), 2, errs)
+
 if __name__ == "__main__":
     unittest.main()

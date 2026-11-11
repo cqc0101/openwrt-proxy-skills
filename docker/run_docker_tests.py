@@ -13,6 +13,8 @@ import shutil
 import socket
 import subprocess
 import sys
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 import tempfile
 import time
 
@@ -85,7 +87,7 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
     if key_file:
         cmd_gen.extend(["--key", key_file])
 
-    r_gen = subprocess.run(cmd_gen, capture_output=True, text=True, cwd=REPO)
+    r_gen = subprocess.run(cmd_gen, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO)
     if r_gen.returncode == 0 and os.path.isfile(test_conf_path):
         say("PASS", f"配置生成成功并完成自校验: {test_conf_path}")
         results.append(("Auto Config Generation", True, "Pass"))
@@ -97,7 +99,7 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
     # 2. 模板与配置静态审计 (Check Config)
     say("PHASE 2", "调用 check_config.py 深度审计生成的配置文件...")
     checker_py = os.path.join(SB_DIR, "scripts", "check_config.py")
-    r_chk = subprocess.run([sys.executable, checker_py, test_conf_path], capture_output=True, text=True, cwd=REPO)
+    r_chk = subprocess.run([sys.executable, checker_py, test_conf_path], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO)
     if r_chk.returncode == 0:
         say("PASS", "check_config 0 错误 0 告警，字段门控与安全规则完全合规")
         results.append(("Config Schema Audit", True, "0 Errors"))
@@ -117,7 +119,7 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
         if key_file:
             ssh_cmd.extend(["-i", key_file])
         ssh_cmd.extend([f"root@{router}", remote_cmd])
-        r = subprocess.run(ssh_cmd, input=stdin_text, capture_output=True, text=True, timeout=15)
+        r = subprocess.run(ssh_cmd, input=stdin_text, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
 
     # 3. Agent 自主部署与服务验证 (Agent Deployment)
@@ -200,7 +202,7 @@ def main():
             say("DOCKER", "正在构建 OpenWrt 仿真测试镜像 (openwrt-test-node)...")
             dockerfile = os.path.join(DOCKER_DIR, "Dockerfile.openwrt")
             r_b = subprocess.run(["docker", "build", "-f", dockerfile, "-t", "openwrt-test-node:latest", REPO],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
             if r_b.returncode != 0:
                 say("ERROR", f"Docker 构建镜像失败:\n{r_b.stderr}")
                 sys.exit(1)
@@ -215,7 +217,7 @@ def main():
                 "--cap-add=NET_ADMIN",
                 "--cap-add=SYS_ADMIN",
                 "openwrt-test-node:latest"
-            ], capture_output=True, text=True)
+            ], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if r_run.returncode != 0:
                 say("ERROR", f"Docker 启动容器失败:\n{r_run.stderr}")
                 sys.exit(1)

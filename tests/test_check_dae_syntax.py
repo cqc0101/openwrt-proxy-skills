@@ -309,5 +309,137 @@ routing {
         errors, _ = check(cfg)
         self.assertEqual(errors, [], f"不应产生误报: {errors}")
 
+    def test_uri_and_regex_tokens_do_not_pollute_defined_sets_and_quoted_fallback_ignored(self):
+        """验证 node/upstream URI 内部的协议名/域名片段及 group 内正则不会污染合法出站/上游集合，且引号内 fallback: 不触发误报。"""
+        cfg = """
+global {
+    lan_interface: br-lan
+    wan_interface: auto
+}
+node {
+    my_node: 'vless://11111111-2222-3333-4444-555555555555@1.2.3.4:443?security=tls&sni=test.com#my_node'
+}
+group {
+    proxy {
+        filter: name(regex: '^HK0{1,2}$')
+        policy: min_moving_avg
+    }
+}
+dns {
+    upstream {
+        alidns: 'udp://dns.alidns.com:53'
+    }
+    routing {
+        request {
+            qname(keyword: 'fallback: fake_ups') -> alidns
+            qname(geosite:cn) -> udp
+            fallback: com
+        }
+    }
+}
+routing {
+    pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct
+    domain(keyword: 'fallback: fake_grp') -> proxy
+    domain(geosite:google) -> vless
+    fallback: HK0
+}
+"""
+        errors, _ = check(cfg)
+        self.assertFalse(any("fake_grp" in e for e in errors), errors)
+        self.assertFalse(any("fake_ups" in e for e in errors), errors)
+        self.assertTrue(any("'vless'" in e for e in errors), errors)
+        self.assertTrue(any("'HK0'" in e for e in errors), errors)
+        self.assertTrue(any("'udp'" in e for e in errors), errors)
+        self.assertTrue(any("'com'" in e for e in errors), errors)
+
+
+    def test_hyphen_in_dnsmasq_or_response_rules_and_escaped_backslash_before_quote(self):
+        """验证 dnsmasq / response 规则条件含连字符 '-' 时不误报，且以转义反斜杠 '\\' 结尾的字符串不误报单引号未闭合。"""
+        cfg = r'''
+global {
+    lan_interface: br-lan
+    wan_interface: auto
+}
+node {
+    'my_node': 'trojan://pass\\@1.2.3.4:443?sni=a.com#my_node'
+}
+dns {
+    upstream {
+        alidns: 'udp://223.5.5.5:53'
+        googledns: 'tcp+udp://8.8.8.8:53'
+    }
+    routing {
+        request {
+            qname(geosite:cn) -> alidns
+            fallback: googledns
+        }
+        response {
+            upstream(googledns) -> accept
+            ip(geoip:private) && !qname(geosite:cn-private) -> googledns
+            fallback: accept
+        }
+    }
+}
+routing {
+    pname(dnsmasq, sing-box) && l4proto(udp) && dport(53-5353) -> must_direct
+    domain(keyword: 'has "double" quote inside single quote') -> my_node
+    fallback: my_node
+}
+'''
+        errors, _ = check(cfg)
+        self.assertEqual(errors, [], f"合法配置不应触发误报: {errors}")
+
+
+    def test_quoted_upstream_in_response_relookup_without_whitelist_blocked(self):
+        """R7-04: response 块中私网重查指向单引号包裹的上游名 (如 -> 'googledns') 且缺少前置 accept 白名单时必须被拦截。"""
+        cfg = '''
+global { lan_interface: br-lan
+ wan_interface: auto }
+node { n1: 'vless://u@1.1.1.1:443?security=none#n1' }
+group { proxy { policy: min_moving_avg } }
+dns {
+    upstream { alidns: 'udp://223.5.5.5:53'
+ googledns: 'tcp+udp://8.8.8.8:53' }
+    routing {
+        request { fallback: alidns }
+        response {
+            ip(geoip:private) -> 'googledns'
+            fallback: accept
+        }
+    }
+}
+routing {
+    pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct
+    fallback: proxy
+}
+'''
+        errors, _ = check(cfg)
+        self.assertTrue(any("DNS 投毒死循环高危" in e for e in errors), errors)
+
+
+    def test_response_block_with_regex_brace_quantifier_not_truncated(self):
+        """验证 response 块内含正则量词 '{1,2}' 时不会被 [^}]* 提前截断而漏检私网重查死循环。"""
+        cfg = r'''
+global { lan_interface: br-lan
+ wan_interface: auto }
+node { n1: 'vless://u@1.1.1.1:443?security=none#n1' }
+group { proxy { policy: min_moving_avg } }
+dns {
+    upstream { alidns: 'udp://223.5.5.5:53'
+ googledns: 'tcp+udp://8.8.8.8:53' }
+    routing {
+        request { fallback: alidns }
+        response {
+            qname(regex: '^a{1,2}\.com$') && ip(geoip:private) -> googledns
+            fallback: accept
+        }
+    }
+}
+routing { pname(dnsmasq) -> must_direct
+ fallback: proxy }
+'''
+        errors, _ = check(cfg)
+        self.assertTrue(any("DNS 投毒死循环高危" in e for e in errors), errors)
+
 if __name__ == "__main__":
     unittest.main()

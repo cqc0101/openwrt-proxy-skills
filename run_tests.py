@@ -6,7 +6,10 @@
 任何一处失败都会以非零退出码中止（供 CI 使用）。
 """
 
+import os
 import sys
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 import unittest
 
 if __name__ == "__main__":

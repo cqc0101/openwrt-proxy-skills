@@ -25,14 +25,14 @@ for _s in (sys.stdout, sys.stderr):
 def _b64_decode(s: str) -> str:
     """Base64 解码：自动执行 URL 解码与补齐 padding，同时接受标准与 urlsafe 字母表。
 
-    支持 UTF-8 与 GB18030 中文字符集；若两者均非法则抛出 UnicodeDecodeError。
+    支持 UTF-8 (含 BOM 剥离) 与 GB18030 中文字符集；若两者均非法则抛出 UnicodeDecodeError。
     """
-    s = urllib.parse.unquote(s.strip())
+    s = urllib.parse.unquote((s or "").replace("\ufeff", "").strip())
     s = re.sub(r"\s+", "", s)
     s += '=' * (-len(s) % 4)
     raw = base64.urlsafe_b64decode(s)
     try:
-        return raw.decode('utf-8')
+        return raw.decode('utf-8-sig')
     except UnicodeDecodeError:
         return raw.decode('gb18030')
 
@@ -111,14 +111,24 @@ def _safe_port(parsed, default_port: int = 443) -> int:
         return port
 
 
-def _normalize_port_ranges(raw_spec: str):
-    """将 Hysteria2 端口跳跃表达式（如 '20000-50000' 或 '443,20000-30000'）转为 sing-box server_ports 列表。"""
+def _normalize_port_ranges(raw_spec):
+    """将 Hysteria2 端口跳跃表达式（字符串 '20000-50000' 或列表 ['20000-30000', '40000-50000']）转为 sing-box server_ports 列表。
+    若存在任何非法格式、反转范围 (p1 > p2) 或越界端口，立即返回 (None, []) 拒绝静默丢弃。
+    """
+    if isinstance(raw_spec, (list, tuple)):
+        raw_parts = []
+        for item in raw_spec:
+            raw_parts.extend(str(item or "").split(","))
+    else:
+        raw_parts = str(raw_spec or "").split(",")
     ranges = []
     first_port = None
-    for part in str(raw_spec or "").split(","):
+    has_any = False
+    for part in raw_parts:
         part = part.strip()
         if not part:
             continue
+        has_any = True
         m = re.match(r"^(\d{1,5})\s*[-:]\s*(\d{1,5})$", part)
         if m:
             p1, p2 = int(m.group(1)), int(m.group(2))
@@ -126,10 +136,19 @@ def _normalize_port_ranges(raw_spec: str):
                 ranges.append(f"{p1}:{p2}")
                 if first_port is None:
                     first_port = p1
+            else:
+                return None, []
         elif part.isdigit():
             p = int(part)
-            if 1 <= p <= 65535 and first_port is None:
-                first_port = p
+            if 1 <= p <= 65535:
+                if first_port is None:
+                    first_port = p
+            else:
+                return None, []
+        else:
+            return None, []
+    if not has_any:
+        return None, []
     return first_port, ranges
 
 
@@ -378,6 +397,9 @@ def parse_trojan(uri_str):
         }
     }
 
+    fp = params.get("fp", [""])[0].strip()
+    if fp:
+        outbound["tls"]["utls"] = {"enabled": True, "fingerprint": fp}
     alpn_list = _extract_alpn_list(params)
     if alpn_list:
         outbound["tls"]["alpn"] = alpn_list
@@ -507,17 +529,34 @@ def parse_vmess(uri_str):
     if not (1 <= port <= 65535):
         raise ValueError(f"VMess 端口号超出合法范围 (1-65535): {port}")
 
-    try:
-        alter_id = int(data.get("aid", 0))
-    except (ValueError, TypeError):
+    raw_aid = data.get("aid", 0)
+    if isinstance(raw_aid, bool) or raw_aid is None:
         alter_id = 0
+    else:
+        try:
+            alter_id = int(raw_aid)
+        except (ValueError, TypeError):
+            alter_id = 0
     security = str(data.get("scy") or "auto").strip() or "auto"
     net_type = str(data.get("net") or "tcp").strip().lower()
-    host = str(data.get("host") or "").strip()
-    path = str(data.get("path") or "").strip()
+    raw_host = data.get("host")
+    if isinstance(raw_host, list):
+        host = ",".join(str(x).strip() for x in raw_host if x is not None and not isinstance(x, (bool, dict, list)) and str(x).strip())
+    elif raw_host is None or isinstance(raw_host, (bool, dict)):
+        host = ""
+    else:
+        host = str(raw_host).strip()
+    raw_path = data.get("path")
+    if isinstance(raw_path, list):
+        path = str(raw_path[0]).strip() if raw_path and raw_path[0] is not None else ""
+    elif raw_path is None or isinstance(raw_path, (bool, dict)):
+        path = ""
+    else:
+        path = str(raw_path).strip()
     tls_val = data.get("tls", "")
     tls_enabled = (tls_val is True) or (str(tls_val).strip().lower() in ("tls", "true", "1"))
-    sni = str(data.get("sni") or host or server).strip()
+    first_host = host.split(",")[0].strip() if host else ""
+    sni = str(data.get("sni") or first_host or server).strip()
 
     outbound = {
         "type": "vmess",
@@ -536,13 +575,18 @@ def parse_vmess(uri_str):
         }
         if str(data.get("allowInsecure", "")).lower() in ("1", "true") or data.get("verify_cert") is False:
             outbound["tls"]["insecure"] = True
+        fp_vm = str(data.get("fp") or "").strip()
+        if fp_vm:
+            outbound["tls"]["utls"] = {"enabled": True, "fingerprint": fp_vm}
 
     raw_alpn = data.get("alpn")
-    if raw_alpn and "tls" in outbound:
+    if raw_alpn and not isinstance(raw_alpn, (bool, dict)) and "tls" in outbound:
         if isinstance(raw_alpn, list):
-            alpn_list = [str(x).strip() for x in raw_alpn if str(x).strip()]
+            alpn_list = [str(x).strip() for x in raw_alpn if x is not None and not isinstance(x, (bool, dict, list)) and str(x).strip()]
+        elif isinstance(raw_alpn, str):
+            alpn_list = [x.strip() for x in raw_alpn.split(",") if x.strip()]
         else:
-            alpn_list = [x.strip() for x in str(raw_alpn).split(",") if x.strip()]
+            alpn_list = []
         if alpn_list:
             outbound["tls"]["alpn"] = alpn_list
 
@@ -660,7 +704,7 @@ def parse_anytls(uri_str):
 
 
 def parse_uri(uri_str):
-    uri_str = uri_str.strip()
+    uri_str = (uri_str or "").lstrip("\ufeff").strip()
     if uri_str.startswith("vless://"):
         return parse_vless(uri_str)
     elif uri_str.startswith("hysteria2://") or uri_str.startswith("hy2://"):

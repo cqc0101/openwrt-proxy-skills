@@ -83,7 +83,7 @@ def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
         "sing-box version 2>&1 | head -n 1"
     ])
     try:
-        res = subprocess.run(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout + 2)
+        res = subprocess.run(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=timeout + 2)
         out = res.stdout.strip()
         match = re.search(r"sing-box version\s+(\d+\.\d+)", out)
         if match:
@@ -131,7 +131,7 @@ def apply_cdn_mirror(config, mirror_type="jsdelivr"):
 def compose_from_mixins(version="1.13", dns_mode="fakeip"):
     """由 assets/mixins/ 模块化正交积木动态组装版本与 DNS 模式对应的基准配置，消除双数据源漂移。"""
     def _load_mixin(name):
-        with open(os.path.join(MIXINS_DIR, name), "r", encoding="utf-8") as mf:
+        with open(os.path.join(MIXINS_DIR, name), "r", encoding="utf-8-sig") as mf:
             return json.load(mf)
 
     exp_mixin = _load_mixin("experimental.json").get("experimental", {})
@@ -222,7 +222,7 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     if os.path.isdir(MIXINS_DIR):
         config = compose_from_mixins(version=version, dns_mode=dns_mode)
     else:
-        with open(template_path, 'r', encoding='utf-8') as f:
+        with open(template_path, 'r', encoding='utf-8-sig') as f:
             config = json.load(f)
 
     # 1. 强制注入 OpenWrt 防护字段（杜绝漏配）
@@ -250,7 +250,7 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     # 路由防环与防死锁
     if "route" not in config:
         config["route"] = {}
-    if max_nodes is not None and int(max_nodes) < 1:
+    if max_nodes is not None and (isinstance(max_nodes, bool) or int(max_nodes) < 1):
         raise ValueError(f"--max-nodes 必须为正整数 (>= 1)，当前值: {max_nodes!r}")
 
     if wan_iface is not None:
@@ -529,30 +529,34 @@ def main():
     args = parser.parse_args()
 
     detected_ver = args.version or "1.13"
-    if args.router:
-        print(f"[*] 正在连接软路由 {args.user}@{args.router}:{args.port} 探测 sing-box 核心版本...", file=sys.stderr)
-        v, raw_ver = detect_remote_version(args.router, args.user, args.port, key_path=args.key)
-        print(f"[+] 探测到软路由内核版本: {raw_ver} -> 匹配规则集版本: v{v}", file=sys.stderr)
-        detected_ver = v
+    try:
+        if args.router:
+            print(f"[*] 正在连接软路由 {args.user}@{args.router}:{args.port} 探测 sing-box 核心版本...", file=sys.stderr)
+            v, raw_ver = detect_remote_version(args.router, args.user, args.port, key_path=args.key)
+            print(f"[+] 探测到软路由内核版本: {raw_ver} -> 匹配规则集版本: v{v}", file=sys.stderr)
+            detected_ver = v
 
-    print(f"[*] 正在为 sing-box v{detected_ver} 生成 OpenWrt ({args.dns_mode.upper()} 模式, 拓扑: {args.topology}) 专属适配规则...", file=sys.stderr)
-    if args.topology == "bypass":
-        print(f"[i] 旁路由模式：生成后请运行 'sh setup_openwrt_network.sh --bypass' 开启 LAN 伪装以防非对称路由丢包。", file=sys.stderr)
-    config = build_config(
-        version=detected_ver, 
-        dns_mode=args.dns_mode, 
-        node_uris=args.node,
-        sub_source=args.sub,
-        mirror=args.mirror,
-        max_nodes=args.max_nodes,
-        wan_iface=args.wan_iface,
-        dns_cn=args.dns_cn,
-        dns_remote=args.dns_remote,
-        topology=args.topology,
-        main_router_ip=args.main_router_ip,
-        clash_secret=args.clash_secret,
-        strict_nodes=True,
-    )
+        print(f"[*] 正在为 sing-box v{detected_ver} 生成 OpenWrt ({args.dns_mode.upper()} 模式, 拓扑: {args.topology}) 专属适配规则...", file=sys.stderr)
+        if args.topology == "bypass":
+            print(f"[i] 旁路由模式：生成后请运行 'sh setup_openwrt_network.sh --bypass' 开启 LAN 伪装以防非对称路由丢包。", file=sys.stderr)
+        config = build_config(
+            version=detected_ver, 
+            dns_mode=args.dns_mode, 
+            node_uris=args.node,
+            sub_source=args.sub,
+            mirror=args.mirror,
+            max_nodes=args.max_nodes,
+            wan_iface=args.wan_iface,
+            dns_cn=args.dns_cn,
+            dns_remote=args.dns_remote,
+            topology=args.topology,
+            main_router_ip=args.main_router_ip,
+            clash_secret=args.clash_secret,
+            strict_nodes=True,
+        )
+    except ValueError as e:
+        print(f"[FATAL] 参数校验失败: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # 生成后自动静态审计：存在任何阻断错误绝不输出（“一次成功”保障）
     from check_config import check_config_obj

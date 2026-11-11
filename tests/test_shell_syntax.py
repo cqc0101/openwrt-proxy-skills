@@ -30,7 +30,7 @@ def _real_bash():
         candidates.extend(glob.glob(pattern))
     for bash in candidates:
         try:
-            out = subprocess.run([bash, "--version"], capture_output=True, text=True, timeout=10).stdout
+            out = subprocess.run([bash, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10).stdout
         except Exception:
             continue
         if "GNU bash" in out:
@@ -53,7 +53,7 @@ class TestShellSyntax(unittest.TestCase):
     def test_bash_n_all_scripts(self):
         for path in all_sh_files():
             with self.subTest(script=os.path.relpath(path, REPO)):
-                r = subprocess.run([BASH, "-n", path], capture_output=True, text=True)
+                r = subprocess.run([BASH, "-n", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
                 self.assertEqual(r.returncode, 0, f"bash -n 失败:\n{r.stderr}")
 
 

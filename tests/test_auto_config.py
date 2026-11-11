@@ -133,7 +133,7 @@ class TestEndToEndAndSelfCheck(unittest.TestCase):
                          "--version", version, "--dns-mode", mode,
                          "--node", "trojan://pw@5.6.7.8:443?sni=b.com#JP-01",
                          "--mirror", "direct", "--out", out],
-                        capture_output=True, text=True, env=env, cwd=SCRIPTS)
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, cwd=SCRIPTS)
                     self.assertEqual(r.returncode, 0, f"{version}/{mode} 失败:\n{r.stderr}\n{r.stdout}")
                     with open(out, encoding="utf-8") as f:
                         cfg = json.load(f)
@@ -150,7 +150,7 @@ class TestEndToEndAndSelfCheck(unittest.TestCase):
                  "--node", "not-a-uri",
                  "--node", "trojan://pw@5.6.7.8:443?sni=b.com#GOOD",
                  "--mirror", "direct", "--out", out],
-                capture_output=True, text=True, env=env, cwd=SCRIPTS)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, cwd=SCRIPTS)
             self.assertEqual(r.returncode, 0)
             with open(out, encoding="utf-8") as f:
                 cfg = json.load(f)
@@ -269,7 +269,7 @@ class TestAuditHardeningAutoConfig(unittest.TestCase):
         r = subprocess.run(
             [sys.executable, os.path.join(SCRIPTS, "auto_config.py"),
              "--version", "1.14", "--node", "not-a-valid-uri", "--mirror", "direct"],
-            capture_output=True, text=True, cwd=SCRIPTS
+            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=SCRIPTS
         )
         self.assertNotEqual(r.returncode, 0, "所有 --node 均无效时必须非 0 退出，防止静默下发假节点")
 

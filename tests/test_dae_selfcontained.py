@@ -37,7 +37,7 @@ class TestDaeSelfContained(unittest.TestCase):
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         r = subprocess.run([sys.executable, "-c", code],
-                           capture_output=True, text=True, env=env, cwd=DAE_SCRIPTS)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, cwd=DAE_SCRIPTS)
         self.assertEqual(r.returncode, 0, f"stderr:\n{r.stderr}\nstdout:\n{r.stdout}")
         self.assertIn("SELF_CONTAINED_OK", r.stdout)
 
@@ -53,7 +53,7 @@ class TestDaeSelfContained(unittest.TestCase):
             r = subprocess.run(
                 [sys.executable, os.path.join(DAE_SCRIPTS, "sub_to_dae.py"),
                  sub_file, "--full", "--lan-iface", "br-lan", "--out", out_dae],
-                capture_output=True, text=True, env=env, cwd=DAE_SCRIPTS
+                capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, cwd=DAE_SCRIPTS
             )
             self.assertEqual(r.returncode, 0, f"sub_to_dae --full 失败:\n{r.stderr}\n{r.stdout}")
             with open(out_dae, "r", encoding="utf-8") as f:
@@ -77,7 +77,7 @@ class TestDaeSelfContained(unittest.TestCase):
             r = subprocess.run(
                 [sys.executable, os.path.join(DAE_SCRIPTS, "sub_to_dae.py"),
                  sub_file, "--full", "--topology", "bypass", "--main-router-ip", "192.168.1.1", "--out", out_dae],
-                capture_output=True, text=True, env=env, cwd=DAE_SCRIPTS
+                capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, cwd=DAE_SCRIPTS
             )
             self.assertEqual(r.returncode, 0, f"sub_to_dae bypass 失败:\n{r.stderr}")
             with open(out_dae, "r", encoding="utf-8") as f:

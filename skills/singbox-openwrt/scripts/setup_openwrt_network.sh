@@ -79,11 +79,6 @@ run_router_hardening() {
         ZONE_IDX=$((ZONE_IDX + 1))
     done
 
-    if [ -z "$LAN_INDEX" ]; then
-        say "${RED}[ERROR] 未在 /etc/config/firewall 中找到 lan zone！${NC}"
-        return 1
-    fi
-
     if [ "$ACTION_FLAG" = "--confirm" ]; then
         touch /tmp/proxy_deploy_confirmed
         kill_active_watchdog
@@ -110,6 +105,7 @@ run_router_hardening() {
 if [ -f /etc/sing-box/.boot_guard ] && [ ! -f /tmp/proxy_watchdog.token ]; then
     [ -f /etc/sing-box/.config.json.rollback ] && cp -f /etc/sing-box/.config.json.rollback /etc/sing-box/config.json 2>/dev/null || true
     rm -f /etc/sing-box/.boot_guard /etc/sing-box/.config.json.rollback 2>/dev/null || true
+    [ -f /etc/sing-box/setup_openwrt_network.sh ] && sh /etc/sing-box/setup_openwrt_network.sh --revert 2>/dev/null || true
     /etc/init.d/sing-box restart 2>/dev/null || true
 fi
 exit 0
@@ -145,22 +141,26 @@ BOOTGUARD_EOF
             rm -f /etc/sing-box/.config.json.rollback 2>/dev/null || true
         fi
         rm -f /etc/sing-box/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
-        uci del_list firewall.@zone[${LAN_INDEX}].device='tun0' 2>/dev/null || true
-        uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
+        if [ -n "$LAN_INDEX" ]; then
+            uci del_list firewall.@zone[${LAN_INDEX}].device='tun0' 2>/dev/null || true
+            uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
+        fi
         if [ -f /etc/sing-box/.network_baseline.bak ]; then
             . /etc/sing-box/.network_baseline.bak
-            if [ -n "${ORIG_LAN_FORWARD:-}" ]; then
-                uci set "firewall.@zone[${LAN_INDEX}].forward=${ORIG_LAN_FORWARD}" 2>/dev/null || true
-            fi
-            if [ -n "${ORIG_LAN_MASQ:-}" ]; then
-                uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || true
-            else
-                uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
-            fi
-            if [ -n "${ORIG_LAN_MTU_FIX:-}" ]; then
-                uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || true
-            else
-                uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+            if [ -n "$LAN_INDEX" ]; then
+                if [ -n "${ORIG_LAN_FORWARD:-}" ]; then
+                    uci set "firewall.@zone[${LAN_INDEX}].forward=${ORIG_LAN_FORWARD}" 2>/dev/null || true
+                fi
+                if [ -n "${ORIG_LAN_MASQ:-}" ]; then
+                    uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || true
+                else
+                    uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+                fi
+                if [ -n "${ORIG_LAN_MTU_FIX:-}" ]; then
+                    uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || true
+                else
+                    uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+                fi
             fi
             if [ -n "${ORIG_FILTER_AAAA:-}" ]; then
                 uci set "dhcp.@dnsmasq[0].filter_aaaa=${ORIG_FILTER_AAAA}" 2>/dev/null || true
@@ -169,11 +169,12 @@ BOOTGUARD_EOF
             fi
             rm -f /etc/sing-box/.network_baseline.bak
         else
-            uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
-            uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+            if [ -n "$LAN_INDEX" ]; then
+                uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+                uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
+            fi
             uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
         fi
-        uci del_list firewall.@zone[${LAN_INDEX}].device='tun0' 2>/dev/null || true
         clean_dns_redirects
         rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
         if [ -f /etc/sing-box/.dnsmasq_upstream.bak ]; then
@@ -193,6 +194,11 @@ BOOTGUARD_EOF
         /etc/init.d/sysctl restart 2>/dev/null || sysctl -p 2>/dev/null || true
         say "${GREEN}[OK] 网络配置已无损还原至初始状态！${NC}"
         return 0
+    fi
+
+    if [ -z "$LAN_INDEX" ]; then
+        say "${RED}[ERROR] 未在 /etc/config/firewall 中找到 lan zone！${NC}"
+        return 1
     fi
 
     # 首次执行前保存用户原始防火墙与 Dnsmasq 基线，确保 --revert 不误删用户原有配置
@@ -257,6 +263,14 @@ SYSCTL_EOF
     if [ "$ACTION_FLAG" = "--bypass" ]; then
         say "${YELLOW}[旁路由] 检测到 --bypass 参数，激活 LAN 区域动态伪装 (masq=1，消除非对称丢包)...${NC}"
         uci set firewall.@zone[${LAN_INDEX}].masq='1' 2>/dev/null || true
+        uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
+    elif [ -f /etc/sing-box/.network_baseline.bak ]; then
+        . /etc/sing-box/.network_baseline.bak
+        if [ -n "${ORIG_LAN_MASQ:-}" ]; then
+            uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || true
+        else
+            uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+        fi
         uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
     fi
 

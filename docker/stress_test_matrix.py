@@ -31,6 +31,8 @@ import re
 import shutil
 import subprocess
 import sys
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 import tempfile
 import time
 
@@ -71,7 +73,7 @@ def run_ssh(cmd, timeout=10):
     if os.path.exists(KEY_PATH):
         ssh_cmd.extend(["-i", KEY_PATH])
     ssh_cmd.extend([f"root@{ROUTER_IP}", cmd])
-    r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(ssh_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
@@ -90,7 +92,7 @@ def deploy_config_ssh(conf_file, timeout=30):
     if os.path.exists(KEY_PATH):
         ssh_up.extend(["-i", KEY_PATH])
     ssh_up.extend([f"root@{ROUTER_IP}", "cat > /tmp/test_deploy_conf.json"])
-    r_up = subprocess.run(ssh_up, input=conf_data, capture_output=True, text=True, timeout=timeout)
+    r_up = subprocess.run(ssh_up, input=conf_data, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     if r_up.returncode != 0:
         return 1, r_up.stdout, r_up.stderr
 
@@ -119,7 +121,7 @@ def run_diagnose_ssh(timeout=30):
     if os.path.exists(KEY_PATH):
         ssh_cmd.extend(["-i", KEY_PATH])
     ssh_cmd.extend([f"root@{ROUTER_IP}", "tr -d '\\r' | sh -s -- sing-box"])
-    r = subprocess.run(ssh_cmd, input=sh_content, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(ssh_cmd, input=sh_content, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     return r.returncode, r.stdout, r.stderr
 
 
@@ -201,7 +203,7 @@ def round_1_baseline_fakeip():
         "--node", TEST_NODE_HY2,
         "--node", TEST_NODE_REALITY,
         "--out", out_file
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     if r_gen.returncode != 0:
         log_step(False, f"auto_config.py 生成失败: {r_gen.stderr}")
@@ -234,7 +236,7 @@ def round_2_baseline_realip():
         "--wan-iface", "eth0",
         "--node", TEST_NODE_HY2,
         "--out", out_file
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     if r_gen.returncode != 0:
         log_step(False, f"RealIP 生成失败: {r_gen.stderr}")
@@ -292,7 +294,7 @@ def round_4_dangling_references_attack():
         }, f)
 
     chk_py = os.path.join(SB_DIR, "scripts", "check_config.py")
-    r_chk = subprocess.run([sys.executable, chk_py, broken_file], capture_output=True, text=True)
+    r_chk = subprocess.run([sys.executable, chk_py, broken_file], capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r_chk.returncode != 0 and "non-existent-tag-404" in (r_chk.stdout + r_chk.stderr):
         log_step(True, "check_config.py 成功拦截悬空 outbound 引用 'non-existent-tag-404'！")
         return True
@@ -319,7 +321,7 @@ def round_5_tag_sanitization():
         "--node", dup_node2,
         "--node", dup_node3,
         "--out", out_file
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     if r_gen.returncode != 0:
         log_step(False, f"清洗测试失败: {r_gen.stderr}")
@@ -402,7 +404,7 @@ def round_8_flash_wear_audit():
         "--wan-iface", "eth0",
         "--node", TEST_NODE_HY2,
         "--out", conf_file
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     for i in range(1, 4):
         rc_dep, out_dep, err_dep = deploy_config_ssh(conf_file)
@@ -464,7 +466,7 @@ def round_10_giant_subscription_cap():
         "--sub", sub_file,
         "--max-nodes", "12",
         "--out", out_file
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     if r_gen.returncode != 0:
         log_step(False, f"巨型订阅处理失败: {r_gen.stderr}")
@@ -488,7 +490,7 @@ def round_11_docker_mock_verification():
     r_dk = subprocess.run([
         sys.executable, "-u", runner_py,
         "--mode", "auto"
-    ], capture_output=True, text=True, cwd=REPO)
+    ], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO)
 
     if r_dk.returncode == 0 and ("所有 OpenWrt 自动化流水线阶段测试全部通过" in r_dk.stdout or "流水线全部通过" in r_dk.stdout):
         log_step(True, "Docker / Mock 自动化流水线验证 100% 成功通过！")
@@ -500,7 +502,7 @@ def round_11_docker_mock_verification():
 
 def round_12_full_unit_test_regression():
     log_banner("Round 12: 【全局回归】全量单元回归动态校验与双目录同步审计")
-    r_unit = subprocess.run([sys.executable, "run_tests.py"], capture_output=True, text=True, cwd=REPO)
+    r_unit = subprocess.run([sys.executable, "run_tests.py"], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO)
     
     # 动态解析实际测试数，彻底消除写死 "128" 的数量漂移与失真问题
     match = re.search(r"Ran (\d+) tests in", r_unit.stderr)

@@ -77,11 +77,6 @@ run_dae_hardening() {
         ZONE_IDX=$((ZONE_IDX + 1))
     done
 
-    if [ -z "$LAN_INDEX" ]; then
-        say "${RED}[ERROR] 未在 /etc/config/firewall 中找到 lan zone！${NC}"
-        return 1
-    fi
-
     if [ "$ACTION_FLAG" = "--confirm" ]; then
         touch /tmp/proxy_deploy_confirmed
         kill_active_watchdog
@@ -108,6 +103,7 @@ run_dae_hardening() {
 if [ -f /etc/dae/.boot_guard ] && [ ! -f /tmp/proxy_watchdog.token ]; then
     [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
     rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback 2>/dev/null || true
+    [ -f /etc/dae/setup_openwrt_network.sh ] && sh /etc/dae/setup_openwrt_network.sh --revert 2>/dev/null || true
     ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
 fi
 exit 0
@@ -196,6 +192,11 @@ BOOTGUARD_EOF
         return 0
     fi
 
+    if [ -z "$LAN_INDEX" ]; then
+        say "${RED}[ERROR] 未在 /etc/config/firewall 中找到 lan zone！${NC}"
+        return 1
+    fi
+
     mkdir -p /etc/dae
     if [ ! -f /etc/dae/.network_baseline.bak ]; then
         _orig_masq=""
@@ -265,6 +266,14 @@ SYSCTL_EOF
             uci set firewall.@zone[${LAN_INDEX}].masq='1' 2>/dev/null || true
             uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
         fi
+    elif [ -n "$LAN_INDEX" ] && [ -f /etc/dae/.network_baseline.bak ]; then
+        . /etc/dae/.network_baseline.bak
+        if [ -n "${ORIG_LAN_MASQ:-}" ]; then
+            uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || true
+        else
+            uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
+        fi
+        uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
     fi
 
     # 清理遗留的本机 53 端口 DNAT 重定向规则并合并提交所有防火墙变更（仅执行 1 次 reload）

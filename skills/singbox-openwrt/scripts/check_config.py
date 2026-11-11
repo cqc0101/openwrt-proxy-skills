@@ -83,7 +83,10 @@ def check_config_obj(cfg):
             if not isinstance(item, dict):
                 continue
             t = item.get("tag")
-            if t:
+            if t is not None:
+                if not isinstance(t, str) or not t.strip():
+                    errors.append(f"[非法标签] {module_name}[{idx}] 的 tag 必须是非空字符串: {t!r}！")
+                    continue
                 if t in seen:
                     errors.append(f"[重复标签] {module_name}[{idx}] 存在重复的 tag: '{t}'！")
                 seen.add(t)
@@ -107,8 +110,13 @@ def check_config_obj(cfg):
             if not isinstance(def_iface, str) or not re.match(r"^[a-zA-Z0-9_.\-@:]+$", def_iface):
                 errors.append(f"[非法接口名] route.default_interface '{def_iface}' 包含非法字符或格式不正确！")
 
-        resolver = route.get("default_domain_resolver")
-        if not resolver:
+        raw_resolver = route.get("default_domain_resolver")
+        resolver = raw_resolver.get("server") if isinstance(raw_resolver, dict) else raw_resolver
+        if raw_resolver is not None and not isinstance(raw_resolver, (str, dict)):
+            errors.append(f"[非法类型] route.default_domain_resolver 必须是字符串或包含 server 的对象: {raw_resolver!r}！")
+        elif isinstance(raw_resolver, dict) and resolver is not None and not isinstance(resolver, str):
+            errors.append(f"[非法类型] route.default_domain_resolver.server 必须是字符串: {resolver!r}！")
+        elif not resolver:
             warnings.append("[解析死锁风险] route 块未指定 'default_domain_resolver'。启动阶段拉取规则集可能陷入 DNS 递归死锁！")
         elif resolver not in dns_servers:
             errors.append(f"[悬空引用] route.default_domain_resolver 指向 '{resolver}'，但在 dns.servers 中未找到此 tag！")
@@ -117,18 +125,26 @@ def check_config_obj(cfg):
             resolver_entry = next((s for s in (dns.get("servers") or []) if isinstance(s, dict) and s.get("tag") == resolver), None)
             if resolver_entry:
                 r_server = str(resolver_entry.get("server", "")).strip()
-                r_type = resolver_entry.get("type", "")
-                if r_server and r_type not in ("local", "hosts", "fakeip"):
+                r_type = str(resolver_entry.get("type", "")).strip().lower()
+                if r_type == "fakeip":
+                    errors.append(f"[致命解析死锁] route.default_domain_resolver 不能指向 FakeIP 服务器 '{resolver}'！引导解析器必须返回真实 IP，否则核心拨号将陷入自环死锁！")
+                elif r_server and r_type not in ("local", "hosts"):
                     if not _is_ip_literal(r_server):
                         errors.append(f"[致命递归死锁] route.default_domain_resolver 指向的 '{resolver}' 服务器地址为域名 '{r_server}'！引导解析器自身地址必须为纯 IP，否则启动即陷入 DNS 递归死锁！")
 
         http_client = route.get("default_http_client")
-        if http_client and http_client not in all_http_clients:
-            errors.append(f"[悬空引用] route.default_http_client 声明为 '{http_client}'，但顶级 http_clients 中未找到该 client！")
+        if http_client is not None:
+            if not isinstance(http_client, str) or not http_client.strip():
+                errors.append(f"[非法类型] route.default_http_client 必须是非空字符串: {http_client!r}！")
+            elif http_client not in all_http_clients:
+                errors.append(f"[悬空引用] route.default_http_client 声明为 '{http_client}'，但顶级 http_clients 中未找到该 client！")
 
         final_ob = route.get("final")
-        if final_ob and final_ob not in all_outbounds:
-            errors.append(f"[悬空引用] route.final 指向不存在的 outbound: '{final_ob}'！")
+        if final_ob is not None:
+            if not isinstance(final_ob, str) or not final_ob.strip():
+                errors.append(f"[非法类型] route.final 必须是非空字符串: {final_ob!r}！")
+            elif final_ob not in all_outbounds:
+                errors.append(f"[悬空引用] route.final 指向不存在的 outbound: '{final_ob}'！")
 
         rules = [r for r in (route.get("rules") or []) if isinstance(r, dict)]
         has_sniff = any(r.get("action") == "sniff" for r in rules)
@@ -142,90 +158,142 @@ def check_config_obj(cfg):
         # 检查 route.rules（含嵌套 logical 子规则）中的 outbound 和 rule_set 引用
         for idx, r in _iter_rules_recursive(rules):
             ob = r.get("outbound")
-            if ob and ob not in all_outbounds:
-                errors.append(f"[悬空引用] route.rules[{idx}] 引用了不存在的 outbound: '{ob}'！")
+            if ob is not None:
+                if not isinstance(ob, str) or not ob.strip():
+                    errors.append(f"[非法类型] route.rules[{idx}] 的 outbound 必须是非空字符串: {ob!r}！")
+                elif ob not in all_outbounds:
+                    errors.append(f"[悬空引用] route.rules[{idx}] 引用了不存在的 outbound: '{ob}'！")
 
-            rs_field = r.get("rule_set", [])
-            if isinstance(rs_field, str):
-                rs_field = [rs_field]
-            elif not isinstance(rs_field, list):
-                rs_field = []
-            for rs in rs_field:
-                if rs not in all_rulesets:
-                    errors.append(f"[悬空引用] route.rules[{idx}] 引用了未在 route.rule_set 中定义的规则集: '{rs}'！")
+            if "rule_set" in r and r.get("rule_set") is not None:
+                rs_raw = r.get("rule_set")
+                if isinstance(rs_raw, str):
+                    rs_field = [rs_raw]
+                elif isinstance(rs_raw, list):
+                    rs_field = rs_raw
+                else:
+                    errors.append(f"[非法类型] route.rules[{idx}] 的 rule_set 必须是字符串或字符串列表: {rs_raw!r}！")
+                    rs_field = []
+                for rs in rs_field:
+                    if not isinstance(rs, str) or not rs.strip():
+                        errors.append(f"[非法类型] route.rules[{idx}] 的 rule_set 包含非字符串元素: {rs!r}！")
+                    elif rs not in all_rulesets:
+                        errors.append(f"[悬空引用] route.rules[{idx}] 引用了未在 route.rule_set 中定义的规则集: '{rs}'！")
 
     # 2. 检查 dns 模块的引用完整性（含嵌套 logical 子规则）
     dns_rules = [dr for dr in (dns.get("rules") or []) if isinstance(dr, dict)]
     for idx, dr in _iter_rules_recursive(dns_rules):
         target_server = dr.get("server")
-        if target_server and target_server not in dns_servers and target_server != "hosts":
-            errors.append(f"[悬空引用] dns.rules[{idx}] 指向不存在的 DNS server: '{target_server}'！")
+        if target_server is not None:
+            if not isinstance(target_server, str) or not target_server.strip():
+                errors.append(f"[非法类型] dns.rules[{idx}] 的 server 必须是非空字符串: {target_server!r}！")
+            elif target_server not in dns_servers and target_server != "hosts":
+                errors.append(f"[悬空引用] dns.rules[{idx}] 指向不存在的 DNS server: '{target_server}'！")
 
-        rs_field = dr.get("rule_set", [])
-        if isinstance(rs_field, str):
-            rs_field = [rs_field]
-        elif not isinstance(rs_field, list):
-            rs_field = []
-        for rs in rs_field:
-            if rs not in all_rulesets:
-                errors.append(f"[悬空引用] dns.rules[{idx}] 引用了未定义的规则集: '{rs}'！")
+        if "rule_set" in dr and dr.get("rule_set") is not None:
+            rs_raw = dr.get("rule_set")
+            if isinstance(rs_raw, str):
+                rs_field = [rs_raw]
+            elif isinstance(rs_raw, list):
+                rs_field = rs_raw
+            else:
+                errors.append(f"[非法类型] dns.rules[{idx}] 的 rule_set 必须是字符串或字符串列表: {rs_raw!r}！")
+                rs_field = []
+            for rs in rs_field:
+                if not isinstance(rs, str) or not rs.strip():
+                    errors.append(f"[非法类型] dns.rules[{idx}] 的 rule_set 包含非字符串元素: {rs!r}！")
+                elif rs not in all_rulesets:
+                    errors.append(f"[悬空引用] dns.rules[{idx}] 引用了未定义的规则集: '{rs}'！")
 
     final_dns = dns.get("final")
-    if final_dns and final_dns not in dns_servers:
-        errors.append(f"[悬空引用] dns.final 指向不存在的 DNS server: '{final_dns}'！")
+    if final_dns is not None:
+        if not isinstance(final_dns, str) or not final_dns.strip():
+            errors.append(f"[非法类型] dns.final 必须是非空字符串: {final_dns!r}！")
+        elif final_dns not in dns_servers:
+            errors.append(f"[悬空引用] dns.final 指向不存在的 DNS server: '{final_dns}'！")
 
     for idx, s in enumerate(dns.get("servers") or []):
         if not isinstance(s, dict):
             continue
+        s_tag = s.get("tag") if isinstance(s.get("tag"), str) else None
         s_type = str(s.get("type") or "udp").strip().lower()
         if s_type in ("udp", "tcp", "tls", "https", "h3", "quic"):
             if not str(s.get("server") or "").strip():
-                errors.append(f"[DNS 配置残缺] dns.servers[{idx}]({s.get('tag')}) 类型为 '{s_type}'，但缺少有效的 server 地址！")
+                errors.append(f"[DNS 配置残缺] dns.servers[{idx}]({s_tag}) 类型为 '{s_type}'，但缺少有效的 server 地址！")
+        if "server_port" in s and s.get("server_port") is not None:
+            dsp = s.get("server_port")
+            if not isinstance(dsp, int) or isinstance(dsp, bool) or not (1 <= dsp <= 65535):
+                errors.append(f"[非法端口] dns.servers[{idx}]({s_tag}) 的 server_port '{dsp}' 超出合法端口范围 (1-65535)！")
         s_detour = s.get("detour")
-        if s_detour and s_detour not in all_outbounds:
-            errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 detour 指向未定义的 outbound: '{s_detour}'！")
-        s_resolver = s.get("domain_resolver")
-        if isinstance(s_resolver, dict):
-            s_resolver = s_resolver.get("server")
+        if s_detour is not None:
+            if not isinstance(s_detour, str) or not s_detour.strip():
+                errors.append(f"[非法类型] dns.servers[{idx}]({s_tag}) 的 detour 必须是非空字符串: {s_detour!r}！")
+            elif s_detour not in all_outbounds:
+                errors.append(f"[悬空引用] dns.servers[{idx}]({s_tag}) 的 detour 指向未定义的 outbound: '{s_detour}'！")
+        raw_s_res = s.get("domain_resolver")
+        s_resolver = raw_s_res.get("server") if isinstance(raw_s_res, dict) else raw_s_res
+        if raw_s_res is not None and not isinstance(raw_s_res, (str, dict)):
+            errors.append(f"[非法类型] dns.servers[{idx}]({s_tag}) 的 domain_resolver 必须是字符串或包含 server 的对象: {raw_s_res!r}！")
+            s_resolver = None
+        elif isinstance(raw_s_res, dict) and s_resolver is not None and not isinstance(s_resolver, str):
+            errors.append(f"[非法类型] dns.servers[{idx}]({s_tag}) 的 domain_resolver.server 必须是字符串: {s_resolver!r}！")
+            s_resolver = None
         if s_resolver:
+            s_res_entry = next((ds for ds in (dns.get("servers") or []) if isinstance(ds, dict) and ds.get("tag") == s_resolver), None)
             if s_resolver not in dns_servers:
-                errors.append(f"[悬空引用] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 指向未定义的 DNS server: '{s_resolver}'！")
-            elif s.get("tag") and s_resolver == s.get("tag"):
-                errors.append(f"[自环死锁] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 不能指向自身 '{s_resolver}'！")
-            elif s.get("tag"):
+                errors.append(f"[悬空引用] dns.servers[{idx}]({s_tag}) 的 domain_resolver 指向未定义的 DNS server: '{s_resolver}'！")
+            elif s_res_entry and str(s_res_entry.get("type") or "").strip().lower() == "fakeip":
+                errors.append(f"[致命解析死锁] dns.servers[{idx}]({s_tag}) 的 domain_resolver 不能指向 FakeIP 服务器 '{s_resolver}'！")
+            elif s_tag and s_resolver == s_tag:
+                errors.append(f"[自环死锁] dns.servers[{idx}]({s_tag}) 的 domain_resolver 不能指向自身 '{s_resolver}'！")
+            elif s_tag:
                 # 检测多跳循环引用 (如 A -> B -> A)
-                visited = {s.get("tag")}
+                visited = {s_tag}
                 curr_r = s_resolver
-                dns_map = {ds.get("tag"): (ds.get("domain_resolver", {}).get("server") if isinstance(ds.get("domain_resolver"), dict) else ds.get("domain_resolver")) for ds in (dns.get("servers") or []) if isinstance(ds, dict) and ds.get("tag")}
+                dns_map = {}
+                for ds in (dns.get("servers") or []):
+                    if isinstance(ds, dict) and isinstance(ds.get("tag"), str):
+                        dr_v = ds.get("domain_resolver")
+                        dr_v = dr_v.get("server") if isinstance(dr_v, dict) else dr_v
+                        if isinstance(dr_v, str):
+                            dns_map[ds.get("tag")] = dr_v
                 while curr_r:
                     if curr_r in visited:
-                        errors.append(f"[循环死锁] dns.servers[{idx}]({s.get('tag')}) 的 domain_resolver 存在循环引用链路 ('{s.get('tag')}' -> ... -> '{curr_r}')！")
+                        errors.append(f"[循环死锁] dns.servers[{idx}]({s_tag}) 的 domain_resolver 存在循环引用链路 ('{s_tag}' -> ... -> '{curr_r}')！")
                         break
                     visited.add(curr_r)
                     curr_r = dns_map.get(curr_r)
 
         elif s_type in ("udp", "tcp", "tls", "https", "h3", "quic"):
             s_srv_addr = str(s.get("server") or "").strip()
-            if s_srv_addr and not _is_ip_literal(s_srv_addr) and not route.get("default_domain_resolver"):
-                errors.append(f"[解析死锁风险] dns.servers[{idx}]({s.get('tag')}) 的 server 为域名 '{s_srv_addr}'，但既未指定 domain_resolver 也未配置 route.default_domain_resolver！")
+            def_res = route.get("default_domain_resolver")
+            if isinstance(def_res, dict):
+                def_res = def_res.get("server")
+            if not isinstance(def_res, str):
+                def_res = None
+            if s_srv_addr and not _is_ip_literal(s_srv_addr) and not def_res:
+                errors.append(f"[解析死锁风险] dns.servers[{idx}]({s_tag}) 的 server 为域名 '{s_srv_addr}'，但既未指定 domain_resolver 也未配置 route.default_domain_resolver！")
 
     # 3. 检查 outbounds 模块及内部引用
     for idx, ob in enumerate(outbounds):
-        ob_type = ob.get("type", "")
-        ob_tag = ob.get("tag")
+        ob_type = ob.get("type", "") if isinstance(ob.get("type"), str) else ""
+        ob_tag = ob.get("tag") if isinstance(ob.get("tag"), str) else None
         if ob_type in ["selector", "urltest"]:
             sub_obs = ob.get("outbounds")
             if not isinstance(sub_obs, list) or len(sub_obs) == 0:
                 errors.append(f"[空策略组] outbound[{idx}]({ob_tag}) 的 outbounds 列表不能为空！")
             else:
                 for so in sub_obs:
-                    if so not in all_outbounds:
+                    if not isinstance(so, str) or not so.strip():
+                        errors.append(f"[非法类型] outbound[{idx}]({ob_tag}) 的 outbounds 列表包含非字符串元素: {so!r}！")
+                    elif so not in all_outbounds:
                         errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 列表中引用了未定义的 outbound: '{so}'！")
                     elif ob_tag and so == ob_tag:
                         errors.append(f"[自环引用] outbound[{idx}]({ob_tag}) 列表中不能自引用自身 '{ob_tag}'！")
-                if ob_type == "selector" and ob.get("default"):
+                if ob_type == "selector" and ob.get("default") is not None:
                     def_tag = ob.get("default")
-                    if def_tag not in sub_obs:
+                    if not isinstance(def_tag, str) or not def_tag.strip():
+                        errors.append(f"[非法类型] outbound[{idx}]({ob_tag}) 的 default 必须是非空字符串: {def_tag!r}！")
+                    elif def_tag not in sub_obs:
                         errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 default 指向 '{def_tag}'，但该标签不在其 outbounds 列表中！")
                 elif ob_type == "urltest" and "default" in ob:
                     errors.append(f"[非法字段] outbound[{idx}]({ob_tag}) 类型为 urltest，不支持 'default' 字段（仅 selector 支持）！")
@@ -234,9 +302,9 @@ def check_config_obj(cfg):
                     group_map = {
                         o.get("tag"): [x for x in (o.get("outbounds") or []) if isinstance(x, str)]
                         for o in outbounds
-                        if isinstance(o, dict) and o.get("type") in ("selector", "urltest") and o.get("tag")
+                        if isinstance(o, dict) and o.get("type") in ("selector", "urltest") and isinstance(o.get("tag"), str)
                     }
-                    stack_g = [(ch, [ob_tag, ch]) for ch in sub_obs if ch in group_map and ch != ob_tag]
+                    stack_g = [(ch, [ob_tag, ch]) for ch in sub_obs if isinstance(ch, str) and ch in group_map and ch != ob_tag]
                     visited_g = set()
                     while stack_g:
                         curr_g, path_g = stack_g.pop()
@@ -252,15 +320,21 @@ def check_config_obj(cfg):
 
         # 检查代理链与 detour 引用完整性
         ob_detour = ob.get("detour")
-        if ob_detour:
-            if ob_detour not in all_outbounds:
+        if ob_detour is not None:
+            if not isinstance(ob_detour, str) or not ob_detour.strip():
+                errors.append(f"[非法类型] outbound[{idx}]({ob_tag}) 的 detour 必须是非空字符串: {ob_detour!r}！")
+            elif ob_detour not in all_outbounds:
                 errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 detour 指向未定义的 outbound: '{ob_detour}'！")
             elif ob_tag and ob_detour == ob_tag:
                 errors.append(f"[自环引用] outbound[{idx}]({ob_tag}) 的 detour 不能指向自身！")
             elif ob_tag:
                 visited_dt = {ob_tag}
                 curr_dt = ob_detour
-                dt_map = {o.get("tag"): o.get("detour") for o in outbounds if isinstance(o, dict) and o.get("tag")}
+                dt_map = {
+                    o.get("tag"): o.get("detour")
+                    for o in outbounds
+                    if isinstance(o, dict) and isinstance(o.get("tag"), str) and isinstance(o.get("detour"), str)
+                }
                 while curr_dt:
                     if curr_dt in visited_dt:
                         errors.append(f"[循环引用] outbound[{idx}]({ob_tag}) 的 detour 存在多跳循环引用链路 ('{ob_tag}' -> ... -> '{curr_dt}')！")
@@ -270,8 +344,9 @@ def check_config_obj(cfg):
 
         # network 字段只接受 tcp/udp；ws/grpc 必须走 transport（常见笔误）
         net = ob.get("network")
-        if net and net not in ("tcp", "udp"):
-            errors.append(f"[非法字段] outbound[{idx}]({ob_tag}) 的 'network' 设为 '{net}'，sing-box 只接受 'tcp'/'udp'！ws/grpc 请使用 'transport' 块。")
+        if net is not None:
+            if not isinstance(net, str) or net not in ("tcp", "udp"):
+                errors.append(f"[非法字段] outbound[{idx}]({ob_tag}) 的 'network' 设为 '{net}'，sing-box 只接受 'tcp'/'udp'！ws/grpc 请使用 'transport' 块。")
 
         # 检查 transport.type 合法性（拦截手改配置中的 xhttp/splithttp/kcp 等不支持传输层）
         trans = ob.get("transport")
@@ -281,11 +356,20 @@ def check_config_obj(cfg):
                 errors.append(f"[非法传输层] outbound[{idx}]({ob_tag}) 的 transport.type '{ttype}' 不受 sing-box 标准传输层支持（仅支持 ws/grpc/http/httpupgrade/quic）！")
 
         # 检查代理节点必填字段 (server/server_port/凭证)、端口范围合法性 (1..65535) 与 domain_resolver 引用
-        ob_resolver = ob.get("domain_resolver")
-        if isinstance(ob_resolver, dict):
-            ob_resolver = ob_resolver.get("server")
-        if ob_resolver and ob_resolver not in dns_servers:
-            errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 domain_resolver 指向未定义的 DNS server: '{ob_resolver}'！")
+        raw_ob_res = ob.get("domain_resolver")
+        ob_resolver = raw_ob_res.get("server") if isinstance(raw_ob_res, dict) else raw_ob_res
+        if raw_ob_res is not None and not isinstance(raw_ob_res, (str, dict)):
+            errors.append(f"[非法类型] outbound[{idx}]({ob_tag}) 的 domain_resolver 必须是字符串或包含 server 的对象: {raw_ob_res!r}！")
+            ob_resolver = None
+        elif isinstance(raw_ob_res, dict) and ob_resolver is not None and not isinstance(ob_resolver, str):
+            errors.append(f"[非法类型] outbound[{idx}]({ob_tag}) 的 domain_resolver.server 必须是字符串: {ob_resolver!r}！")
+            ob_resolver = None
+        if ob_resolver:
+            ob_res_entry = next((ds for ds in (dns.get("servers") or []) if isinstance(ds, dict) and ds.get("tag") == ob_resolver), None)
+            if ob_resolver not in dns_servers:
+                errors.append(f"[悬空引用] outbound[{idx}]({ob_tag}) 的 domain_resolver 指向未定义的 DNS server: '{ob_resolver}'！")
+            elif ob_res_entry and str(ob_res_entry.get("type") or "").strip().lower() == "fakeip":
+                errors.append(f"[致命解析死锁] outbound[{idx}]({ob_tag}) 的 domain_resolver 不能指向 FakeIP 服务器 '{ob_resolver}'！")
 
         if ob_type in ("vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls"):
             if not str(ob.get("server") or "").strip():
@@ -302,14 +386,26 @@ def check_config_obj(cfg):
                 errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) ({ob_type}) 缺少有效的 password！")
             if ob_type == "shadowsocks" and not str(ob.get("method") or "").strip():
                 errors.append(f"[节点配置残缺] outbound[{idx}]({ob_tag}) (shadowsocks) 缺少有效的加密方式 method！")
+            if ob_type == "hysteria2" and "server_ports" in ob and ob.get("server_ports") is not None:
+                sp_ranges = ob.get("server_ports")
+                if not isinstance(sp_ranges, list) or len(sp_ranges) == 0:
+                    errors.append(f"[非法端口范围] outbound[{idx}]({ob_tag}) (hysteria2) 的 server_ports 必须是非空字符串列表: {sp_ranges!r}！")
+                else:
+                    for sp_item in sp_ranges:
+                        if not isinstance(sp_item, str):
+                            errors.append(f"[非法端口范围] outbound[{idx}]({ob_tag}) (hysteria2) 的 server_ports 包含非字符串元素: {sp_item!r}！")
+                            continue
+                        m_sp = re.match(r"^(\d{1,5}):(\d{1,5})$", sp_item.strip())
+                        if not m_sp or not (1 <= int(m_sp.group(1)) <= int(m_sp.group(2)) <= 65535):
+                            errors.append(f"[非法端口范围] outbound[{idx}]({ob_tag}) (hysteria2) 的 server_ports 包含非法范围 '{sp_item}'（格式应为 '起:止' 且 1 <= 起 <= 止 <= 65535）！")
 
         # 检查 Shadowsocks 加密方法合法性（拦截 sing-box 不支持的废弃流加密方法）
         if ob_type == "shadowsocks":
             ss_method = str(ob.get("method") or "").strip().lower()
             deprecated_ciphers = {
-                "aes-256-cfb", "aes-128-cfb", "aes-192-cfb", "rc4-md5",
+                "aes-256-cfb", "aes-128-cfb", "aes-192-cfb", "rc4", "rc4-md5",
                 "bf-cfb", "cast5-cfb", "des-cfb", "idea-cfb", "rc2-cfb", "seed-cfb",
-                "salsa20", "chacha20"
+                "salsa20", "chacha20", "table"
             }
             if ss_method in deprecated_ciphers:
                 errors.append(f"[废弃加密] outbound[{idx}]({ob_tag}) shadowsocks 使用了 sing-box 已废弃/不支持的加密方法 '{ss_method}'！请使用 2022-blake3 或 AEAD (aes-gcm / chacha20-poly1305)。")
@@ -326,6 +422,10 @@ def check_config_obj(cfg):
     # 4. 检查 inbounds 模块
     for idx, ib in enumerate(inbounds):
         ib_type = ib.get("type", "")
+        if "listen_port" in ib and ib.get("listen_port") is not None:
+            lport = ib.get("listen_port")
+            if not isinstance(lport, int) or isinstance(lport, bool) or not (1 <= lport <= 65535):
+                errors.append(f"[非法端口] inbounds[{idx}] 的 listen_port '{lport}' 超出合法端口范围 (1-65535)！")
         if "sniff" in ib or "sniff_override_destination" in ib:
             errors.append(f"inbounds[{idx}] 发现已废弃字段 'sniff'！sing-box 1.12+ 必须在 route.rules 中使用 {{'action': 'sniff'}}。")
         if ib_type == "tun":
@@ -333,9 +433,20 @@ def check_config_obj(cfg):
                 errors.append(f"inbounds[{idx}](tun) 包含已废弃的 'inet4_address'/'inet6_address'，请合并至 'address' 数组。")
             addr_field = ib.get("address")
             if addr_field is not None:
-                addr_list = [addr_field] if isinstance(addr_field, str) else (addr_field if isinstance(addr_field, list) else [])
+                if isinstance(addr_field, str):
+                    addr_list = [addr_field]
+                elif isinstance(addr_field, list):
+                    if len(addr_field) == 0:
+                        errors.append(f"[非法 TUN 地址] inbounds[{idx}](tun) 的 address 列表不能为空！")
+                    addr_list = addr_field
+                else:
+                    errors.append(f"[非法 TUN 地址] inbounds[{idx}](tun) 的 address 必须是字符串或字符串列表: {addr_field!r}！")
+                    addr_list = []
                 for a_item in addr_list:
-                    a_str = str(a_item or "").strip()
+                    if not isinstance(a_item, str):
+                        errors.append(f"[非法 TUN 地址] inbounds[{idx}](tun) 的 address 包含非字符串元素: {a_item!r}！")
+                        continue
+                    a_str = a_item.strip()
                     if "/" not in a_str:
                         errors.append(f"[非法 TUN 地址] inbounds[{idx}](tun) 的 address '{a_str}' 缺少 CIDR 掩码前缀（如 '/30'）！")
                     else:
@@ -353,7 +464,9 @@ def check_config_obj(cfg):
     cache_file = exp.get("cache_file") if isinstance(exp.get("cache_file"), dict) else {}
     if cache_file.get("enabled"):
         cpath = cache_file.get("path", "")
-        if not cpath:
+        if cpath is not None and not isinstance(cpath, str):
+            errors.append(f"[非法类型] experimental.cache_file.path 必须是字符串: {cpath!r}！")
+        elif not cpath:
             warnings.append("[闪存高危] experimental.cache_file 未指定 path，将写入默认目录！强烈建议指定 '/tmp/sing-box-cache.db' 以保护路由器闪存。")
         elif not (cpath.startswith("/tmp/") or cpath.startswith("/mnt/") or cpath.startswith("/media/")):
             warnings.append(f"[闪存高危] experimental.cache_file.path 设为 '{cpath}'！强烈建议设置在 '/tmp/sing-box-cache.db'。")
@@ -378,21 +491,29 @@ def check_config_obj(cfg):
     for idx, client in enumerate(http_clients):
         if not isinstance(client, dict):
             continue
-        if client.get("detour") == "direct":
+        c_dt = client.get("detour")
+        if c_dt == "direct":
             errors.append(f"[致命模式] http_clients[{idx}]({client.get('tag')}) 的 detour 指向 'direct'。"
                           "sing-box 启动期下载规则集时会报 'detour to an empty direct outbound makes no sense' 并退出。"
                           "直连下载请删除 detour 字段（不设即直连）。")
-        elif client.get("detour") and client.get("detour") not in all_outbounds:
-            errors.append(f"[悬空引用] http_clients[{idx}]({client.get('tag')}) 的 detour 指向未定义的 outbound: '{client.get('detour')}'！")
+        elif c_dt is not None:
+            if not isinstance(c_dt, str) or not c_dt.strip():
+                errors.append(f"[非法类型] http_clients[{idx}]({client.get('tag')}) 的 detour 必须是非空字符串: {c_dt!r}！")
+            elif c_dt not in all_outbounds:
+                errors.append(f"[悬空引用] http_clients[{idx}]({client.get('tag')}) 的 detour 指向未定义的 outbound: '{c_dt}'！")
 
     for idx, rs in enumerate(route.get("rule_set") or []):
         if not isinstance(rs, dict):
             continue
-        if rs.get("download_detour") == "direct":
+        rs_dt = rs.get("download_detour")
+        if rs_dt == "direct":
             errors.append(f"[致命模式] route.rule_set[{idx}]({rs.get('tag')}) 的 download_detour 指向 'direct'，"
                           "启动期同样会触发 'empty direct outbound' 崩溃；直连下载请删除该字段。")
-        elif rs.get("download_detour") and rs.get("download_detour") not in all_outbounds:
-            errors.append(f"[悬空引用] route.rule_set[{idx}]({rs.get('tag')}) 的 download_detour 指向未定义的 outbound: '{rs.get('download_detour')}'！")
+        elif rs_dt is not None:
+            if not isinstance(rs_dt, str) or not rs_dt.strip():
+                errors.append(f"[非法类型] route.rule_set[{idx}]({rs.get('tag')}) 的 download_detour 必须是非空字符串: {rs_dt!r}！")
+            elif rs_dt not in all_outbounds:
+                errors.append(f"[悬空引用] route.rule_set[{idx}]({rs.get('tag')}) 的 download_detour 指向未定义的 outbound: '{rs_dt}'！")
 
     # 6.6 auto_detect_interface 与 default_interface 冲突检测
     if route.get("auto_detect_interface") and route.get("default_interface"):
@@ -404,18 +525,24 @@ def check_config_obj(cfg):
     for ob in outbounds:
         if ob.get("type") in ("vless", "hysteria2", "trojan", "shadowsocks", "vmess", "tuic", "anytls"):
             srv = str(ob.get("server") or "").strip()
-            if srv and not _is_ip_literal(srv):
+            ob_dr = ob.get("domain_resolver")
+            if isinstance(ob_dr, dict):
+                ob_dr = ob_dr.get("server")
+            if srv and not _is_ip_literal(srv) and not ob_dr:
                 node_domains.add(srv)
 
     if node_domains:
-        has_resolver = bool(route.get("default_domain_resolver"))
+        _def_r = route.get("default_domain_resolver")
+        if isinstance(_def_r, dict):
+            _def_r = _def_r.get("server")
+        has_resolver = bool(_def_r)
         explicit_domains = set()
         for _, dr in _iter_rules_recursive(dns_rules):
             d_field = dr.get("domain", [])
             if isinstance(d_field, str):
                 d_field = [d_field]
             elif isinstance(d_field, list):
-                explicit_domains.update(d_field)
+                explicit_domains.update(x for x in d_field if isinstance(x, str))
 
         uncovered = node_domains - explicit_domains
         if not has_resolver and uncovered:
@@ -429,7 +556,7 @@ def check_config_obj(cfg):
 
 def check_singbox_config(filepath):
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
             cfg = json.load(f)
     except Exception as e:
         return [f"JSON 解析失败: {e}"], []
