@@ -154,9 +154,44 @@ routing {
         self.assertTrue(any("单引号" in e for e in errors), f"带 #fragment 的双引号节点未被拦截: {errors}")
 
     def test_openwrt_dae_has_dns_request_canary_rejection(self):
+        """验证 openwrt.dae 将无前缀 Canary 域名拦截置于 routing.domain 中，且 check_dae_syntax 拦截 qname 无前缀裸域名 (addQName 崩溃陷阱)。"""
         with open(os.path.join(REPO, "skills", "dae-openwrt", "assets", "templates", "openwrt.dae"), encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("qname('use-application-dns.net'", content)
+        self.assertNotIn("qname('use-application-dns.net'", content)
+        self.assertIn("domain(suffix: use-application-dns.net, suffix: mask.icloud.com, suffix: mask-h2.icloud.com) -> block", content)
+        errs, warns = check("""
+global { lan_interface: br-lan\n wan_interface: auto }
+dns {
+    upstream { alidns: 'udp://223.5.5.5:53' }
+    routing {
+        request {
+            qname('use-application-dns.net', 'mask.icloud.com') -> reject
+            qname(geosite:category-ads-all) -> reject
+            fallback: alidns
+        }
+    }
+}
+routing { pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct\n fallback: direct }
+""")
+        self.assertTrue(any("addQName" in e for e in errs), errs)
+        self.assertTrue(any("category-ads-all" in w for w in warns), warns)
+        # 验证带逗号的正则量词 '{1,2}'、括号 '(foo|bar)' 及合法前缀 domain:/regexp: 不会触发误报
+        ok_errs, _ = check(r'''
+global { lan_interface: br-lan
+ wan_interface: auto }
+dns {
+    upstream { alidns: 'udp://223.5.5.5:53' }
+    routing {
+        request {
+            qname(domain: google.com, regexp: '^(foo|bar)\.com$', regex: '^a{1,2}\.com$') -> alidns
+            fallback: alidns
+        }
+    }
+}
+routing { pname(dnsmasq) && l4proto(udp) && dport(53) -> must_direct
+ fallback: direct }
+''')
+        self.assertEqual(ok_errs, [], f"合法 qname 规则不应误报: {ok_errs}")
 
 
     def test_unbalanced_single_quote_flagged(self):

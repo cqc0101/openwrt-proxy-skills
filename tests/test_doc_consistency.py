@@ -95,5 +95,17 @@ class TestDaeDocsFlattened(unittest.TestCase):
             self.assertIn("compatibility:", fm)
 
 
+
+    def test_dae_validate_dash_c_and_ssh_stream_pipe_documented(self):
+        """验证 dae validate -c <file> 强制参数规范与 SSH Stream Pipe 纯本地流式交付闭环在文档与检查器中一致。"""
+        dae_skill = read(os.path.join(DAE, "SKILL.md"))
+        dae_checker = read(os.path.join(DAE, "scripts", "check_dae_syntax.py"))
+        self.assertIn("dae validate -c", dae_skill)
+        self.assertNotIn("不支持 `-c` 参数", dae_skill)
+        self.assertIn("dae validate -c", dae_checker)
+        self.assertNotIn("不支持 -c 参数", dae_checker)
+        self.assertIn("SSH Stream Pipe", dae_skill)
+
+
 if __name__ == "__main__":
     unittest.main()

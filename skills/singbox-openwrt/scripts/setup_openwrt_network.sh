@@ -1,9 +1,9 @@
 #!/bin/sh
 # ==============================================================================
 # OpenWrt / ImmortalWrt 最后一公里网络与网关接管加固工具 (Last-Mile Network Hook)
-# 彻底闭环：
+# 彻底闭环（兼容 OpenWrt 18.06~21.02 老软路由 fw3/iptables 与 22.03~25+ 新软路由 fw4/nftables）：
 # 1. 内核转发限制：激活 net.ipv4.ip_forward=1 并按物理内存自适应扩充 nf_conntrack_max
-# 2. 防火墙拦截：精准定位 LAN 区域注入 tun0，放行转发 (forward=ACCEPT)
+# 2. 防火墙拦截：精准定位 LAN 区域注入 tun0，放行转发 (forward=ACCEPT)，并为老版 fw3 提供 iptables 兜底放行
 # 3. MSS 钳制 (MSS Clamping)：激活 mtu_fix=1，彻底根治 TLS 大报文黑洞与分片卡死
 # 4. 局域网 DNS 路径清理：移除遗留的本机 53 DNAT 重定向，确保三层 tun0 hijack-dns 正常截获
 # 5. Dnsmasq 纯净过滤与防旁路：激活 filter_aaaa='1'，二级路由私网 WAN DNS 自动切换公网上游
@@ -191,6 +191,11 @@ BOOTGUARD_EOF
         uci commit firewall
         /etc/init.d/dnsmasq reload 2>/dev/null || true
         /etc/init.d/firewall reload 2>/dev/null || true
+        if command -v iptables >/dev/null 2>&1; then
+            iptables -D forwarding_rule -i tun0 -j ACCEPT 2>/dev/null || true
+            iptables -D forwarding_rule -o tun0 -j ACCEPT 2>/dev/null || true
+            iptables -D input_rule -i tun0 -j ACCEPT 2>/dev/null || true
+        fi
         /etc/init.d/sysctl restart 2>/dev/null || sysctl -p 2>/dev/null || true
         say "${GREEN}[OK] 网络配置已无损还原至初始状态！${NC}"
         return 0
@@ -279,6 +284,12 @@ SYSCTL_EOF
 
     uci commit firewall
     /etc/init.d/firewall reload 2>/dev/null || true
+    # 老版 OpenWrt (18.06/19.07/21.02 fw3 iptables) 兼容兜底：确保 forwarding_rule 显式放行 tun0 双向转发
+    if command -v fw3 >/dev/null 2>&1 && ! command -v fw4 >/dev/null 2>&1 && command -v iptables >/dev/null 2>&1; then
+        iptables -C forwarding_rule -i tun0 -j ACCEPT 2>/dev/null || iptables -I forwarding_rule -i tun0 -j ACCEPT 2>/dev/null || true
+        iptables -C forwarding_rule -o tun0 -j ACCEPT 2>/dev/null || iptables -I forwarding_rule -o tun0 -j ACCEPT 2>/dev/null || true
+        iptables -C input_rule -i tun0 -j ACCEPT 2>/dev/null || iptables -I input_rule -i tun0 -j ACCEPT 2>/dev/null || true
+    fi
 
     say "${BLUE}[5/5] 配置 Dnsmasq AAAA 过滤与二级路由私网上游防旁路治理...${NC}"
     if uci get dhcp.@dnsmasq[0] >/dev/null 2>&1; then
@@ -382,7 +393,7 @@ else
             ;;
     esac
 
-        if [ "$SSH_PORT" -lt 1 ] || [ "$SSH_PORT" -gt 65535 ]; then
+    if [ "$SSH_PORT" -lt 1 ] || [ "$SSH_PORT" -gt 65535 ]; then
         say "${RED}[ERROR] SSH 端口超出合法范围 (1-65535): $SSH_PORT${NC}"
         exit 1
     fi

@@ -63,8 +63,6 @@ class TestDaeSelfContained(unittest.TestCase):
             self.assertIn("'JP-WS': 'trojan://", dae_text)
             self.assertIn("type=ws&path=/ws&host=b.com", dae_text)
 
-
-
     def test_sub_to_dae_bypass_topology_injects_main_router_direct(self):
         import tempfile
         with tempfile.TemporaryDirectory() as td:
@@ -85,8 +83,6 @@ class TestDaeSelfContained(unittest.TestCase):
             self.assertIn("dip(192.168.1.1) -> direct", dae_text)
             self.assertIn("tuic://u-1:p-1@9.9.9.9:8443", dae_text)
 
-
-
     def test_sub_to_dae_ram_adaptive_map_size(self):
         import sys
         if DAE_SCRIPTS not in sys.path:
@@ -98,8 +94,6 @@ class TestDaeSelfContained(unittest.TestCase):
         cfg_256 = build_full_dae_config(nodes, ram_mb=256)
         self.assertIn("bpf_conn_state_map_size: 65536", cfg_256)
 
-
-
     def test_sub_to_dae_ipv6_bypass_quoted_and_invalid_iface_rejected(self):
         if DAE_SCRIPTS not in sys.path:
             sys.path.insert(0, DAE_SCRIPTS)
@@ -109,6 +103,60 @@ class TestDaeSelfContained(unittest.TestCase):
         self.assertIn("dip('fd00::1') -> direct", cfg_v6)
         with self.assertRaises(ValueError):
             build_full_dae_config(nodes, lan_iface="br-lan; reboot")
+
+    def test_sub_to_dae_legacy_vs_modern_version_compatibility(self):
+        """验证新旧版本 dae 兼容：legacy (<= v1.0.0) 自动剥离 5 个 v2.x 专属字段并通过静态审计；modern 保留全部字段。"""
+        import tempfile
+        from unittest import mock
+        if DAE_SCRIPTS not in sys.path:
+            sys.path.insert(0, DAE_SCRIPTS)
+        from sub_to_dae import (
+            MODERN_ONLY_DAE_KEYS,
+            build_full_dae_config,
+            dae_version_ge,
+            detect_remote_dae_version,
+        )
+        from check_dae_syntax import check_dae_syntax
+
+        self.assertFalse(dae_version_ge("0.8.0", 1, 1))
+        self.assertFalse(dae_version_ge("v1.0.0-r1", 1, 1))
+        self.assertTrue(dae_version_ge("v1.1.0", 1, 1))
+        self.assertTrue(dae_version_ge("2.1.1", 1, 1))
+
+        nodes = [{"type": "trojan", "tag": "T1", "server": "1.2.3.4", "server_port": 443, "password": "pw", "tls": {"enabled": True, "server_name": "example.com"}}]
+        cfg_modern = build_full_dae_config(nodes, dae_version="modern")
+        cfg_legacy = build_full_dae_config(nodes, dae_version="legacy")
+
+        for k in MODERN_ONLY_DAE_KEYS:
+            self.assertIn(f"{k}:", cfg_modern)
+            self.assertNotIn(f"{k}:", cfg_legacy)
+
+        with tempfile.NamedTemporaryFile("w", suffix=".dae", delete=False, encoding="utf-8") as tf:
+            tf.write(cfg_legacy)
+            p_leg = tf.name
+        try:
+            errs, warns = check_dae_syntax(p_leg)
+            self.assertEqual(errs, [], f"legacy 模式配置不应产生审计错误: {errs}")
+            self.assertEqual(warns, [], f"legacy 模式配置不应产生审计警告: {warns}")
+        finally:
+            if os.path.exists(p_leg):
+                os.remove(p_leg)
+
+        with mock.patch("sub_to_dae.subprocess.run") as m_run:
+            m_run.return_value = mock.Mock(stdout="dae version 1.0.0-r1\n", stderr="", returncode=0)
+            mode, raw = detect_remote_dae_version("192.168.1.1")
+            self.assertEqual(mode, "legacy")
+            self.assertIn("1.0.0-r1", raw)
+
+            m_run.return_value = mock.Mock(stdout="dae version v2.1.1\n", stderr="", returncode=0)
+            mode2, raw2 = detect_remote_dae_version("192.168.1.1")
+            self.assertEqual(mode2, "modern")
+            self.assertIn("v2.1.1", raw2)
+
+            # 验证包含 GLIBC_2.34 或 IP 的非版本错误输出不会被误判为合法 dae 版本
+            m_run.return_value = mock.Mock(stdout="sh: /usr/bin/dae: libc.so.6: version `GLIBC_2.34' not found\n", stderr="", returncode=1)
+            mode3, _ = detect_remote_dae_version("192.168.1.1")
+            self.assertEqual(mode3, "modern")
 
 
 if __name__ == "__main__":

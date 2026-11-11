@@ -564,11 +564,12 @@ def check_singbox_config(filepath):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("用法: python check_config.py <配置文件路径>")
+    args = [a for a in sys.argv[1:] if a not in ("-c", "--config")]
+    if not args:
+        print("用法: python check_config.py [-c] <配置文件路径>")
         sys.exit(1)
 
-    filepath = sys.argv[1]
+    filepath = args[0]
     if not os.path.exists(filepath):
         print(f"错误: 目标文件不存在: {filepath}")
         sys.exit(1)

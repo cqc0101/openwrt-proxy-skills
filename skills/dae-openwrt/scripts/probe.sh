@@ -147,6 +147,11 @@ if [ "$KMAJOR" -gt 5 ] || ( [ "$KMAJOR" -eq 5 ] && [ "$KMINOR" -ge 15 ] ); then
     KERNEL_GE_515=1
 fi
 
+KERNEL_GE_517=0
+if [ "$KMAJOR" -gt 5 ] || ( [ "$KMAJOR" -eq 5 ] && [ "$KMINOR" -ge 17 ] ); then
+    KERNEL_GE_517=1
+fi
+
 # BTF 符号探测 (3 级扫描)
 HAS_BTF=0
 BTF_PATH="none"
@@ -178,11 +183,33 @@ if [ -d /sys/module/nfnetlink_queue ] || lsmod 2>/dev/null | grep -q "nfnetlink_
     NFQUEUE_OK=1
 fi
 
-# 引擎适配结论
+# 引擎适配结论与已安装版本探测
 DAE_CAPABLE=0
 [ "$KERNEL_GE_515" -eq 1 ] && [ "$HAS_BTF" -eq 1 ] && DAE_CAPABLE=1
 
 SINGBOX_CAPABLE=1 # sing-box TUN 适配全版本 Linux
+
+DAE_VER="none"
+if command -v dae >/dev/null 2>&1; then
+    _d_raw=$(dae --version 2>/dev/null | head -n 1)
+    _d_out=$(printf '%s\n' "$_d_raw" | awk '{for(i=1;i<=NF;i++) if($i ~ /^v?[0-9]+\.[0-9]+/) {print $i; exit}}')
+    [ -z "$_d_out" ] && _d_out=$(printf '%s\n' "$_d_raw" | awk '{print $NF}')
+    [ -n "$_d_out" ] && DAE_VER="$_d_out"
+fi
+
+DAE_GEODATA_OK=0
+for _gdir in /usr/share/dae /etc/dae /usr/share/v2ray; do
+    if [ -s "$_gdir/geoip.dat" ] && [ -s "$_gdir/geosite.dat" ]; then
+        DAE_GEODATA_OK=1
+        break
+    fi
+done
+
+SINGBOX_VER="none"
+if command -v sing-box >/dev/null 2>&1; then
+    _sb_out=$(sing-box version 2>/dev/null | head -n 1 | awk '{for(i=1;i<=NF;i++) if($i ~ /^v?[0-9]+\.[0-9]+/) {print $i; exit}}')
+    [ -n "$_sb_out" ] && SINGBOX_VER="$_sb_out"
+fi
 
 # ------------------------------------------------------------------------------
 # 4. 端口占用与冲突插件扫描
@@ -190,9 +217,9 @@ SINGBOX_CAPABLE=1 # sing-box TUN 适配全版本 Linux
 # 检查 53 端口占用者 (兼容 netstat 与 ss，并检查 dnsmasq port 配置防止 DHCP-only 模式误判)
 DNS_PORT_HOLDER="unknown"
 PORT53_ACTIVE=0
-if command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
     PORT53_ACTIVE=1
-elif command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+elif command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
     PORT53_ACTIVE=1
 fi
 
@@ -348,6 +375,7 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
   "kernel": {
     "version": "$(je "$KERNEL_VER")",
     "kernel_ge_515": $KERNEL_GE_515,
+    "kernel_ge_517": $KERNEL_GE_517,
     "has_btf": $HAS_BTF,
     "btf_path": "$(je "$BTF_PATH")",
     "nfqueue_ok": $NFQUEUE_OK,
@@ -356,7 +384,10 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
   },
   "proxy_engines": {
     "dae_capable": $DAE_CAPABLE,
+    "dae_geodata_ready": $DAE_GEODATA_OK,
     "singbox_capable": $SINGBOX_CAPABLE,
+    "dae_version": "$(je "$DAE_VER")",
+    "singbox_version": "$(je "$SINGBOX_VER")",
     "recommended_engine": "$([ "$DAE_CAPABLE" -eq 1 ] && echo "dae" || echo "sing-box")"
   },
   "conflicts": {
@@ -418,11 +449,11 @@ else
 
     say "${CYAN}[4. 科学上网引擎适配能力]${NC}"
     if [ "$DAE_CAPABLE" -eq 1 ]; then
-        say "  - dae (eBPF)   : ${GREEN}[完美支持]${NC} 内核与 BTF 满足要求，可获得巅峰性能与最低 CPU 开销"
+        say "  - dae (eBPF)   : ${GREEN}[完美支持]${NC} (已安装: ${DAE_VER}) 内核与 BTF 满足要求，可获得巅峰性能与最低 CPU 开销"
     else
-        say "  - dae (eBPF)   : ${YELLOW}[受限]${NC} $([ "$KERNEL_GE_515" -eq 0 ] && echo "内核 < 5.15" || echo "缺少 BTF 符号")"
+        say "  - dae (eBPF)   : ${YELLOW}[受限]${NC} $([ "$KERNEL_GE_515" -eq 0 ] && echo "内核 < 5.15 (老软路由请用 sing-box)" || echo "缺少 BTF 符号")"
     fi
-    say "  - sing-box (TUN): ${GREEN}[完美支持]${NC} 兼容所有 Linux 内核与复杂分流协议"
+    say "  - sing-box (TUN): ${GREEN}[完美支持]${NC} (已安装: ${SINGBOX_VER}) 兼容新老所有 Linux 内核与复杂分流协议"
 
     say "${CYAN}[5. 端口、防火墙与冲突插件]${NC}"
     say "  - 53 端口占用: ${DNS_PORT_HOLDER}"

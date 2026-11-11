@@ -23,12 +23,13 @@
    - [第 2 层] 大流量下载与 P2P 绕行：`pname(aria2c, qbittorrent-nox) -> must_direct`
    - [第 3 层] 境外 QUIC 抑制与 Canary 阻断：
      `l4proto(udp) && dport(443) && !domain(geosite:cn) -> block`
-     `domain('use-application-dns.net', 'mask.icloud.com', 'mask-h2.icloud.com') -> block`
+     `domain(suffix: use-application-dns.net, suffix: mask.icloud.com, suffix: mask-h2.icloud.com) -> block`
    - [第 4 层] 重点海外服务专属分流：`domain(geosite:google, geosite:openai) -> proxy`
    - [第 5 层] 大陆大盘双向白名单直连：`domain(geosite:cn) -> direct` 及 `dip(geoip:cn) -> direct`
    - [第 6 层] 终态回落兜底：`fallback: proxy`
-5. **DNS 响应投毒重查闭环**：
-   在 `dns.routing.response` 中，首行必须为白名单放行，防止无限递归死锁：
+5. **DNS 响应投毒重查闭环与 `qname` 词法规范**：
+   - 在 `dns.routing.response` 中，首行必须为白名单放行，防止无限递归死锁；
+   - 在 `dns.routing.request` 中，`qname(...)` 的底层 `addQName` 解析器**强制要求显式前缀键**（`geosite:`、`full:`、`suffix:`、`keyword:`、`regex:`、`ext:`），严禁像 `routing.domain()` 那样直接传入无前缀的单引号域名（如 `qname('use-application-dns.net')` 会直接报 `addQName: unsupported key:`），且避免在 DNS 阶段加载含特殊前缀的 `geosite:category-ads-all`；**域名黑名单与 Canary 阻断应统一放在 `routing {}` 的 `domain(...) -> block` 中**。
    ```shell
    response {
        upstream(googledns) -> accept
@@ -66,7 +67,7 @@ routing {
     pname(dnsmasq, odhcpd, netifd, uhttpd) && l4proto(udp) && dport(53) -> must_direct
     dip(224.0.0.0/3, 'ff00::/8') -> direct
     dip(geoip:private) -> direct
-    domain('use-application-dns.net', 'mask.icloud.com', 'mask-h2.icloud.com') -> block
+    domain(suffix: use-application-dns.net, suffix: mask.icloud.com, suffix: mask-h2.icloud.com) -> block
     domain(geosite:cn) -> direct
     dip(geoip:cn) -> direct
     fallback: proxy
@@ -85,7 +86,7 @@ routing {
     pname(dnsmasq, odhcpd, netifd, uhttpd) && l4proto(udp) && dport(53) -> must_direct
     dip(192.168.1.1) -> direct # 放行主路由自身 IP
     dip(geoip:private) -> direct
-    domain('use-application-dns.net', 'mask.icloud.com', 'mask-h2.icloud.com') -> block
+    domain(suffix: use-application-dns.net, suffix: mask.icloud.com, suffix: mask-h2.icloud.com) -> block
     domain(geosite:cn) -> direct
     dip(geoip:cn) -> direct
     fallback: proxy

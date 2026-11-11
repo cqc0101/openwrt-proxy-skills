@@ -13,7 +13,7 @@ global {
     auto_config_kernel_parameter: true
 
     # eBPF 连接追踪哈希表大小（1GB以上内存推荐 262144，512MB小内存路由建议 65536 或 131072）
-    # 注意：该选项为较新版本 dae 引入，老版本可能不识别；部署前务必先跑 `dae validate` 校验
+    # 注意：该选项为较新版本 dae (v1.1+/v2.x) 引入；若路由器为老版本 dae (<= v1.0.0)，请使用 sub_to_dae.py --dae-version legacy 自动剥离
     bpf_conn_state_map_size: 131072
 
     # 日志输出等级: error, warn, info, debug, trace
@@ -74,10 +74,9 @@ dns {
 
     routing {
         request {
-            # 广告域名拦截
-            qname(geosite:category-ads-all) -> reject
-            # DoH 与 Apple 私密代理 Canary 域名阻断（DNS 查询层返回 NXDOMAIN/REJECT，强制终端遵循网关分流）
-            qname('use-application-dns.net', 'mask.icloud.com', 'mask-h2.icloud.com') -> reject
+            # 注意：dae v2.1.1 的 qname 解析器 (addQName) 仅接受带前缀键 (geosite:/full:/suffix:/keyword:/regex:) 的参数，
+            # 严禁在 qname() 中直接写无前缀裸域名或单引号域名（会触发 addQName: unsupported key 崩溃），
+            # 域名黑名单与 Canary 阻断统一置于下方 routing {} 的 domain() 中处理。
             # 国内域名解析走阿里 DNS 直连
             qname(geosite:cn) -> alidns
             # 默认兜底上游
@@ -107,10 +106,11 @@ routing {
     pname(aria2c, qbittorrent-nox, transmission-daemon) -> must_direct
     dscp(0x4) -> direct
 
-    ### [第 3 层] 境外 QUIC/UDP 443 抑制 (规避运营商 UDP QoS 丢包，促使降级回稳定 TCP) ###
+    ### [第 3 层] 境外 QUIC/UDP 443 抑制、广告与 Canary 域名阻断 ###
     l4proto(udp) && dport(443) && !domain(geosite:cn) -> block
-    # DoH 与 Apple 私密代理 Canary 域名阻断，强制浏览器/iOS 遵循网关 DNS 分流
-    domain('use-application-dns.net', 'mask.icloud.com', 'mask-h2.icloud.com') -> block
+    domain(geosite:category-ads-all) -> block
+    # DoH 与 Apple 私密代理 Canary 域名阻断（使用标准 suffix: 前缀，全版本 dae 兼容且规避 DNS addQName 陷阱）
+    domain(suffix: use-application-dns.net, suffix: mask.icloud.com, suffix: mask-h2.icloud.com) -> block
 
     ### [第 4 层] 重点海外服务专属分流 ###
     domain(geosite:google, geosite:github, geosite:telegram, geosite:openai) -> proxy

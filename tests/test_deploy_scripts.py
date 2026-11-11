@@ -21,6 +21,37 @@ SHARED_SCRIPTS = [
 ]
 
 
+_CACHED_PROBE_JSON = None
+
+
+def _run_probe_json():
+    """运行一次 probe.sh --json 并缓存结果；在 Windows 下通过临时 PATH 屏蔽慢速 System32\\netstat.exe 反向 DNS 阻塞。"""
+    global _CACHED_PROBE_JSON
+    if _CACHED_PROBE_JSON is not None:
+        return _CACHED_PROBE_JSON
+    import subprocess, json, tempfile
+    env = os.environ.copy()
+    if os.name == "nt":
+        with tempfile.TemporaryDirectory() as shim_dir:
+            for cmd_name in ("netstat", "netstat.exe", "netstat.bat"):
+                p = os.path.join(shim_dir, cmd_name)
+                with open(p, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write("#!/bin/sh\nexit 0\n" if not cmd_name.endswith(".bat") else "@exit /b 0\r\n")
+            env["PATH"] = shim_dir + os.pathsep + env.get("PATH", "")
+            res = subprocess.run(
+                ["sh", os.path.join(SINGBOX, "probe.sh"), "--json"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", env=env
+            )
+    else:
+        res = subprocess.run(
+            ["sh", os.path.join(SINGBOX, "probe.sh"), "--json"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", env=env
+        )
+    assert res.returncode == 0, res.stderr
+    _CACHED_PROBE_JSON = json.loads(res.stdout)
+    return _CACHED_PROBE_JSON
+
+
 def _read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
@@ -82,8 +113,6 @@ class TestNetworkSetupScripts(unittest.TestCase):
             text = _read(os.path.join(base, "doctor.sh"))
             self.assertNotIn("|context deadline exceeded\"", text, "严禁将裸 context deadline 作为独立分支误判规则集阻断")
 
-
-
     def test_secondary_router_private_wan_dns_governance(self):
         """二级路由防旁路：检测 resolv.conf.auto 私网 nameserver 并自动切换 Dnsmasq 上游至 223.5.5.5，且 --revert 可还原。"""
         text = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
@@ -100,8 +129,6 @@ class TestNetworkSetupScripts(unittest.TestCase):
             self.assertIn("--confirm", text)
             self.assertIn("/tmp/proxy_deploy_confirmed", text)
             self.assertIn("</dev/null >/dev/null 2>&1 &", text, "后台看门狗必须关闭 stdin 防止阻塞 SSH 会话")
-
-
 
     def test_watchdog_uses_in_memory_revert_not_sh_dollar0(self):
         """通过 ssh 'sh -s -- --watchdog' 管道执行时 $0 为 'sh'，回滚必须直接调用内存函数而非 sh "$0" --revert。"""
@@ -128,7 +155,7 @@ class TestNetworkSetupScripts(unittest.TestCase):
     def test_dae_network_script_single_firewall_reload_in_normal_flow(self):
         """dae 网络加固主流程应合并提交防火墙变更，避免连续 3 次执行 /etc/init.d/firewall reload。"""
         dae_txt = _read(os.path.join(DAE, "setup_openwrt_network.sh"))
-        # 整個腳本只應有 2 處 firewall reload：1 處在 --revert 分支，1 處在正向加固末尾
+        # 整个脚本只应有 2 处 firewall reload：1 处在 --revert 分支，1 处在正向加固末尾
         self.assertEqual(dae_txt.count("/etc/init.d/firewall reload"), 2)
 
 
@@ -158,7 +185,6 @@ class TestSharedScriptsConsistency(unittest.TestCase):
                             f"  singbox: {x}\n  dae    : {y}")
                 self.fail(f"{name} 行数不一致：singbox {len(la)} 行 vs dae {len(lb)} 行")
 
-
     def test_doctor_no_dead_port_5335_loop_suggestion(self):
         for base in (SINGBOX, DAE):
             text = _read(os.path.join(base, "doctor.sh"))
@@ -168,7 +194,6 @@ class TestSharedScriptsConsistency(unittest.TestCase):
         for base in (SINGBOX, DAE):
             text = _read(os.path.join(base, "probe.sh"))
             self.assertIn("DISTRIB_DESCRIPTION", text, "probe.sh 必须结合 DISTRIB_DESCRIPTION 识别真机 iStoreOS")
-
 
     def test_watchdog_token_isolation_and_doctor_all_mode(self):
         for base in (SINGBOX, DAE):
@@ -192,8 +217,6 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             doc_txt = _read(os.path.join(base, "doctor.sh"))
             self.assertIn("daed_conflict", doc_txt, "doctor.sh 必须针对 daed 运行给出错误诊断与禁用方案")
 
-
-
     def test_boot_guard_does_not_self_rollback_when_watchdog_token_exists(self):
         for base in (SINGBOX, DAE):
             net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
@@ -204,8 +227,6 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             probe_txt = _read(os.path.join(base, "probe.sh"))
             self.assertNotIn("[ -f /etc/daed/wing.db ]", probe_txt,
                              "probe.sh 不得仅凭静态文件 wing.db 永久判定 daed_running=1")
-
-
 
     def test_doctor_issue_deduplication(self):
         """doctor.sh 必须实现 issue ID 去重，防止多重检测规则命中时输出重复问题及错误计数膨胀。"""
@@ -220,7 +241,6 @@ class TestSharedScriptsConsistency(unittest.TestCase):
         net_txt = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
         self.assertIn("uci del_list firewall.@zone[${LAN_INDEX}].device='tun0'", net_txt)
 
-
     def test_probe_rom_free_fallback(self):
         """probe.sh 在 /overlay 不存在时必须正确回退到 df -m /，不得因 FREE_ROM=0 初始非空而跳过回退导致 rom_free_mb 恒为 0。"""
         import subprocess, json
@@ -230,11 +250,8 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             self.assertIn('FREE_ROM=""', p_txt)
             self.assertIn('if [ -d /overlay ] && df -m /overlay', p_txt)
             self.assertIn('if [ -z "$FREE_ROM" ] && df -m /', p_txt)
-        res = subprocess.run(["sh", os.path.join(SINGBOX, "probe.sh"), "--json"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        self.assertEqual(res.returncode, 0)
-        data = json.loads(res.stdout)
+        data = _run_probe_json()
         self.assertGreater(data["hardware"]["rom_free_mb"], 0)
-
 
     def test_bypass_to_normal_mode_restores_orig_masq_and_boot_guard_reverts_network(self):
         """从 --bypass 切换回普通主路由模式时必须恢复 ORIG_LAN_MASQ (清理残留 masq=1)，且 99-proxy-boot-guard 必须触发 --revert。"""
@@ -243,7 +260,6 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             self.assertIn("elif", net_txt)
             self.assertIn(".network_baseline.bak", net_txt)
             self.assertIn("setup_openwrt_network.sh --revert", net_txt)
-
 
     def test_confirm_watchdog_and_revert_precede_lan_index_error_gate(self):
         """R7-06: --confirm / --watchdog / --revert 必须位于 LAN_INDEX 为空报错退出门禁之前，防止防火墙异常时无法解除看门狗。"""
@@ -256,6 +272,26 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             self.assertLess(confirm_pos, lan_gate_pos)
             self.assertLess(watchdog_pos, lan_gate_pos)
             self.assertLess(revert_pos, lan_gate_pos)
+
+    def test_legacy_fw3_iptables_fallback_and_probe_engine_versions(self):
+        """验证新老软路由兼容：probe.sh 输出 kernel_ge_517 与 dae/singbox 版本字段；setup_openwrt_network.sh 含 fw3 iptables 兜底放行与回滚清理。"""
+        import subprocess, json
+        net_txt = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
+        self.assertIn("command -v fw3 >/dev/null 2>&1 && ! command -v fw4 >/dev/null 2>&1", net_txt)
+        self.assertIn("iptables -C forwarding_rule -i tun0 -j ACCEPT", net_txt)
+        self.assertIn("iptables -D forwarding_rule -i tun0 -j ACCEPT", net_txt)
+
+        data = _run_probe_json()
+        self.assertIn("kernel_ge_517", data["kernel"])
+        self.assertIn("dae_version", data["proxy_engines"])
+        self.assertIn("singbox_version", data["proxy_engines"])
+        self.assertIn("dae_geodata_ready", data["proxy_engines"])
+
+        for base_dir in (SINGBOX, DAE):
+            doc_txt = _read(os.path.join(base_dir, "doctor.sh"))
+            self.assertIn("unexpected field", doc_txt)
+            self.assertIn("--dae-version legacy", doc_txt)
+
 
 if __name__ == "__main__":
     unittest.main()

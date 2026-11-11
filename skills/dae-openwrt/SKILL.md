@@ -10,18 +10,18 @@ description: >-
 
 # dae OpenWrt eBPF 透明代理架构器
 
-本技能专为 **OpenWrt**、**ImmortalWrt**、**iStoreOS** 软路由网关设计，指导原生 **dae (Linux 内核级 eBPF 高性能透明代理)** 的规则编写、接口绑定约束、DNS 防环防御与生产级平滑热重载。
+本技能专为 **OpenWrt**、**ImmortalWrt**、**iStoreOS** 软路由网关设计，指导原生 **dae (Linux 内核级 eBPF 高性能透明代理)** 的规则编写、接口绑定约束、DNS 防环防御与生产级平滑热重载，同时自适应兼容老版本 `dae`（`<= v1.0.0`，如软件源 `1.0.0-r1`）与最新版本 `dae`（`v2.1.1+`）。
 
-> **支持边界**：本技能管理**原生 dae**（`dae` 二进制 / procd `dae` 服务 + `/etc/dae/config.dae`，注意：Web 面板版 `daed` 使用 `/etc/daed/daed.db` 数据库，不读取 `/etc/dae/config.dae`）。eBPF 需要 Linux 5.15+ 与 BTF 支持，若固件不满足条件，探针会自动拦截并建议改用 `singbox-openwrt`。
+> **支持边界**：本技能管理**原生 dae**（`dae` 二进制 / procd `dae` 服务 + `/etc/dae/config.dae`，注意：Web 面板版 `daed` 使用 `/etc/daed/daed.db` 数据库，不读取 `/etc/dae/config.dae`）。eBPF 需要 Linux 5.15+（现代 `dae v2.x` 推荐 5.17+）与 BTF 支持；若为老软路由（Linux < 5.15 或无 BTF），探针会自动识别并建议改用全内核通用的 `singbox-openwrt`。
 
 ---
 
 ## 🚨 强制执行红线（任何任务开始前必读）
 
-1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒并执行 `chmod 600`（`dae` 强制要求配置文件权限不宽于 `0600`/`0640`），经远端 `dae validate <file>` 通过后再备份原配置并原子替换。
+1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒并执行 `chmod 600`（`dae` 强制要求配置文件权限不宽于 `0600`/`0640`），经远端 `dae validate -c <file>` 通过后再备份原配置并原子替换。
 2. **硬件保护红线**：`global` 中 `lan_interface: br-lan` + `wan_interface: auto` + `auto_config_kernel_parameter: true`；部署前关闭流量分载（Flow Offloading，否则报文绕过 eBPF）；dropbear/sshd 需做 OOM 保护。
 3. **绝不盲目猜测**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh dae --json` 诊断，再进行针对性修复。
-4. **dae validate 语法说明**：dae 官方 CLI 不支持 `-c` 参数（`-c` 是 sing-box 的参数），正确格式为 `dae validate /path/to/config.dae`。
+4. **dae validate -c 强制参数规范与新旧版本兼容**：原生 `dae` 官方 CLI（含 v2.1.1+）强制要求传入 `-c` / `--config` 指定配置文件，标准格式为 `dae validate -c /path/to/config.dae`（漏传 `-c` 会报 `Argument "--config" or "-c" is required`）；若需同时兼容极早期版本，可使用 `dae validate -c /tmp/config.dae.test || dae validate /tmp/config.dae.test`。同时，针对老版本 `dae`（`<= v1.0.0`），生成配置时通过 `--router <IP>` 自动探测或显式指定 `--dae-version legacy` 剥离 v2.x 新增字段。
 5. **procd 托管与 daed 区分及强互斥检查**：ImmortalWrt 官方源的原生 `dae` 包由 procd 管理，启用与热重载使用 `uci set dae.config.enabled='1' && uci commit dae && /etc/init.d/dae reload`（裸二进制模式使用 `dae reload`）；而 `daed` 是 Web 面板独立包（端口 2023，读取 `/etc/daed/wing.db`，不读取 `/etc/dae/config.dae`）。若 `probe.sh -j` 检出 `daed_conflict: true`，必须严禁下发原生配置，提示用户先执行 `/etc/init.d/daed stop && /etc/init.d/daed disable`。
 
 ---
@@ -41,19 +41,19 @@ description: >-
 本技能专为 AI Agent 设计，**大模型负责意图理解、eBPF 拓扑可行性推理与规则灵活装配，脚本负责高危确定性操作与底层事实感知**。全链路遵循 7 步工程闭环：
 
 ```
-[步骤 1: eBPF 兼容性推理] LLM 评估 (Linux 5.15+ 内核 / BTF 支持 / 流量分载 Offloading 规避)
+[步骤 1: eBPF 兼容性推理] LLM 评估 (Linux 5.15+/5.17+ 内核 / BTF 支持 / 流量分载 Offloading 规避)
        │
        ▼
-[步骤 2: 底层硬件感知] probe.sh -j (探测 BTF 文件 / 网卡名 / 冲突代理插件)
+[步骤 2: 底层硬件感知] probe.sh -j (探测内核版本 / BTF 文件 / dae 版本 / 冲突代理插件)
        │
        ▼
-[步骤 3: 原子订阅解析] sub_to_dae.py (清洗节点 / 密码特殊字符安全转义 / 生成 dae link)
+[步骤 3: 原子订阅解析] sub_to_dae.py (清洗节点 / 自动识别 modern 或 legacy 版本字段 / 生成配置)
        │
        ▼
 [步骤 4: 规则积木灵活装配] dae-rules-and-syntax.md (宿主组件 must_direct / 设备 MAC 分流 / 大陆双向直连)
        │
        ▼
-[步骤 5: Agent 自主部署与热重载] SSH 管道原子发布 (chmod 600 -> 沙盒 dae validate -> 快照与 mv -> reload)
+[步骤 5: Agent 自主部署与热重载] SSH 管道原子发布 (chmod 600 -> 沙盒 dae validate -c -> 快照与 mv -> reload)
        │
        ▼
 [步骤 6: 软路由网络闭环接管] setup_openwrt_network.sh (关闭 Flow Offloading / 开启 filter_aaaa / MSS 钳制)
@@ -105,8 +105,9 @@ routing {
 5. **[第 5 层] 大陆大盘双向白名单直连**：`domain(geosite:cn) -> direct` 及 `dip(geoip:cn) -> direct`
 6. **[第 6 层] 终态回落兜底**：`fallback: 默认代理组`
 
-### 5. DNS 污染重查闭环铁律
-在 `dns.routing.response` 中配置私网 IP 投毒重查时，正上方首行**必须**加入白名单放行，防止陷入无限递归：
+### 5. DNS 污染重查闭环与 qname 词法前缀铁律
+* **response 防环**：在 `dns.routing.response` 中配置私网 IP 投毒重查时，首行**必须**加入 `upstream(googledns) -> accept` 白名单放行，防止无限递归。
+* **qname 词法陷阱规避**：`dae v2.1.1` 的 `dns.routing.request` 中 `qname(...)` 解析器 (`addQName`) **强制要求每个参数必须带匹配前缀**（如 `geosite:cn`、`full:example.com`、`suffix:example.com`），严禁写入无前缀单引号域名（如 `qname('use-application-dns.net')`，会触发 `addQName: unsupported key:` 崩溃）或复杂 `geosite:category-ads-all`；**所有域名黑名单与 Canary 阻断一律置于 `routing {}` 的 `domain(suffix: ...)` 中处理**。
 ```shell
 response {
     upstream(googledns) -> accept # 首行必须放行可信上游！
@@ -133,10 +134,10 @@ global {
 
 ## 🔍 维度一：环境感知与自动体检 (Reconnaissance)
 
-部署 dae 前必须先调用探针确认软路由内核与 BTF 符号支持：
+部署 dae 前必须先调用探针确认软路由内核、BTF 符号及已安装的 `dae` 版本：
 
 ```bash
-# 目标软路由本地或 SSH 管道执行探针 (输出结构化 JSON，供 Agent 快速解析)
+# 目标软路由本地或 SSH 管道执行探针 (输出结构化 JSON，含 kernel_ge_515/517 与 dae_version)
 ssh root@192.168.1.1 "sh -s -- -j" < scripts/probe.sh
 ```
 
@@ -144,11 +145,11 @@ ssh root@192.168.1.1 "sh -s -- -j" < scripts/probe.sh
 
 ## ⚙️ 维度二：dae 配置生成与订阅脱水 (Config Engine)
 
-使用 `scripts/sub_to_dae.py` 支持将机场 HTTP/HTTPS 订阅一键清洗并转换为 dae 原生 `node { ... }` 格式：
+使用 `scripts/sub_to_dae.py` 支持将机场 HTTP/HTTPS 订阅一键清洗并转换为 dae 配置（支持自动探测路由器上的新旧 `dae` 版本）：
 
 ```bash
-# 方式 A：一键合成完整 config.dae（自动注入 openwrt.dae 模板并内置执行 5 条铁律静态审计）
-python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 --full --out /tmp/config.dae
+# 方式 A：一键合成完整 config.dae（通过 --router 自动探测远端 dae 版本是 modern 还是 legacy，或手动传 --dae-version legacy 适配 <= v1.0.0）
+python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 --full --router 192.168.1.1 --out /tmp/config.dae
 
 # 方式 B：仅导出 node { ... } 节点池语法块
 python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 --out /tmp/nodes.dae
@@ -161,11 +162,17 @@ python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 --
 dae 的优势在于重载配置时**无需重启内核 eBPF 程序**，已有连接完全不断流。Agent 自主执行标准发布命令：
 
 ```bash
+# 0. [可选：针对 apk 缺包或路由器初始无网死锁] 宿主机 SSH 流式管道 (SSH Stream Pipe) 直灌二进制与 GeoData
+# 当 ImmortalWrt 24/25+ (apk) 软件源未收录最新原生 dae 或路由器断网无法拉取时，直接从宿主机流式灌入：
+# ssh root@192.168.1.1 "mkdir -p /usr/bin /usr/share/dae /etc/dae && cat > /usr/bin/dae && chmod +x /usr/bin/dae" < ./dae-linux-${ARCH}
+# ssh root@192.168.1.1 "cat > /usr/share/dae/geoip.dat" < ./geoip.dat
+# ssh root@192.168.1.1 "cat > /usr/share/dae/geosite.dat" < ./geosite.dat
+
 # 1. 上传配置到 /tmp 临时沙盒并锁定 0600 权限（dae 强制要求配置文件权限不宽于 0640/0600）
 ssh root@192.168.1.1 "cat > /tmp/config.dae.test && chmod 600 /tmp/config.dae.test" < /tmp/config.dae
 
-# 2. 远端沙盒严格语法校验（注意：dae 不支持 -c 参数，直接传文件路径）
-ssh root@192.168.1.1 "dae validate /tmp/config.dae.test"
+# 2. 远端沙盒严格语法校验（优先使用原生 dae v2.1.1+ 强制要求的 -c 参数，并兼容早期版本回退）
+ssh root@192.168.1.1 "dae validate -c /tmp/config.dae.test || dae validate /tmp/config.dae.test"
 
 # 3. 启动路由器本地 45 秒防失联看门狗 (必须在替换配置与 reload 前启动，防止 eBPF 规则异常导致 SSH 锁死)
 ssh root@192.168.1.1 "sh -s -- --watchdog" < scripts/setup_openwrt_network.sh

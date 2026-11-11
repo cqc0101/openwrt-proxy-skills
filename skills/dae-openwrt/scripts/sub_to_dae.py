@@ -2,12 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 dae 节点与完整配置生成器 (支持输出 node 语法块，或注入 openwrt.dae 模板生成完整配置并自动静态审计)
+支持自适应兼容老版本 dae (<= v1.0.0, legacy) 与新版本 dae (v1.1+ / v2.1.1+, modern)。
 自包含：本技能自带 sub_parser.py / parse_node.py / check_dae_syntax.py。
 """
 
 import ipaddress
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -38,9 +40,95 @@ if SCRIPT_DIR not in sys.path:
 from sub_parser import parse_source, to_dae_nodes
 from check_dae_syntax import check_dae_syntax
 
+# 仅在 dae v1.1+ / v2.x 中引入的新字段；老版本 dae (v0.3 ~ v1.0.0) 不识别这些字段会导致 validate 报错
+MODERN_ONLY_DAE_KEYS = (
+    "bpf_conn_state_map_size",
+    "auto_sniff_punt",
+    "bootstrap_resolver",
+    "optimistic_cache",
+    "optimistic_cache_ttl",
+)
 
-def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology="main", main_router_ip=None, ram_mb=None, template_path=None):
-    """读取 openwrt.dae 基准模板，注入清洗后的 node 块、接口与旁路由主网关直连规则，返回完整配置文本。"""
+
+def dae_version_ge(ver_str: str, min_major: int, min_minor: int) -> bool:
+    """按主/次版本号比较 dae 版本，例如 '2.1.1' >= (1, 1) -> True，'1.0.0-r1' >= (1, 1) -> False。"""
+    m = re.search(r"v?(\d+)\.(\d+)", str(ver_str or ""))
+    if not m:
+        return False
+    maj, mnr = int(m.group(1)), int(m.group(2))
+    return (maj > min_major) or (maj == min_major and mnr >= min_minor)
+
+
+def detect_remote_dae_version(host, user="root", port=22, timeout=5, key_path=None):
+    """通过 SSH 远程执行 dae --version 探测软路由上的 dae 版本，返回 ('modern'|'legacy', raw_version)。"""
+    host_str = str(host or "").strip()
+    user_str = str(user or "root").strip()
+    if not host_str or host_str.startswith("-") or re.search(r"\s", host_str):
+        raise ValueError(f"非法的目标主机地址: {host!r}")
+    if not user_str or user_str.startswith("-") or re.search(r"\s", user_str):
+        raise ValueError(f"非法的 SSH 用户名: {user!r}")
+    if isinstance(port, bool) or not (1 <= int(port) <= 65535):
+        raise ValueError(f"SSH 端口超出合法范围 (1-65535): {port!r}")
+
+    ssh_cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", f"ConnectTimeout={int(timeout)}",
+        "-p", str(int(port)),
+    ]
+    if key_path:
+        ssh_cmd.extend(["-i", str(key_path)])
+    ssh_cmd.extend([
+        "--",
+        f"{user_str}@{host_str}",
+        "dae --version 2>&1 | head -n 1"
+    ])
+    try:
+        res = subprocess.run(
+            ssh_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout + 2,
+        )
+        out = (res.stdout or "").strip()
+        m = (
+            re.search(r"\bdae\s+version\s+(v?\d+\.\d+[^\s]*)", out, re.IGNORECASE)
+            or re.match(r"^(v?\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9._-]+)?)$", out)
+        )
+        ver_token = m.group(1) if m else ""
+        if ver_token:
+            if dae_version_ge(ver_token, 1, 1):
+                return "modern", out
+            print(
+                f"[!] 探测到老版本 dae ({out} < v1.1)，自动切换为 legacy 兼容模式（剥离 v2.x 专属字段以保 100% 通过校验）",
+                file=sys.stderr,
+            )
+            return "legacy", out
+        err_msg = (res.stderr or out or "无输出").strip().splitlines()[0] if (res.stderr or out) else "无响应"
+        print(f"[!] 远程探测未返回标准版本号 ({err_msg})，默认采用 modern (v2.x) 规范生成", file=sys.stderr)
+        return "modern", out if out else "Fallback-modern"
+    except Exception as e:
+        print(f"[!] 无法探测远程 dae 版本 ({e})，默认采用 modern (v2.x) 规范生成", file=sys.stderr)
+        return "modern", "Fallback-modern"
+
+
+def build_full_dae_config(
+    nodes,
+    lan_iface="br-lan",
+    wan_iface="auto",
+    topology="main",
+    main_router_ip=None,
+    ram_mb=None,
+    dae_version="modern",
+    template_path=None,
+):
+    """读取 openwrt.dae 基准模板，注入清洗后的 node 块、接口、旁路由规则及版本兼容裁剪，返回完整配置文本。"""
+    if dae_version not in ("modern", "legacy"):
+        raise ValueError(f"不支持的 dae_version={dae_version!r}，可选值为 'modern' 或 'legacy'")
+
     tpl_file = template_path or TEMPLATE_PATH
     if not os.path.isfile(tpl_file):
         raise FileNotFoundError(f"找不到 dae 模板文件: {tpl_file}")
@@ -86,16 +174,20 @@ def build_full_dae_config(nodes, lan_iface="br-lan", wan_iface="auto", topology=
             lambda m: f"{m.group(1)}{map_sz}",
             merged,
         )
+    if dae_version == "legacy":
+        # 剥离仅 dae v1.1+/v2.x 支持的新字段，确保老版本 dae (v0.3 ~ v1.0.0) 100% 通过 dae validate
+        key_alt = "|".join(re.escape(k) for k in MODERN_ONLY_DAE_KEYS)
+        merged = re.sub(rf"(?m)^[ \t]*(?:{key_alt}):[^\n]*\n?", "", merged)
     return merged
 
 
 def main():
     if len(sys.argv) < 2:
-        print("用法: python sub_to_dae.py <机场订阅URL / Base64文件 / Clash配置> [--max 15] [--include 正则] [--full] [-o /tmp/config.dae]")
+        print("用法: python sub_to_dae.py <机场订阅URL / Base64文件 / Clash配置> [--max 15] [--include 正则] [--full] [--dae-version modern|legacy] [-o /tmp/config.dae]")
         sys.exit(1)
 
     import argparse
-    parser = argparse.ArgumentParser(description="dae 订阅转换与完整配置生成工具")
+    parser = argparse.ArgumentParser(description="dae 订阅转换与完整配置生成工具 (兼容新旧全版本 dae)")
     parser.add_argument("source", help="订阅来源 (URL/文件/Base64/单节点URI)")
     parser.add_argument("--max", type=int, default=15, help="保留最大节点数 (默认 15)")
     parser.add_argument("--include", help="包含节点匹配正则")
@@ -106,6 +198,16 @@ def main():
     parser.add_argument("--topology", choices=["main", "bypass"], default="main", help="网络拓扑模式 (默认: main，旁路由请指定 bypass)")
     parser.add_argument("--main-router-ip", default=None, help="旁路由模式下的主路由 IP (如 192.168.1.1)")
     parser.add_argument("--ram-mb", type=int, default=None, help="目标路由器物理内存 MB (低于 512MB 时自动调小 bpf_conn_state_map_size 防 OOM)")
+    parser.add_argument("--router", help="软路由 IP (指定后将自动通过 SSH 探测路由器上安装的 dae 版本是 modern 还是 legacy)")
+    parser.add_argument("--user", default="root", help="SSH 用户名 (默认: root)")
+    parser.add_argument("--port", type=int, default=22, help="SSH 端口 (默认: 22)")
+    parser.add_argument("--key", help="SSH 私钥文件路径 (可选，用于远程探测 dae 版本)")
+    parser.add_argument(
+        "--dae-version",
+        choices=["modern", "legacy"],
+        default=None,
+        help="目标 dae 版本模式：modern (适配 v1.1+/v2.1.1+，默认) 或 legacy (适配 <= v1.0.0 老版本，自动剥离新字段)",
+    )
     parser.add_argument("-o", "--out", help="输出文件路径 (不指定则输出到标准输出)")
 
     args = parser.parse_args()
@@ -120,7 +222,12 @@ def main():
         sys.exit(1)
 
     if args.full:
+        target_dae_ver = args.dae_version or "modern"
         try:
+            if args.router and not args.dae_version:
+                print(f"[*] 正在连接软路由 {args.user}@{args.router}:{args.port} 探测 dae 版本...", file=sys.stderr)
+                target_dae_ver, raw_ver = detect_remote_dae_version(args.router, args.user, args.port, key_path=args.key)
+                print(f"[+] 探测到远端 dae 版本: {raw_ver} -> 选用配置模式: {target_dae_ver}", file=sys.stderr)
             out_text = build_full_dae_config(
                 nodes,
                 lan_iface=args.lan_iface,
@@ -128,6 +235,7 @@ def main():
                 topology=args.topology,
                 main_router_ip=args.main_router_ip,
                 ram_mb=args.ram_mb,
+                dae_version=target_dae_ver,
             )
         except ValueError as e:
             print(f"[FATAL] 参数校验失败: {e}", file=sys.stderr)

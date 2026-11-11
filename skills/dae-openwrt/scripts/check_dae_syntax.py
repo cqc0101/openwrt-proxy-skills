@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 dae 配置文件 5 条铁律静态合规检测工具（启发式检查）
-注意：本工具只做静态模式匹配，最终结论必须由远端 `dae validate <file>` 确认（注意：dae 不支持 -c 参数，直接传文件路径）。
+注意：本工具只做静态模式匹配，最终结论必须由远端 `dae validate -c <file>` 确认（原生 dae v2.1.1+ 强制要求 -c 参数）。
 """
 
 import sys
@@ -211,6 +211,37 @@ def _extract_rule_targets(body: str):
     return targets
 
 
+def _split_top_level_args(arg_str: str):
+    """按顶层逗号拆分函数参数（忽略单双引号内部如正则 {1,2} 的逗号）。"""
+    parts = []
+    cur = []
+    in_s = False
+    in_d = False
+    i = 0
+    while i < len(arg_str):
+        c = arg_str[i]
+        if c == "\\" and (in_s or in_d) and i + 1 < len(arg_str):
+            cur.append(c)
+            cur.append(arg_str[i + 1])
+            i += 2
+            continue
+        if c == "'" and not in_d:
+            in_s = not in_s
+            cur.append(c)
+        elif c == '"' and not in_s:
+            in_d = not in_d
+            cur.append(c)
+        elif c == "," and not in_s and not in_d:
+            parts.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(c)
+        i += 1
+    if cur or arg_str.strip():
+        parts.append("".join(cur).strip())
+    return [p for p in parts if p]
+
+
 def check_dae_syntax(filepath):
     errors = []
     warnings = []
@@ -328,6 +359,32 @@ def check_dae_syntax(filepath):
 
     dns_body, _, _ = _extract_named_block(content, "dns")
     if dns_body is not None:
+        # 5.2 检查 qname(...) 是否包含无前缀裸域名/单引号域名（基于引号掩码与顶层逗号切分，避免误伤正则 '{1,2}' 或 '(a|b)'）
+        masked_dns = _mask_quoted_strings(dns_body)
+        for m_qn in re.finditer(r"\bqname\s*\(", masked_dns):
+            start_idx = m_qn.end()
+            p_depth = 1
+            k_idx = start_idx
+            while k_idx < len(masked_dns) and p_depth > 0:
+                if masked_dns[k_idx] == "(":
+                    p_depth += 1
+                elif masked_dns[k_idx] == ")":
+                    p_depth -= 1
+                k_idx += 1
+            if p_depth == 0:
+                qn_inner = dns_body[start_idx:k_idx - 1]
+                for arg in _split_top_level_args(qn_inner):
+                    if not re.match(r"^(?:geosite|full|domain|suffix|keyword|regex|regexp|ext)\s*:", arg):
+                        errors.append(
+                            f"[DNS qname 语法崩溃高危] dns 块中 qname({qn_inner.strip()}) 含有无匹配前缀的参数 '{arg}'！"
+                            "dae v2.1.1 的 addQName 解析器要求所有 qname 参数必须显式携带前缀（如 full:/suffix:/domain:/geosite:），"
+                            "无前缀或直接单引号域名会触发 'addQName: unsupported key:' 致命错误；建议将域名阻断移入 routing 块的 domain(...) -> block。"
+                        )
+                    elif re.match(r"^geosite\s*:\s*category-ads(?:-all)?\b", arg):
+                        warnings.append(
+                            "[DNS qname 兼容性建议] 检测到在 dns 块中使用 'qname(geosite:category-ads-all)'；"
+                            "部分新版 geosite.dat 含特殊前缀属性可能触发 dae DNS 解析器异常，建议移入 routing 块改写为 'domain(geosite:category-ads-all) -> block'。"
+                        )
         up_body, _, _ = _extract_named_block(dns_body, "upstream")
         dns_rt_body, _, _ = _extract_named_block(dns_body, "routing")
         if up_body is not None and dns_rt_body is not None:
@@ -347,11 +404,12 @@ def check_dae_syntax(filepath):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("用法: python check_dae_syntax.py <dae配置文件路径>")
+    args = [a for a in sys.argv[1:] if a not in ("-c", "--config")]
+    if not args:
+        print("用法: python check_dae_syntax.py [-c] <dae配置文件路径>")
         sys.exit(1)
 
-    filepath = sys.argv[1]
+    filepath = args[0]
     if not os.path.exists(filepath):
         print(f"错误: 文件不存在: {filepath}")
         sys.exit(1)
@@ -377,7 +435,7 @@ def main():
         print("\n[x] 检查未通过，请修复后重试。")
         sys.exit(1)
 
-    print("[i] 提示：本工具仅做静态检查，部署前请务必以远端 'dae validate <file>' 的结论为准（dae 不接受 -c 参数）。")
+    print("[i] 提示：本工具仅做静态检查，部署前请务必以远端 'dae validate -c <file>' 的结论为准。")
     return 0
 
 

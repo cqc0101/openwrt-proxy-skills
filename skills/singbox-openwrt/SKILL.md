@@ -198,6 +198,9 @@ sh /etc/sing-box/setup_openwrt_network.sh --bypass
 Agent 无需依赖笨重多余的宿主机部署脚本，直接通过标准终端工具自主完成部署与验证：
 
 ```bash
+# 0. [可选：针对 apk 缺包或路由器初始无网死锁] 宿主机 SSH 流式管道 (SSH Stream Pipe) 直灌二进制
+# ssh root@192.168.1.1 "cat > /usr/bin/sing-box && chmod 755 /usr/bin/sing-box" < ./sing-box-linux-${ARCH}
+
 # 1. 将生成的配置上传至软路由 /tmp 临时沙盒并执行语法校验
 ssh root@192.168.1.1 "cat > /tmp/config.json.test && sing-box check -c /tmp/config.json.test" < /tmp/config.json
 

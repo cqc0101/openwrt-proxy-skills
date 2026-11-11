@@ -47,8 +47,8 @@
 ## 三、 软路由平台兼容矩阵速查
 
 * **OpenWrt 发行版与包管理器**：
-  - **OpenWrt 21.02 / 22.03 / 23.05 / 24.10**：一律使用 `opkg`（注意：APK packages are *not* supported on OpenWrt 24.10 release，`apk` 仅在 snapshot / main 开发分支实验性支持）。
-  - **ImmortalWrt / iStoreOS**：官方源通常提供带 LuCI 界面的专用包或预编译二进制。
+  - **OpenWrt 21.02 / 22.03 / 23.05 / 24.10**：一律使用 `opkg`（注意：APK packages are *not* supported on OpenWrt 24.10 release，`apk` 仅在 snapshot / main 开发分支及 ImmortalWrt 24/25+ 新版中启用）。
+  - **ImmortalWrt 24/25+ (`apk`) 与无网冷启动闭环**：当新固件改用 `apk` 且软件源未收录所需版本或路由器初始未联网时，优先使用 **SSH Stream Pipe（流式管道直灌）** 从宿主机直接将二进制与规则集灌入路由器（如 `ssh root@192.168.1.1 "cat > /usr/bin/sing-box && chmod +x /usr/bin/sing-box" < ./sing-box`），彻底摆脱路由器未联网无法装包的死锁。
 * **x86_64 / aarch64 (ARMv8)**：完整版 `sing-box` 性能最佳。
 * **低内存 / 小闪存 (RAM <= 256MB 或 ROM <= 70MB)**：
   - 安装精简版：`apk add sing-box-tiny` 或 `opkg install sing-box`（约 39MiB）；

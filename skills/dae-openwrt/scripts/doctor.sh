@@ -85,9 +85,9 @@ if ip link show tun0 >/dev/null 2>&1; then
     TUN_EXISTS=1
 fi
 
-if command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
     PORT53_OPEN=1
-elif command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
+elif command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -qE ":53[[:space:]]"; then
     PORT53_OPEN=1
 fi
 
@@ -195,7 +195,12 @@ if [ "$SERVICE_NAME" = "sing-box" ]; then
 elif [ "$SERVICE_NAME" = "dae" ]; then
     if [ "$DAE_RUNNING" -eq 0 ]; then
         if [ "$DAED_RUNNING" -eq 1 ] || [ -x /etc/init.d/daed ]; then
-            add_issue "daed_conflict" "error" "检测到安装了互斥的 Web 面板版 daed (与原生 dae 互斥)" "原生 dae 服务未运行且存在冲突的 daed 软件包，请卸载 daed 并安装原生 dae" "/etc/init.d/daed stop && /etc/init.d/daed disable && opkg update && opkg install dae && /etc/init.d/dae enable && /etc/init.d/dae start"
+            if command -v apk >/dev/null 2>&1; then
+                _DAE_PKG_CMD="apk update && apk add dae"
+            else
+                _DAE_PKG_CMD="opkg update && opkg install dae"
+            fi
+            add_issue "daed_conflict" "error" "检测到安装了互斥的 Web 面板版 daed (与原生 dae 互斥)" "原生 dae 服务未运行且存在冲突的 daed 软件包，请停用 daed 并通过包管理器或 SSH 流式管道安装原生 dae" "/etc/init.d/daed stop && /etc/init.d/daed disable && ${_DAE_PKG_CMD} && /etc/init.d/dae enable && /etc/init.d/dae start"
         else
             add_issue "service_stopped" "error" "dae 进程未运行" "dae 服务处于停止状态" "/etc/init.d/dae restart"
         fi
@@ -251,9 +256,13 @@ if [ -n "$RAW_LOGS" ]; then
         add_issue "ebpf_btf_missing" "error" "dae eBPF 加载失败 (缺失 BTF 符号)" "OpenWrt 内核缺少 BTF 调试符号支持" "安装 vmlinux-btf 内核包，或改用 singbox-openwrt (TUN 模式)"
     fi
 
-    # 特征 7: 配置解析语法错误
-    if echo "$RAW_LOGS" | grep -qiE "decode config|parse config|unmarshal.*error|invalid json|configuration file .* error"; then
-        add_issue "config_syntax_error" "error" "配置文件语法/格式错误" "配置文件 JSON 格式损坏或包含未识别字段" "sing-box check -c /etc/sing-box/config.json"
+    # 特征 7: 配置解析语法错误 (含 dae addQName 与老版本 dae 字段不识别报错)
+    if echo "$RAW_LOGS" | grep -qiE "decode config|parse config|unmarshal.*error|invalid json|configuration file .* error|failed to parse|addQName: unsupported key|unexpected field|unknown field"; then
+        if [ "$SERVICE_NAME" = "dae" ] || ( [ "$DAE_RUNNING" -eq 1 ] && [ "$SINGBOX_RUNNING" -eq 0 ] ); then
+            add_issue "config_syntax_error" "error" "dae 配置文件语法或版本字段不兼容" "配置文件存在 qname 无前缀裸域名 (addQName: unsupported key) 或老版本 dae (<= v1.0.0) 不识别 v2.x 新增字段" "使用 python scripts/sub_to_dae.py ... --full --dae-version legacy 重新生成并在路由器执行 (dae validate -c /etc/dae/config.dae || dae validate /etc/dae/config.dae)"
+        else
+            add_issue "config_syntax_error" "error" "配置文件语法/格式错误" "配置文件 JSON 格式损坏或包含未识别字段" "sing-box check -c /etc/sing-box/config.json"
+        fi
     fi
 
     # 特征 8: auto_redirect 与 nfqueue 内核缺损自环

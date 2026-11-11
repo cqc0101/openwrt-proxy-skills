@@ -13,6 +13,7 @@
 5. [弱硬件路由性能瓶颈与闪存防磨损](#5-弱硬件路由性能瓶颈与闪存防磨损)
 6. [DNS 循环死锁与 FakeIP 引导避坑](#6-dns-循环死锁与-fakeip-引导避坑)
 7. [旁路由模式与 IPv6 假死防护](#7-旁路由模式与-ipv6-假死防护)
+8. [新老软路由全代际兼容、dae v2.1.1+ 门禁与 apk 流式交付规范](#8-新老软路由全代际兼容dae-v211-门禁与-apk-流式交付规范)
 
 ---
 
@@ -92,3 +93,15 @@
   * 国内部分运营商虽然下发了 IPv6 地址，但部分海外 VPS 节点未配置稳定的 IPv6 链路，或移动/电信网络存在严重的跨洋 IPv6 丢包。
   * 若终端通过双栈优先使用 IPv6 建立连接，将导致手机/电脑打开国内 App 或访问外网时出现长达数秒的“转圈假死”。
   * 建议通过网络脚本开启 Dnsmasq 的 `filter_aaaa=1`，确保国内域名解析秒级纯净返回 IPv4 地址，彻底杜绝假死。
+
+---
+
+## 8. 新老软路由全代际兼容、dae v2.1.1+ 门禁与 apk 流式交付规范
+
+* **新老版本 `dae` (`<= v1.0.0` vs `v2.1.1+`) 自动适配**：
+  * 老版本 `dae`（如软件源中的 `1.0.0-r1`）不识别 `v1.1+/v2.x` 新增的 5 个字段（`bpf_conn_state_map_size`、`auto_sniff_punt`、`bootstrap_resolver`、`optimistic_cache`、`optimistic_cache_ttl`）。使用 `sub_to_dae.py --full --router <IP>` 可自动探测远端版本并切换 `legacy` 模式剥离新字段（也可手动传 `--dae-version legacy`）。
+  * 原生 `dae v2.1.1+` 强制要求 `-c` 参数（`dae validate -c /tmp/config.dae.test`），建议统一使用 `dae validate -c /tmp/config.dae.test || dae validate /tmp/config.dae.test` 兼顾新老版本。
+* **DNS `request` 模块 `qname()` 词法门禁 (`addQName: unsupported key`)**：
+  * `dae v2.1.1+` 的 `dns.routing.request` 中 `qname(...)` 解析器强制要求每个参数携带匹配类型前缀（如 `geosite:cn`、`full:`、`suffix:`、`domain:`），直接写入单引号裸域名列表会触发内核解析崩溃。域名黑名单与 Canary 阻断请统一置于 `routing {}` 的 `domain(suffix: ...)` 中。
+* **新一代 `apk` 包管理器与 SSH Stream Pipe 纯本地交付**：
+  * 针对 ImmortalWrt/OpenWrt 24/25+ 切换 `apk` 软件源缺包或软路由初始无网死锁，推荐使用宿主机 SSH 流式管道（`ssh root@IP "cat > /usr/bin/dae && chmod 755 /usr/bin/dae" < ./dae`）直接灌装二进制与 `geoip.dat` / `geosite.dat`。
