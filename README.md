@@ -10,18 +10,18 @@
 
 | 技能 | 引擎 | 说明 |
 | :--- | :--- | :--- |
-| [`singbox-openwrt`](skills/singbox-openwrt/SKILL.md) | sing-box 1.13 / 1.14+（TUN，FakeIP / RealIP） | 对内核与固件版本要求较低，作为默认方案 |
+| [`singbox-openwrt`](skills/singbox-openwrt/SKILL.md) | sing-box 1.13 / 1.14+（TUN，FakeIP / RealIP） | 对内核与固件版本要求较低，需要 TUN 支持 |
 | [`dae-openwrt`](skills/dae-openwrt/SKILL.md) | dae（eBPF） | 需要 Linux 5.15+ 与 BTF，适用于满足条件的固件 |
 
 技能按 `skills/<技能名>/SKILL.md` 组织，符合常见 Agent Skills 分发约定（`npx skills add`、anthropics/skills）。
 
 ## 工作流
 
-1. **环境探针**（`probe.sh -j`）：发行版（精准识别 OpenWrt、ImmortalWrt、iStoreOS）、包管理器（实际检测 opkg 或 apk）、内核与 BTF、内存与存储空间、冲突插件，输出机器可读 JSON。
-2. **配置生成与积木拼装**（`auto_config.py`、`sub_parser.py`、`assets/mixins/`）：通用订阅清洗、自适应版本模板选择、Mixins 积木拼装、CDN 规则集镜像、生成后内置静态审计。
-3. **Agent 自主原子部署**（标准 SSH 管道）：远端沙盒语法与依赖校验（`sing-box check` / `dae validate`）、保留快照备份、原子替换、平滑重启或无感热重载。
-4. **最后一公里网络闭环**（`setup_openwrt_network.sh`）：LAN 区域动态定位并注入 `tun0` 放行、开启 forward=ACCEPT、MSS 钳制 (`mtu_fix=1`)、清理干扰三层 `hijack-dns` 的本机 53 DNAT 重定向、Dnsmasq `filter_aaaa=1` 过滤、内核 BBR 调优；支持 `--bypass` 自动开启旁路由动态伪装 (`masq=1`)。
-5. **结构化自愈诊断**（`doctor.sh --json`、`diagnose_dns.sh --json`）：机器可读 JSON 诊断输出，包含状态码、问题特征与自愈执行命令。
+1. 用 `probe.sh -j` 检查发行版、包管理器、内核、内存和冲突服务。
+2. 用 `auto_config.py` 或 `sub_to_dae.py` 解析订阅并生成配置，需要时组合 `assets/mixins/` 中的片段。
+3. 静态检查后，在目标路由器运行 `sing-box check` 或 `dae validate`。保留原配置再替换、重载服务。
+4. 用 `setup_openwrt_network.sh` 配置转发、防火墙和 DNS。脚本保留恢复快照；确认实际流量正常后再执行 `--confirm`。旁路由使用 `--bypass`。
+5. 用 `doctor.sh --json`、`diagnose_dns.sh --json` 排查问题。语法通过或服务存活不能证明透明代理和 DNS 路径正常。
 
 ## 参考文档
 
@@ -31,7 +31,7 @@
 | [dns-and-routing.md](skills/singbox-openwrt/references/dns-and-routing.md) | RealIP vs FakeIP 机制、DNS 防污染、Canary 域名阻断与多级解析防环 |
 | [openwrt-pitfalls-and-troubleshooting.md](skills/singbox-openwrt/references/openwrt-pitfalls-and-troubleshooting.md) | OpenWrt 闪存寿命保护、防火墙 tun0 放行、常见症状与排障速查索引 |
 | [modular-blocks.md](skills/singbox-openwrt/references/modular-blocks.md) | 模块化规则积木与主路由/旁路由/指定设备分流等复杂拓扑组装指南 |
-| [dae-rules-and-syntax.md](skills/dae-openwrt/references/dae-rules-and-syntax.md) | dae 5 条语义与拓扑铁律、路由语法、网卡绑定约束与 DNS 重查白名单 |
+| [dae-rules-and-syntax.md](skills/dae-openwrt/references/dae-rules-and-syntax.md) | dae 配置约束、路由语法、网卡绑定约束与 DNS 重查白名单 |
 | [troubleshooting.md](skills/dae-openwrt/references/troubleshooting.md) | dae 常见故障诊断排查手册与内核 eBPF 日志特征速查 |
 | [warnings-and-limitations.md](docs/warnings-and-limitations.md) | 生产环境已知边界、架构限制、版本演进、避坑与安全免责警告 |
 | [compatibility-matrix.json](docs/compatibility-matrix.json) | 机器可读的发行版/防火墙/包管理器兼容矩阵与 R0~R4 动作风险分级规范 |
@@ -102,22 +102,21 @@ cp -r skills/singbox-openwrt skills/dae-openwrt ~/.claude/skills/
 ## 设计约束
 
 - 配置修改先写入 `/tmp`，远端 `check` / `validate` 通过后才替换生产配置；
-- 部署前保留快照，进程异常时回滚；
+- 部署前保留快照；回滚结果需核对文件、服务和实际流量；
 - 缓存文件固定放在 `/tmp` 下，避免向闪存写入；
 - TUN 模式需要在防火墙中放行 `tun0`；
 - dae 需要内核 5.15+ 与 BTF，不满足时建议改用 sing-box。
 
-## ⚠️ 使用须知与架构边界（用户必读）
+## 使用限制
 
-为确保生产环境软路由高可用与网络稳定，请在部署前仔细阅读以下关键边界与安全提示（技术细则见 [docs/warnings-and-limitations.md](docs/warnings-and-limitations.md)）：
+- 模板区分 sing-box 1.13 和 1.14 字段。升级引擎后，应重新生成并在目标版本校验。
+- 复杂 Clash YAML 建议安装 PyYAML；标准库降级解析器只支持部分语法。
+- 原生 dae 脚本与 daed 面板应选定一个配置管理入口，避免相互覆盖。
+- 临时传输和运行缓存放在 `/tmp`；网络恢复快照与启动钩子写入 `/etc`，用于断线或重启后的恢复。
+- FakeIP 不能用于解析代理节点自身的真实地址。修改 DNS、IPv6 或旁路由 NAT 前，应核对实际拓扑。
+- 发布前检查已跟踪文件中的凭据。`.gitignore` 无法保护已经提交的文件。
 
-1. **GitHub 凭据与发布脱敏**：使用操作系统凭据管理器或 SSH Agent 保存认证凭据。本次发布通过 `git archive` 排除 `.git`，并检查真实节点、私有备份与设备信息。`.gitignore` 无法保护已跟踪或被强制添加的文件，后续发布仍须检查实际文件和提交内容。
-2. **sing-box 版本演进前瞻警告**：基准模板深度稳定覆盖 sing-box 1.13 与 1.14 架构；针对后续可能推出的重大版本（如 1.15+），**现有模板或将重新适配**，切勿盲目跨大版本替换二进制，升级前必须先在沙盒环境验证配置。
-3. **Clash YAML 锚点降级解析边界**：纯 Python 正则降级解析器支持常规单行标量与缩进列表锚点，但面对部分机场深度复合的多重锚点合并（如 `<<: [*a, *b]`）等极端语法可能受限，软路由建议预装 `python3-pyyaml` 获取 100% 完整解析能力。
-4. **daed (Web 面板) 与 原生 dae (CLI) 二选一铁律**：严禁同时使用 Web 面板管理和脚本外部覆写 `/etc/dae/config.dae`，面板 SQLite 托管与外部文本配置会发生竞争覆写，请二选一。
-5. **弱硬件路由性能与闪存写入**：百级订阅默认截断至前 15 个节点以降低内存压力，不能保证避免 OOM；Swap 是否适合需评估介质寿命。运行缓存和临时传输使用 `/tmp`，网络恢复快照及启动恢复钩子写入 `/etc`，以支持重启后的恢复。
-6. **FakeIP 引导与 DNS 循环防环**：严禁将 `domain_resolver` 指向自身为 `fakeip` 的上游服务器；生产部署前务必使用 `check_config.py` 与 `check_dae_syntax.py` 执行静态门禁校验。
-7. **旁路由与 IPv6 假死防护**：旁路由网关模式部署必须携带 `--bypass` 自动注入物理网卡 MASQUERADE 动态伪装；建议开启 Dnsmasq `filter_aaaa=1` 避免国内双栈访问转圈假死。
+更多说明见 [使用限制](docs/warnings-and-limitations.md)。
 
 ## 测试
 
@@ -128,7 +127,7 @@ python run_tests.py
 # 2. 本地 OpenWrt 自动化流水线测试（支持 Docker 容器或本地 Mock 仿真）
 python docker/run_docker_tests.py
 
-# 3. 工业级异常边界与可靠性压力测试矩阵（默认 DRY-RUN 安全模式，支持带快照安全演练）
+# 3. 故障场景矩阵（默认 dry-run；具体覆盖范围见输出）
 python docker/stress_test_matrix.py
 ```
 

@@ -3,27 +3,24 @@ name: singbox-openwrt
 license: MIT
 compatibility: Requires Python 3.8+ on host and SSH access to an OpenWrt / ImmortalWrt / iStoreOS router
 description: >-
-  为 OpenWrt / ImmortalWrt / iStoreOS 软路由网关生成、修改、排查 sing-box (v1.13 与 v1.14+) 生产级科学上网与透明代理配置。
-  当用户提及以下任意场景时必须触发：OpenWrt/软路由科学上网、翻墙/出海/梯子/代理配置、导入或更换节点链接(vless/hysteria2/trojan/ss)、
-  全屋断网排查、局域网电脑手机无法访问外网/Google/YouTube/ChatGPT、OpenWrt防火墙放行tun0、避免路由器闪存磨损与死锁、
-  FakeIP/RealIP分流调整、软路由更换机场订阅、或者从PassWall/OpenClash/HomeProxy迁移寻求更稳定网关代理方案。
+  在 OpenWrt、ImmortalWrt、iStoreOS 上生成、部署和排查 sing-box 1.13/1.14 配置。适用于订阅导入、FakeIP/RealIP 分流、TUN 防火墙设置及代理断网排查。
 ---
 
-# sing-box OpenWrt 生产级透明代理架构器
+# sing-box OpenWrt 配置与排障
 
-本技能专为 **OpenWrt**、**ImmortalWrt**、**iStoreOS** 软路由网关设计，强化注入 OpenWrt 物理网关的硬件保护、防火墙白名单与零断网自动回滚机制。
+提供 sing-box 配置生成、远端校验、网络设置和故障诊断。部署前确认固件、引擎版本和拓扑，按下列约束保留恢复路径。
 
 ---
 
-## 🚨 强制执行红线（任何任务开始前必读）
+## 部署约束
 
 1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒，经远端 `sing-box check` 通过后再备份原配置并原子替换，用于异常时自动回滚。
-2. **硬件保护红线**：`experimental.cache_file.path` 必须指向 `/tmp/sing-box-cache.db`（防闪存磨损）；TUN 模式必须放行 `tun0`（fw4）；`route.auto_detect_interface: true` 防自环；`route.default_domain_resolver` 防规则集下载死锁；dropbear/sshd 需做 OOM 保护。
-3. **绝不盲目猜测**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh --json` 诊断，再进行针对性修复。
+2. **硬件与网络设置**：`experimental.cache_file.path` 必须指向 `/tmp/sing-box-cache.db`（防闪存磨损）；TUN 模式必须放行 `tun0`（fw4）；`route.auto_detect_interface: true` 防自环；`route.default_domain_resolver` 防规则集下载死锁；dropbear/sshd 需做 OOM 保护。
+3. **先采集诊断信息**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh --json` 诊断，再进行针对性修复。
 
 ---
 
-## 📚 知识库路由 (按需读取)
+## 参考资料
 
 按具体任务读取最小必要 reference，避免一次性加载过载：
 
@@ -41,37 +38,23 @@ description: >-
 
 ---
 
-## 🧭 Agent 决策与全链路闭环架构 (Agent Autonomous Workflow)
+## 工作流程
 
-本技能专为 AI Agent 设计，**大模型负责意图理解、拓扑推理与灵活装配，脚本负责高危确定性操作与底层事实感知**。全链路遵循 7 步工程闭环：
+根据用户拓扑选择配置；探针、校验和诊断结果作为部署依据。流程如下：
 
-```
-[步骤 1: 意图与拓扑推理] LLM 决策 (主路由 vs 旁路由 / FakeIP vs RealIP / 差异化分流 / 避坑策略)
-       │
-       ▼
-[步骤 2: 底层事实感知] probe.sh -j (机器可读 JSON，探测包管理器/RAM/ROM/内核/BTF/冲突插件)
-       │
-       ▼
-[步骤 3: 模块化积木组装] auto_config.py 或 Mixins 动态拼装 (assets/mixins/ + sub_parser.py 清洗节点)
-       │
-       ▼
-[步骤 4: 静态门禁与沙盒预审] check_config.py (引用完整性/版本门控/闪存写保护锁定)
-       │
-       ▼
-[步骤 5: Agent 自主部署与回滚] SSH 管道原子发布 (沙盒 sing-box check -> 快照备份与 mv 替换 -> UCI 赋权重启)
-       │
-       ▼
-[步骤 6: 最后一公里网关接管] setup_openwrt_network.sh (内核转发 / tun0信任 / MSS钳制 / DNS路径清理 / BBR调优)
-       │
-       ▼
-[步骤 7: 结构化自愈诊断] doctor.sh --json + diagnose_dns.sh --json (解析错误码与自愈命令)
-```
+1. 确认主路由或旁路由拓扑，以及 FakeIP/RealIP 或 dae 接口绑定需求。
+2. 运行 `probe.sh -j`，核对内核、引擎版本、资源和冲突服务。
+3. 解析订阅、生成配置；按所需分流规则修改配置。
+4. 运行静态检查，并在目标设备执行原生校验。
+5. 备份配置，再替换文件、重载服务。
+6. 按拓扑执行 `setup_openwrt_network.sh`，保留自动恢复直到验证完成。
+7. 检查管理连接、DNS 和客户端流量，必要时读取诊断 JSON。
 
 ---
 
-## 🔍 维度一：环境感知与自动体检 (Reconnaissance)
+## 环境检查
 
-在进行任何修改前，AI 必须先调用探针收集软路由系统与硬件画像：
+修改前先采集设备信息：
 
 ```bash
 # 目标软路由本地或 SSH 管道执行探针 (输出结构化 JSON，供 Agent 快速解析)
@@ -87,7 +70,7 @@ ssh root@192.168.1.1 "sh -s -- -j" < scripts/probe.sh
 
 ---
 
-## ⚙️ 维度二：双引擎配置生成器 (Config Engine)
+## 生成配置
 
 本技能自带自动化版本探测与规则生成工具 `scripts/auto_config.py` 与通用订阅清洗器 `scripts/sub_parser.py`，实现**自适应版本匹配与多协议订阅解析**：
 
@@ -115,10 +98,10 @@ python scripts/auto_config.py --version 1.14 --dns-mode fakeip --sub ./airport_c
 
 ---
 
-## 🛡️ OpenWrt 必须遵守的 8 项硬规则
+## OpenWrt 必须遵守的 8 项硬规则
 
-### 1. 路由器闪存保护铁律 (Flash Protection)
-OpenWrt SPI 闪存擦写寿命极为脆弱，`experimental.cache_file.path` **必须**显式指定在挂载于 RAM 的临时目录：
+### 1. 路由器缓存文件位置
+频繁写入会消耗闪存擦写寿命，`experimental.cache_file.path` **必须**显式指定在挂载于 RAM 的临时目录：
 ```json
 "experimental": {
   "cache_file": {
@@ -193,9 +176,9 @@ sh /etc/sing-box/setup_openwrt_network.sh --bypass
 
 ---
 
-## 🚀 维度三：Agent 自主部署流程 (Autonomous Deployment)
+## 部署
 
-Agent 无需依赖笨重多余的宿主机部署脚本，直接通过标准终端工具自主完成部署与验证：
+可通过 SSH 传输配置并执行校验：
 
 ```bash
 # 0. [可选：针对 apk 缺包或路由器初始无网死锁] 宿主机 SSH 流式管道 (SSH Stream Pipe) 直灌二进制
@@ -217,9 +200,9 @@ ssh root@192.168.1.1 "sh -s -- --confirm" < scripts/setup_openwrt_network.sh
 
 ---
 
-## 🩺 维度四：智能排障与自愈闭环 (Machine-Readable Doctor)
+## 故障诊断
 
-当网络出现异常时，Agent 调用结构化诊断医生排障：
+当网络出现异常时，Agent 调用诊断脚本排障：
 
 ```bash
 # 1. 结构化日志与运行状态体检 (输出机器可读 JSON，含 status/issues/suggested_actions)
@@ -233,7 +216,7 @@ Agent 解析 JSON 响应中的 `suggested_actions` 字段，即可自主执行�
 
 ---
 
-## 🧪 测试与回归（改动任何脚本/模板后必须执行）
+## 测试与回归（改动任何脚本/模板后必须执行）
 
 ```bash
 # 仓库根目录（两个技能共用）

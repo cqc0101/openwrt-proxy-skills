@@ -1,5 +1,11 @@
 # 更新日志
 
+## [1.0.1] - 2026-11-12
+
+- 修复网络恢复、共享 PID 误杀、Clash API 默认暴露、并发隔离和诊断误报；详见 [R2S 审计报告](reports/hardware/FINAL-REPORT.md)。
+- 补充 R2S 断线与重启恢复测试。独立 Linux 回归 348 项通过；TUN、LAN 透明转发及完整 IPv6 仍有未验证项。
+- 精简 README、技能说明和参考文档，删除宣传性措辞及无依据的保证，统一说明使用限制。
+
 ## 2026-11-12 本地审计修订（基于 v1.0.0）
 
 - 第二轮：真实 Linux 完整回归与 sing-box 1.13.0/1.14.4、dae 2.1.1 原生校验；修复 dae 节点导出使用带引号映射键导致原生解析失败的问题。
@@ -12,7 +18,7 @@
 
 版本号遵循语义化版本（`主版本.次版本.修订号`）。0.x 阶段接口与目录结构可能调整。
 
-## [1.0.0] - 2026-11-12
+## 1.0.0] - 2026-11-12
 
 ### 正式版安全治理、确定性 Policy Engine、15 状态事务机与完整回滚验收闭环 (v1.0.0 GA)
 
@@ -26,7 +32,7 @@
   - 双技能 `setup_openwrt_network.sh` 新增 `sysctl` 原值快照（`ORIG_IP_FORWARD`/`ORIG_CONNTRACK_MAX`/`ORIG_TCP_CC`/`ORIG_DEFAULT_QDISC`）与 `--revert` 原值恢复；`probe.sh` 新增 `capability_details`（区分 `detected`/`supported`/`verified` 与 `evidence`）；
   - 新增 `docs/quality/` 基线与证据台账及 `tests/test_v100_governance.py`，全量单元测试扩充至 **300 项 (100% PASS)**。
 
-## [0.7.0] - 2026-11-12
+## 0.7.0] - 2026-11-12
 
 ### 第十轮安全边界加固、Capability 能力分级模型与权威兼容矩阵闭环 (Security, Capability & Consistency)
 
@@ -45,7 +51,7 @@
   - 双技能 `setup_openwrt_network.sh` 新增 `--dry-run`（安全预览不落盘）、`--keep-ipv6`（保留双栈 AAAA 解析不强制开启 `filter_aaaa`）与 `--no-sysctl-tuning`（仅开启 `ip_forward=1`，不覆盖用户自定义 `nf_conntrack_max` / `bbr` / `fq_codel`）；
   - 新增机器可读的权威兼容与风险分级规范 `docs/compatibility-matrix.json`（定义 R0~R4 风险等级与 `tested`/`simulated`/`compatible`/`unsupported` 证据分级），全量单元测试扩充至 **284 项 (100% PASS)**。
 
-## [0.6.3] - 2026-11-11
+## 0.6.3] - 2026-11-11
 
 ### 第九轮新老全代际软路由 (OpenWrt 18.06~25+) 与新旧全版本 `dae` (`v0.3`~`v2.1.1+`) 双向自适应兼容闭环
 
@@ -60,7 +66,7 @@
 - **[单测] 全量单元测试扩充至 269 项 (100% PASS)**：
   - 新增 `test_sub_to_dae_legacy_vs_modern_version_compatibility` 与 `test_legacy_fw3_iptables_fallback_and_probe_engine_versions`，269 项单元测试、5 阶段高仿真流水线与 12 轮压力测试矩阵全量通过。
 
-## [0.6.2] - 2026-11-11
+## 0.6.2] - 2026-11-11
 
 ### 第八轮真机原生 `dae v2.1.1` 参数对齐、`qname` 词法陷阱门禁与 `apk` 流式管道交付闭环
 
@@ -74,7 +80,7 @@
 - **[单测] 全量单元测试扩充至 267 项 (100% PASS)**：
   - 新增 `test_dae_validate_dash_c_and_ssh_stream_pipe_documented` 与 `addQName` 门禁单测，267 项单元测试、5 阶段高仿真流水线与 12 轮压力测试矩阵全量通过。
 
-## [0.6.1] - 2026-11-11
+## 0.6.1] - 2026-11-11
 
 ### 第七轮全栈属性模糊测试、全协议往返无损对齐与发布级终审闭环 (Property-Based Fuzzing & Release Candidate)
 
@@ -98,7 +104,7 @@
 - **[单测] 全量单元测试矩阵扩充至 266 项 (100% PASS)**：
   - 完整保留 `.github/workflows/ci.yml`、`.gitignore`、`.gitattributes`，清理全部 `__pycache__` 缓存，266 项单测、5 阶段 Mock 仿真流水线与 12 轮压力测试矩阵全量通过。
 
-## [0.6.0] - 2026-11-11
+## 0.6.0] - 2026-11-11
 
 ### 第六轮合流代码终审、正则污染与缩进基线修复闭环 (Deep Post-Merge Adversarial Audit & Zero-Defect Release)
 
@@ -120,7 +126,7 @@
 - **[单测] 单元测试矩阵扩充至 254 项 (全量 PASS)**：
   - 新增覆盖上述全部 6 项深层缺陷的对抗回归单测与真实 `/bin/sh` 子进程探针验证。
 
-## [0.5.9] - 2026-11-11
+## 0.5.9] - 2026-11-11
 
 ### 第六轮极限边界审计、深度双分支合流与状态机全量清零 (Round 6 Unified Convergence & Zero-Bug Release)
 
@@ -147,7 +153,7 @@
 - **[单测] 单元测试矩阵扩充至 251 项 (全量 PASS)**：
   - 融合双分支所有边界对抗测试与深度单测，全量 251 项单测 100% 满分通过，12 轮压力测试矩阵无未捕获异常。
 
-## [0.5.8] - 2026-11-11
+## 0.5.8] - 2026-11-11
 
 ### 第五轮极限对抗审计、自检回溯与深层状态机漏洞清零 (Round 5 Deep Self-Audit & State Machine Remediation)
 
@@ -162,7 +168,7 @@
 - **[中危] 补齐 `check_config.py` 对多跳 `dns.servers.domain_resolver` 循环与 `outbound.detour` 循环的阻断检测 (R5-05)**：
   - 原门禁仅拦截 `A -> A` 直接自引用，无法发现 `A -> B -> A` 多跳死锁环路及字典形态 `domain_resolver: {"server": "..."}`；现已引入图遍历环路检测，彻底阻断多跳死锁。
 
-## [0.5.7] - 2026-11-10
+## 0.5.7] - 2026-11-10
 
 ### 第四轮极限白盒审计、深水区残余缺陷全量清零与测试矩阵扩充 (Round 4 Deep White-Box Hardening)
 
@@ -185,7 +191,7 @@
 - **[单测] 单元测试矩阵扩充至 235 项 (全量 PASS)**：
   - 新增 6 项对抗性回归单测，全量覆盖本次审计的所有修复项。
 
-## [0.5.6] - 2026-11-09
+## 0.5.6] - 2026-11-09
 
 ### 第三轮极限白盒审计、深水区加固与残余漏洞全量清零 (Merged Hardened & White-Box Release)
 
@@ -220,7 +226,7 @@
 - **[单测] 单元测试矩阵扩充至 229 项 (全量 PASS)**：
   - 整合双版本所有白盒对抗与深水区单测用例，测试用例总数达到 **229 项**，覆盖率与严苛度创历史新高。
 
-## [0.5.5] - 2026-11-09
+## 0.5.5] - 2026-11-09
 
 ### 第二轮极限对抗审计与深水区缺陷清零 (Round 2 Deep Adversarial Audit & Bug Zeroing)
 
@@ -239,7 +245,7 @@
   - 增强 `check_config.py` 对 `tun.address` 无掩码非法 CIDR 与 `urltest` 误配 `default` 字段的静态阻断。
 - **[修复] 清理 `CHANGELOG.md` 控制字符损坏并扩充回归单测至 222 项**。
 
-## [0.5.4] - 2026-11-09
+## 0.5.4] - 2026-11-09
 
 ### 全栈深度审计加固与边界缺陷清零 (Deep Code Audit & Full-Stack Hardening)
 
@@ -274,7 +280,7 @@
 - **[测试] 单元测试矩阵扩充至 217 项**：
   - 新增纯 Python Clash YAML 锚点解析、Shadowsocks 废弃加密方法阻断、闪存开机哨兵与 daed 冲突探测测试，全量 217 项单元测试 100% 满分通过。
 
-## [0.5.3] - 2026-11-09
+## 0.5.3] - 2026-11-09
 
 ### Reality 凭据完备性、Shadowsocks SIP002 Obfs 插件、旁路网关 IPv6 校验与 204 项 QA 矩阵 (Protocol Enforcement & Syntax Hardening)
 
@@ -296,7 +302,7 @@
 - **[测试] 单元测试矩阵扩充至 204 项**：
   - 新增 Reality 公钥校验、SIP002 obfs、IPv6 bypass、DNS 自环死锁与未闭合花括号等系列测试用例，全量 204 项单元测试 100% 满分通过，12 轮压力测试全部 PASS。
 
-## [0.5.2] - 2026-11-09
+## 0.5.2] - 2026-11-09
 
 ### 进程与管道弹性、物理硬件自适应与全链路超时硬化 (Resilience & Hardware Adaptability)
 
@@ -319,7 +325,7 @@
 - **[测试] 单元测试矩阵扩充至 199 项**：
   - 扩充测试套件至 199 项，全量 100% 满分通过。
 
-## [0.5.1] - 2026-11-09
+## 0.5.1] - 2026-11-09
 
 ### 拓扑增强、SSH 会话解耦与 Agent 规范合规 (Topology & Process Hardening)
 
@@ -336,7 +342,7 @@
 - **[测试] 单元测试矩阵扩充至 192 项**：
   - 补齐 dae 旁路由规则注入单测、看门狗 stdin 隔离断言、AgentSkills frontmatter 合规校验及未平衡单引号拦截，100% 满分通过。
 
-## [0.5.0] - 2026-11-09
+## 0.5.0] - 2026-11-09
 
 ### 新特性与现代协议扩展 (New Features & Protocol Expansions)
 
@@ -357,7 +363,7 @@
   - 新增 TUIC/AnyTLS 语法校验、HTTPUpgrade 传输映射、不支持协议硬拦截阻断测试；
   - 全量 189 项单元测试与 Docker/Mock 仿真套件 100% 绿灯通过。
 
-## [0.4.3] - 2026-11-09
+## 0.4.3] - 2026-11-09
 
 ### 全量安全审计与 26 项深度缺陷修复 (Full Security Audit & Deep Remediation)
 
@@ -389,7 +395,7 @@
   - `diagnose_dns.sh` 修正 `[7/7]` 检测计数错乱（8/7）、`dig` 文本过滤与 IPv6/RFC1918 匹配范围；
   - `setup_openwrt_network.sh` 补齐 `--revert` 对 `flow_offloading` 与 `mtu_fix` 的还原，并将参考文档中的 `masquerade='1'` 统一更正为 OpenWrt 标准 `masq='1'`。
 
-## [0.4.2] - 2026-11-09
+## 0.4.2] - 2026-11-09
 
 ### 深度漏洞修复与健壮性加固 (Deep Hardening & Bug Fixes)
 
@@ -409,7 +415,7 @@
 - **[低危] 文档笔误校正**：
   - 修正 `troubleshooting.md` 中“节点缺少双引号”的自相矛盾笔误为“节点未用单引号包裹”。
 
-## [0.4.1] - 2026-11-09
+## 0.4.1] - 2026-11-09
 
 ### 错误修复 (Bug Fixes)
 
@@ -426,7 +432,7 @@
 - **[低危] `http_clients` 的 `detour` 字段避坑说明增强**：
   - `architecture-and-schema.md` 中明确指出 `direct-client` 对象**不设 `detour` 字段**即为直连，显式写 `"detour": "direct"` 会触发致命崩溃，防止误操作。
 
-## [0.3.0] - 2026-11-08
+## 0.3.0] - 2026-11-08
 
 ### 架构精简与解耦 (Architecture Streamlining & Decoupled Tooling)
 
@@ -438,13 +444,13 @@
   - 将原本平铺冗余的 19 篇长篇手册提炼合并为 6 篇高密度的一级参考文档。
 - **模块化积木片段与解耦 (Composable Modular Mixins)**：
   - 新增 `assets/mixins/` 目录，包含 `inbound_tun.json`、`experimental.json`、`dns_base.json`、`route_base.json`、`outbounds_base.json` 等独立原子片段。
-- **统一的最后一公里网络闭环 Hook (`setup_openwrt_network.sh`)**：
+- **统一的网络设置 Hook (`setup_openwrt_network.sh`)**：
   - 动态精准查询 LAN zone（杜绝 `@zone[0]` 盲猜）；注入 `tun0` 放行与 `forward=ACCEPT`；激活 MSS 钳制 (`mtu_fix='1'`)；开启 Dnsmasq `filter_aaaa='1'`；写入 `/etc/sysctl.d/99-singbox.conf` / `99-dae.conf`；支持 `--bypass` 与 `--revert`。
 - **智能诊断工具全面支持结构化 JSON (`doctor.sh --json` & `diagnose_dns.sh --json`)**。
 
 ---
 
-## [0.2.0] - 2026-11-08
+## 0.2.0] - 2026-11-08
 
 ### 重大特性与架构升级
 
@@ -456,7 +462,7 @@
 
 ---
 
-## [0.1.0] - 2026-11-07
+## 0.1.0] - 2026-11-07
 
 ### 首个公开版本
 

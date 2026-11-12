@@ -3,68 +3,52 @@ name: dae-openwrt
 license: MIT
 compatibility: Requires Python 3.8+ on host and SSH access to an OpenWrt / ImmortalWrt / iStoreOS router (Linux 5.15+ with BTF)
 description: >-
-  为 OpenWrt / ImmortalWrt / iStoreOS 软路由生成、修改、排查原生 dae (Linux 内核级 eBPF 高性能透明代理) 配置文件与服务管理。
-  当用户提及以下任意场景时必须触发：dae配置与管理、软路由eBPF出海代理、br-lan/wan网卡绑定、dae 5条拓扑与语法铁律、
-  dae规则编写(routing/dns/group)、软路由测试节点与订阅导入、无感平滑热重载(dae reload)、排查dae断网与DNS死循环、或寻找比TUN模式吞吐更高更省CPU的代理方案。
+  在 OpenWrt、ImmortalWrt、iStoreOS 上生成、部署和排查原生 dae 配置。适用于 eBPF 接口绑定、routing/dns/group 规则、订阅导入与热重载；不接管 daed 面板配置。
 ---
 
-# dae OpenWrt eBPF 透明代理架构器
+# dae OpenWrt 配置与排障
 
-本技能专为 **OpenWrt**、**ImmortalWrt**、**iStoreOS** 软路由网关设计，指导原生 **dae (Linux 内核级 eBPF 高性能透明代理)** 的规则编写、接口绑定约束、DNS 防环防御与生产级平滑热重载，同时自适应兼容老版本 `dae`（`<= v1.0.0`，如软件源 `1.0.0-r1`）与最新版本 `dae`（`v2.1.1+`）。
+管理原生 dae 的配置、接口绑定、DNS 规则与服务重载。生成器区分 legacy 与 modern 字段，部署时仍需由目标设备的 dae validate 校验。
 
 > **支持边界**：本技能管理**原生 dae**（`dae` 二进制 / procd `dae` 服务 + `/etc/dae/config.dae`，注意：Web 面板版 `daed` 使用 `/etc/daed/daed.db` 数据库，不读取 `/etc/dae/config.dae`）。eBPF 需要 Linux 5.15+（现代 `dae v2.x` 推荐 5.17+）与 BTF 支持；若为老软路由（Linux < 5.15 或无 BTF），探针会自动识别并建议改用全内核通用的 `singbox-openwrt`。
 
 ---
 
-## 🚨 强制执行红线（任何任务开始前必读）
+## 部署约束
 
 1. **严禁直接在路由器 `/etc` 下裸改配置**：一切修改必须先写入 `/tmp` 沙盒并执行 `chmod 600`（`dae` 强制要求配置文件权限不宽于 `0600`/`0640`），经远端 `dae validate -c <file>` 通过后再备份原配置并原子替换。
-2. **硬件保护红线**：`global` 中 `lan_interface: br-lan` + `wan_interface: auto` + `auto_config_kernel_parameter: true`；部署前关闭流量分载（Flow Offloading，否则报文绕过 eBPF）；dropbear/sshd 需做 OOM 保护。
-3. **绝不盲目猜测**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh dae --json` 诊断，再进行针对性修复。
+2. **硬件与网络设置**：`global` 中 `lan_interface: br-lan` + `wan_interface: auto` + `auto_config_kernel_parameter: true`；部署前关闭流量分载（Flow Offloading，否则报文绕过 eBPF）；dropbear/sshd 需做 OOM 保护。
+3. **先采集诊断信息**：网络异常先运行 `scripts/probe.sh -j` 探针和 `scripts/doctor.sh dae --json` 诊断，再进行针对性修复。
 4. **dae validate -c 强制参数规范与新旧版本兼容**：原生 `dae` 官方 CLI（含 v2.1.1+）强制要求传入 `-c` / `--config` 指定配置文件，标准格式为 `dae validate -c /path/to/config.dae`（漏传 `-c` 会报 `Argument "--config" or "-c" is required`）；若需同时兼容极早期版本，可使用 `dae validate -c /tmp/config.dae.test || dae validate /tmp/config.dae.test`。同时，针对老版本 `dae`（`<= v1.0.0`），生成配置时通过 `--router <IP>` 自动探测或显式指定 `--dae-version legacy` 剥离 v2.x 新增字段。
 5. **procd 托管与 daed 区分及强互斥检查**：ImmortalWrt 官方源的原生 `dae` 包由 procd 管理，启用与热重载使用 `uci set dae.config.enabled='1' && uci commit dae && /etc/init.d/dae reload`（裸二进制模式使用 `dae reload`）；而 `daed` 是 Web 面板独立包（端口 2023，读取 `/etc/daed/wing.db`，不读取 `/etc/dae/config.dae`）。若 `probe.sh -j` 检出 `daed_conflict: true`，必须严禁下发原生配置，提示用户先执行 `/etc/init.d/daed stop && /etc/init.d/daed disable`。
 
 ---
 
-## 📚 知识库路由 (按需读取)
+## 参考资料
 
 | 任务 | 优先查阅 |
 | :--- | :--- |
-| **dae 5 条铁律、路由语法与配置规范** | [dae-rules-and-syntax.md](./references/dae-rules-and-syntax.md) |
+| **dae 配置约束、路由语法与配置规范** | [dae-rules-and-syntax.md](./references/dae-rules-and-syntax.md) |
 | **常见故障排查手册与日志分析** | [troubleshooting.md](./references/troubleshooting.md) |
 | **OpenWrt 专用基准模板** | [openwrt.dae](./assets/templates/openwrt.dae) |
 
 ---
 
-## 🧭 Agent 决策与 eBPF 闭环架构 (Agent Autonomous Workflow)
+## 工作流程
 
-本技能专为 AI Agent 设计，**大模型负责意图理解、eBPF 拓扑可行性推理与规则灵活装配，脚本负责高危确定性操作与底层事实感知**。全链路遵循 7 步工程闭环：
+根据用户拓扑选择配置；探针、校验和诊断结果作为部署依据。流程如下：
 
-```
-[步骤 1: eBPF 兼容性推理] LLM 评估 (Linux 5.15+/5.17+ 内核 / BTF 支持 / 流量分载 Offloading 规避)
-       │
-       ▼
-[步骤 2: 底层硬件感知] probe.sh -j (探测内核版本 / BTF 文件 / dae 版本 / 冲突代理插件)
-       │
-       ▼
-[步骤 3: 原子订阅解析] sub_to_dae.py (清洗节点 / 自动识别 modern 或 legacy 版本字段 / 生成配置)
-       │
-       ▼
-[步骤 4: 规则积木灵活装配] dae-rules-and-syntax.md (宿主组件 must_direct / 设备 MAC 分流 / 大陆双向直连)
-       │
-       ▼
-[步骤 5: Agent 自主部署与热重载] SSH 管道原子发布 (chmod 600 -> 沙盒 dae validate -c -> 快照与 mv -> reload)
-       │
-       ▼
-[步骤 6: 软路由网络闭环接管] setup_openwrt_network.sh (关闭 Flow Offloading / 开启 filter_aaaa / MSS 钳制)
-       │
-       ▼
-[步骤 7: 结构化自愈诊断] doctor.sh dae --json + diagnose_dns.sh --json (解析错误码与自愈命令)
-```
+1. 确认主路由或旁路由拓扑，以及 FakeIP/RealIP 或 dae 接口绑定需求。
+2. 运行 `probe.sh -j`，核对内核、引擎版本、资源和冲突服务。
+3. 解析订阅、生成配置；按所需分流规则修改配置。
+4. 运行静态检查，并在目标设备执行原生校验。
+5. 备份配置，再替换文件、重载服务。
+6. 按拓扑执行 `setup_openwrt_network.sh`，保留自动恢复直到验证完成。
+7. 检查管理连接、DNS 和客户端流量，必要时读取诊断 JSON。
 
 ---
 
-## 🛡️ OpenWrt 必须遵守的 5 条语义与拓扑铁律
+## OpenWrt 必须遵守的 配置约束
 
 在为软路由生成或调整 `.dae` 规则时，必须 严格遵循以下约束：
 
@@ -73,7 +57,7 @@ description: >-
 
 * 推荐：`tcp_check_url: 'http://cp.cloudflare.com'`
 
-### 2. must_direct 防 DNS 死循环铁律
+### 2. must_direct 防 DNS 死循环约束
 dae 默认拦截所有发往 53 端口的请求。宿主机核心网络组件（`dnsmasq`、`odhcpd`、`netifd`、`uhttpd`）发出的 DNS 查询若被拦截并交回自身，会瞬间形成高频递归死锁并导致路由器断网。必须在 `routing {}` **最顶部**对它们的 53 端口流量放行：
 ```shell
 routing {
@@ -84,7 +68,7 @@ routing {
 }
 ```
 
-### 3. 布尔取反（!）合并铁律
+### 3. 布尔取反（!）合并约束
 两行独立的取反规则在 dae 中是 **OR** 语义：
 ```shell
 !domain(geosite:a) -> my_group
@@ -105,7 +89,7 @@ routing {
 5. **[第 5 层] 大陆大盘双向白名单直连**：`domain(geosite:cn) -> direct` 及 `dip(geoip:cn) -> direct`
 6. **[第 6 层] 终态回落兜底**：`fallback: 默认代理组`
 
-### 5. DNS 污染重查闭环与 qname 词法前缀铁律
+### 5. DNS 污染重查闭环与 qname 词法前缀约束
 * **response 防环**：在 `dns.routing.response` 中配置私网 IP 投毒重查时，首行**必须**加入 `upstream(googledns) -> accept` 白名单放行，防止无限递归。
 * **qname 词法陷阱规避**：`dae v2.1.1` 的 `dns.routing.request` 中 `qname(...)` 解析器 (`addQName`) **强制要求每个参数必须带匹配前缀**（如 `geosite:cn`、`full:example.com`、`suffix:example.com`），严禁写入无前缀单引号域名（如 `qname('use-application-dns.net')`，会触发 `addQName: unsupported key:` 崩溃）或复杂 `geosite:category-ads-all`；**所有域名黑名单与 Canary 阻断一律置于 `routing {}` 的 `domain(suffix: ...)` 中处理**。
 ```shell
@@ -118,7 +102,7 @@ response {
 
 ---
 
-## 🔌 软路由网卡绑定（global 必填项）
+## 软路由网卡绑定（global 必填项）
 
 软路由作为局域网网关，在 `global` 块中必须显式声明局域网网桥与外网出口：
 
@@ -132,7 +116,7 @@ global {
 
 ---
 
-## 🔍 维度一：环境感知与自动体检 (Reconnaissance)
+## 环境检查
 
 部署 dae 前必须先调用探针确认软路由内核、BTF 符号及已安装的 `dae` 版本：
 
@@ -143,7 +127,7 @@ ssh root@192.168.1.1 "sh -s -- -j" < scripts/probe.sh
 
 ---
 
-## ⚙️ 维度二：dae 配置生成与订阅脱水 (Config Engine)
+## 维度二：dae 配置生成与订阅脱水 (Config Engine)
 
 使用 `scripts/sub_to_dae.py` 支持将机场 HTTP/HTTPS 订阅一键清洗并转换为 dae 配置（支持自动探测路由器上的新旧 `dae` 版本）：
 
@@ -157,7 +141,7 @@ python scripts/sub_to_dae.py "https://sub.domain.com/link?token=..." --max 15 --
 
 ---
 
-## 🚀 维度三：Agent 自主部署与平滑热重载 (Autonomous Deployment)
+## 维度三：Agent 自主部署与平滑热重载 (Autonomous Deployment)
 
 dae 的优势在于重载配置时**无需重启内核 eBPF 程序**，已有连接完全不断流。Agent 自主执行标准发布命令：
 
@@ -189,9 +173,9 @@ ssh root@192.168.1.1 "sh -s -- --confirm" < scripts/setup_openwrt_network.sh
 
 ---
 
-## 🩺 维度四：智能排障与自愈闭环 (Machine-Readable Doctor)
+## 故障诊断
 
-当网络出现异常时，Agent 调用结构化诊断医生排障：
+当网络出现异常时，Agent 调用诊断脚本排障：
 
 ```bash
 # 1. 结构化日志与运行状态体检 (输出机器可读 JSON，含 status/issues/suggested_actions)
@@ -203,7 +187,7 @@ ssh root@192.168.1.1 "sh -s -- --json" < scripts/diagnose_dns.sh
 
 ---
 
-## 🧪 测试与回归（改动任何脚本/模板后必须执行）
+## 测试与回归（改动任何脚本/模板后必须执行）
 
 ```bash
 # 仓库根目录（两个技能共用）

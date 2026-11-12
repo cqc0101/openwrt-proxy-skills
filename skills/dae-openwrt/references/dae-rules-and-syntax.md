@@ -1,19 +1,19 @@
-# dae 规则语法、五大铁律与模块化组装指南
+# dae 规则语法、五大约束与模块化组装指南
 
 > 本指南将 dae eBPF 官方规范浓缩为 AI Agent 可直接理解和组装的紧凑规则体系，消除多级文档冗余。
 
 ---
 
-## 一、 dae 语义与拓扑五大铁律 (Golden Rules)
+## 一、 dae 语义与拓扑五大约束 (Golden Rules)
 
 1. **单引号词法规范**：
    除 `ext:"xxx.dat:tag"` 外部文件引用外，所有包含冒号 `:`、斜杠 `/`、正则或复合协议的字符串，统一使用单引号 `'...'` 包裹（如 `tcp_check_url: 'http://cp.cloudflare.com'`）。
-2. **must_direct 宿主防环铁律**：
+2. **must_direct 宿主防环约束**：
    dae 默认拦截所有发往 53 端口的请求。`dnsmasq`、`odhcpd`、`netifd`、`uhttpd` 的 53 端口流量必须在 `routing {}` 首行放行：
    ```shell
    pname(dnsmasq, odhcpd, netifd, uhttpd) && l4proto(udp) && dport(53) -> must_direct
    ```
-3. **布尔取反 (!) 合并铁律**：
+3. **布尔取反 (!) 合并约束**：
    两行独立的 `!` 规则在 dae 中为 OR 语义。表达“既不属于 A 也不属于 B”必须合并写在同一行内：
    ```shell
    !domain(geosite:a, geosite:b) -> my_group
