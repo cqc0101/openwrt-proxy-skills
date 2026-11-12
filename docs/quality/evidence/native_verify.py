@@ -6,7 +6,7 @@ nodes=['trojan://audit-password@proxy.example:443?sni=proxy.example#test','hyste
 nodes += ['trojan://audit-password@proxy.example:443?sni=proxy.example#%E4%B8%AD%E6%96%87%E8%8A%82%E7%82%B9', 'trojan://audit-password@proxy.example:443#node_4', 'trojan://audit-password@proxy.example:443#x%27%3B%7D%20routing%7B']
 results=[]; out=pathlib.Path('/root/native-cases');out.mkdir(exist_ok=True)
 def run(label,cmd,expected=0):
- p=subprocess.run(cmd,capture_output=True,text=True,timeout=90)
+ p=subprocess.run(cmd,capture_output=True,text=True,encoding="utf-8",timeout=90)
  results.append(dict(label=label,cmd=cmd,returncode=p.returncode,expected=expected,pass_=p.returncode==0 if expected==0 else p.returncode!=0,stdout=p.stdout,stderr=p.stderr))
  print(label,p.returncode,flush=True)
  if p.returncode:print(p.stderr[-1500:],flush=True)

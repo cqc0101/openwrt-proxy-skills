@@ -94,7 +94,7 @@
   "source_files_sha256": {
     ".gitattributes": "0578ada2360bf0d3691c9efb22f861af975d0b985abb9049eef19213a002f38c",
     ".github/workflows/ci.yml": "6e8defef20b63f36583c969cb5d279d7b2bd70a635ef1bed863aa9583a630738",
-    ".gitignore": "73a04b004420535a78cae0269137b476858d84d1511125e31f3c097f7aa7c44a",
+    ".gitignore": "5db133f5f3e9df2bd62885846f81074a4ba65072048e97609d1a4adda50d6e0d",
     "CHANGELOG.md": "c03c93edd8666d5a4114114221dd998dc8cb115d6009ab61f7381af1e7a4b35f",
     "core/__init__.py": "7f23818fe1b871ab8c594f3464c0521fac88b55987d76b48a6495a441845d8f3",
     "core/policy.py": "b12bba6b3d000a2dbee922b3ec89f3db2ef6cdf25a731a9d789e2d971a5871ac",
@@ -109,7 +109,7 @@
     "docker/run_docker_tests.ps1": "fb58be3b5f9606400956a7fbcda0ab642a30f4be4e7913006f2a4a8c5d397082",
     "docker/run_docker_tests.py": "a963af054a7f781bf52a3cfe52b2fb5f15e1306e81bc22e050020af5e2ec93db",
     "docker/stress_test_matrix.py": "3f7970b28a6dc7136b0b1a2170635d04c3c47738f699341c3a62962317ac7040",
-    "docs/audit-2026-11-12.md": "2059ac351efbca829d774140f2d116dbf1c7709bb0e4d6486166770303073a3c",
+    "docs/audit-2026-11-12.md": "2941162e4a978c42a08f2981f445c6eacad611b03bbfadf4b17715fab560b93a",
     "docs/compatibility-matrix.json": "6c4f7a401d016fc71490ea2b2a8137a07adb7039dd88e5344d03d11b8408ec5c",
     "docs/quality/BASELINE.md": "d422a8b4645fe9b5e5d5ece0797d5bf61e1b64f11804da39ce6a7d57e116b186",
     "docs/quality/DEVICE_BASELINE.md": "f4171d2a79c504c5d019817bd52f3d767d7d4202301df8bd6b9beefde3289763",
@@ -118,7 +118,7 @@
     "docs/quality/TEST_BASELINE.md": "134534328140b9f6870f532dc69322850ffeb1cf53f2e439ab393677048ae6ec",
     "docs/validation-report.md": "225d98e2f0896560a4f5f36f50cd09c9af7691ffee6c7fa63abe7df63af6df47",
     "docs/warnings-and-limitations.md": "63cf5ca415712fcc3102918679b0771817bca25513c4dcf2e2da05814ec26944",
-    "HARDENING_REPORT.md": "39679c9f418b2ae501071ac6a6d0839ec3e2b37577396ee06b94c13fdd3ae7b0",
+    "HARDENING_REPORT.md": "4dfc699985975b1c1256ad2b96bc35fd04eab16d581a5de671afec9075df1817",
     "LICENSE": "caf24b5c8e5ddcbb192c65d329841cc8f7e996cd5602982fc5d07d8711de49d2",
     "NOTICE.md": "f4bc1bce8fa44a9b9bcc92eb3533cc6027d132d9b1266420a3f227b8483af450",
     "README.md": "9a125a9ac0257da533de9186b60ed968c743cb7cba0a00cc675347e0eaaaa96f",
@@ -181,5 +181,11 @@
     "log_path_replacement": "<WORKSPACE>",
     "powershell_launcher": "uses USERPROFILE instead of fixed user directory",
     "prior_test_scope": "Engine/Python code unchanged; launcher and log copies sanitized after validation."
+  },
+  "publication_ci_fix": {
+    "affected_file": "docs/quality/evidence/native_verify.py",
+    "fix": "explicit UTF-8 subprocess decoding; existing structure check retained",
+    "native_script_sha256": "897b75c7e863bbf55a8985726533661757fb9d5718e6ef48d0b754cb54bf161d",
+    "initial_failure_run": "https://github.com/cqc0101/openwrt-proxy-skills/actions/runs/43231573093"
   }
 }
