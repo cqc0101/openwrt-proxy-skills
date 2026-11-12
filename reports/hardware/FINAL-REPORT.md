@@ -40,5 +40,5 @@ FriendlyElec NanoPi R2S，ImmortalWrt 25.12.2 r38135-0c4cd0f9920a，Linux 6.12.1
 
 只对本机 ARM64/fw4 的已执行路径给出真机结论。sing-box 本机 TCP 转发和回环 API 边界通过；TUN 因缺 /dev/net/tun 启动失败。dae 原生校验/重载通过，但未证明实际 LAN 透明转发、外网节点业务或重载长连接零中断。其他固件/架构/fw3、TProxy、真实 OOM、上传/Agent 中断等见台账。现有部分 dae 节点在运行时被拒绝，未更改真实节点；现有 WAN 输入 ACCEPT 与独立 dnsmasq DNS redirect 需生产部署时单独处理。
 
-本报告记录已确认的问题、修复证据和测试范围，不对项目质量作主观分数评价。测试受设备与网络条件限制的部分已列入未测项。
+本报告记录已确认的问题、修复证据和测试范围；设备条件受限的项目列入未测项。
 
