@@ -353,5 +353,37 @@ class TestAuditHardeningAutoConfig(unittest.TestCase):
         self.assertIn("GoodTrojan", tags)
 
 
+
+    def test_ssh_host_key_mismatch_blocks_execution(self):
+        """验证远程 SSH 探测遇到主机密钥篡改 (REMOTE HOST IDENTIFICATION HAS CHANGED) 时强制抛出 RuntimeError 阻断执行。"""
+        from unittest import mock
+        from auto_config import detect_remote_version
+        sys.path.insert(0, os.path.join(REPO, "skills", "dae-openwrt", "scripts"))
+        from sub_to_dae import detect_remote_dae_version
+
+        with mock.patch("auto_config.subprocess.run") as m_sb:
+            m_sb.return_value = mock.Mock(
+                stdout="",
+                stderr="@@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@@\nHost key verification failed.\n",
+                returncode=255,
+            )
+            with self.assertRaises(RuntimeError) as sb_ctx:
+                detect_remote_version("192.168.1.1", strict_host_key=True, known_hosts="/tmp/kh")
+            self.assertIn("SSH_HOST_KEY_MISMATCH", str(sb_ctx.exception))
+            called_args = m_sb.call_args[0][0]
+            self.assertIn("StrictHostKeyChecking=yes", " ".join(called_args))
+            self.assertIn("UserKnownHostsFile=/tmp/kh", " ".join(called_args))
+
+        with mock.patch("sub_to_dae.subprocess.run") as m_dae:
+            m_dae.return_value = mock.Mock(
+                stdout="",
+                stderr="Host key verification failed.\n",
+                returncode=255,
+            )
+            with self.assertRaises(RuntimeError) as dae_ctx:
+                detect_remote_dae_version("192.168.1.1", strict_host_key=True)
+            self.assertIn("SSH_HOST_KEY_MISMATCH", str(dae_ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

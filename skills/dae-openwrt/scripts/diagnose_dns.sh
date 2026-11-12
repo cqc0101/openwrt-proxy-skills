@@ -362,6 +362,7 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
     NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")
     cat << EOF
 {
+  "schema_version": "1.0",
   "timestamp": "$NOW_ISO",
   "total_checks": $TOTAL_CHECKS,
   "passed_checks": $PASSED_CHECKS,

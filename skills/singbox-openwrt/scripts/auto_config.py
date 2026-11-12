@@ -33,7 +33,7 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from parse_node import parse_uri
-from sub_parser import parse_source, extract_node_domains
+from sub_parser import parse_source, extract_node_domains, redact_sensitive_text
 
 
 def _is_ip_literal(addr: str) -> bool:
@@ -58,8 +58,8 @@ def version_ge(major_minor: str, min_major: int, min_minor: int) -> bool:
     return (maj > min_major) or (maj == min_major and mnr >= min_minor)
 
 
-def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
-    """通过 SSH 远程执行 sing-box version 探测版本（含参数注入防护）"""
+def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None, strict_host_key=None, known_hosts=None):
+    """通过 SSH 远程执行 sing-box version 探测版本（含参数注入防护与 SSH 主机密钥安全门控）"""
     host_str = str(host or "").strip()
     user_str = str(user or "root").strip()
     if not host_str or host_str.startswith("-") or re.search(r"\s", host_str):
@@ -68,22 +68,56 @@ def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
         raise ValueError(f"非法的 SSH 用户名: {user!r}")
     if isinstance(port, bool) or not (1 <= int(port) <= 65535):
         raise ValueError(f"SSH 端口超出合法范围 (1-65535): {port!r}")
+    if isinstance(timeout, bool) or not (1 <= int(timeout) <= 60):
+        raise ValueError(f"SSH 超时超出合法范围 (1-60s): {timeout!r}")
+    if key_path is not None:
+        kp = str(key_path).strip()
+        if not kp or kp.startswith("-") or re.search(r"[\r\n]", kp) or not os.path.isfile(kp):
+            raise ValueError(f"非法的 SSH 私钥路径: {key_path!r}")
+        key_path = kp
 
+    if strict_host_key is None:
+        strict_env = (
+            os.environ.get("OPENWRT_SSH_STRICT_HOST_KEY", "").strip()
+            or os.environ.get("OPENWRT_STRICT_SSH", "").strip()
+        )
+        strict_host_key = strict_env.lower() in ("1", "true", "yes")
+    if known_hosts is None:
+        known_hosts = (
+            os.environ.get("OPENWRT_SSH_KNOWN_HOSTS", "").strip()
+            or os.environ.get("OPENWRT_KNOWN_HOSTS", "").strip()
+            or None
+        )
+
+    hk_mode = "yes" if strict_host_key else "accept-new"
     ssh_cmd = [
         "ssh",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "BatchMode=yes",
+        "-o", f"StrictHostKeyChecking={hk_mode}",
         "-o", f"ConnectTimeout={int(timeout)}",
         "-p", str(int(port)),
     ]
+    if known_hosts:
+        kh_str = str(known_hosts).strip()
+        if not kh_str or kh_str.startswith("-") or re.search(r"[\r\n\s]", kh_str):
+            raise ValueError(f"非法的 known_hosts 路径: {known_hosts!r}")
+        if os.name != "nt" and os.path.isfile(kh_str) and (os.stat(kh_str).st_mode & 0o022):
+            raise PermissionError(f"known_hosts 权限不安全，拒绝使用可被其他用户篡改的文件: {kh_str}")
+        ssh_cmd.extend(["-o", f"UserKnownHostsFile={kh_str}"])
     if key_path:
         ssh_cmd.extend(["-i", str(key_path)])
     ssh_cmd.extend([
         "--",
         f"{user_str}@{host_str}",
-        "sing-box version 2>&1 | head -n 1"
+        "sing-box version"
     ])
     try:
         res = subprocess.run(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=timeout + 2)
+        combined_err = f"{res.stderr or ''}\n{res.stdout or ''}"
+        if "REMOTE HOST IDENTIFICATION HAS CHANGED" in combined_err or "Host key verification failed" in combined_err:
+            raise RuntimeError(
+                f"[SSH_HOST_KEY_MISMATCH] 远程软路由 ({host_str}) SSH 主机密钥校验失败或发生变化，疑似中间人风险，已安全阻断！"
+            )
         out = res.stdout.strip()
         match = re.search(r"sing-box version\s+(\d+\.\d+)", out)
         if match:
@@ -98,8 +132,10 @@ def detect_remote_version(host, user="root", port=22, timeout=5, key_path=None):
         err_msg = (res.stderr or out or "无输出").strip().splitlines()[0] if (res.stderr or out) else "无响应"
         print(f"[!] 远程探测未返回有效 sing-box 版本 ({err_msg})，默认降级使用 1.13 稳定规范", file=sys.stderr)
         return "1.13", out if out else "Fallback-1.13"
+    except RuntimeError:
+        raise
     except Exception as e:
-        print(f"[!] 无法探测远程版本 ({e})，默认降级使用 1.13 稳定规范", file=sys.stderr)
+        print(f"[!] 无法探测远程版本 ({redact_sensitive_text(str(e))})，默认降级使用 1.13 稳定规范", file=sys.stderr)
         return "1.13", "Fallback-1.13"
 
 
@@ -206,7 +242,7 @@ def compose_from_mixins(version="1.13", dns_mode="fakeip"):
     return cfg
 
 
-def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15, wan_iface=None, dns_cn="alidns", dns_remote="google-dns", topology="main", main_router_ip=None, clash_secret=None, strict_nodes=False):
+def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=None, mirror="jsdelivr", max_nodes=15, wan_iface=None, dns_cn="alidns", dns_remote="google-dns", topology="main", main_router_ip=None, clash_secret=None, strict_nodes=False, allow_private_sub=None, allowed_private_targets=None):
     template_file = f"openwrt-{version}-tun-{dns_mode}.json"
     template_path = os.path.join(TEMPLATES_DIR, template_file)
 
@@ -320,6 +356,8 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
                 port_val = int(p_str)
             else:
                 host_part = host_part.strip("[]").strip()
+            if not host_part or host_part.startswith("-") or ".." in host_part or (not _is_ip_literal(host_part) and not re.match(r"^[a-zA-Z0-9.-]+$", host_part)):
+                raise ValueError(f"非法的 DNS 服务器主机名或 IP: {val_str!r}")
             entry["server"] = host_part
             entry["type"] = "udp"
             if port_val is not None:
@@ -389,15 +427,28 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
                     raise ValueError(f"Shadowsocks 加密方式已废弃不受 sing-box 支持: {ob.get('method')!r}")
                 parsed_outbounds.append(ob)
             except Exception as e:
-                print(f"[!] 忽略无效节点 URI: {e}", file=sys.stderr)
+                print(f"[!] 忽略无效节点 URI: {redact_sensitive_text(str(e))}", file=sys.stderr)
 
     # 3.2 机场订阅或文件收集
     if sub_source:
         try:
-            sub_nodes = parse_source(sub_source, max_nodes=max_nodes)
+            sub_nodes = parse_source(
+                sub_source,
+                max_nodes=max_nodes,
+                allow_private=allow_private_sub,
+                allowed_private_targets=allowed_private_targets,
+            )
             parsed_outbounds.extend(sub_nodes)
+        except ValueError as e:
+            if any(k in str(e) for k in ("[SSRF 拦截]", "仅支持 HTTP/HTTPS", "超过安全上限")):
+                raise ValueError(redact_sensitive_text(str(e)))
+            print(f"[!] 解析订阅源失败: {redact_sensitive_text(str(e))}", file=sys.stderr)
+        except RuntimeError as e:
+            if "超过安全上限" in str(e):
+                raise RuntimeError(redact_sensitive_text(str(e)))
+            print(f"[!] 解析订阅源失败: {redact_sensitive_text(str(e))}", file=sys.stderr)
         except Exception as e:
-            print(f"[!] 解析订阅源失败: {e}", file=sys.stderr)
+            print(f"[!] 解析订阅源失败: {redact_sensitive_text(str(e))}", file=sys.stderr)
 
     if strict_nodes and (node_uris or sub_source) and not parsed_outbounds:
         print("[FATAL] 未能从指定的 --node 或 --sub 中解析出任何有效节点！已中止生成以防止下发占位假节点导致断网。", file=sys.stderr)
@@ -512,10 +563,14 @@ def main():
     parser.add_argument("--user", default="root", help="SSH 用户名 (默认: root)")
     parser.add_argument("--port", type=int, default=22, help="SSH 端口 (默认: 22)")
     parser.add_argument("--key", help="SSH 私钥文件路径 (可选，用于探测软路由版本)")
+    parser.add_argument("--strict-host-key", action="store_true", help="强制要求目标路由器已在 known_hosts 中注册 (StrictHostKeyChecking=yes)")
+    parser.add_argument("--known-hosts", default=None, help="自定义 SSH known_hosts 文件路径")
     parser.add_argument("--version", choices=["1.13", "1.14"], help="手动强制指定版本 (若未指定 --router 时有效，默认 1.13)")
     parser.add_argument("--dns-mode", choices=["fakeip", "realip"], default="fakeip", help="DNS 分流模式 (默认: fakeip)")
     parser.add_argument("--node", action="append", help="节点链接 (支持多个 --node 注入)")
     parser.add_argument("--sub", help="机场订阅 (支持 HTTP/HTTPS URL、本地文件路径或 Base64 订阅文本)")
+    parser.add_argument("--allow-private-sub", action="store_true", help="允许从内网/本地 IP 拉取自建订阅转换服务 (如 Subconverter)")
+    parser.add_argument("--allow-private-target", action="append", default=None, help="精确允许的私网订阅目标白名单 (如 192.168.1.10:25500 或 sub.home.arpa:443)")
     parser.add_argument("--mirror", choices=["jsdelivr", "ghproxy", "fastly", "direct"], default="jsdelivr", help="规则集国内镜像加速 (默认 jsdelivr，彻底避免国内首启下载死锁)")
     parser.add_argument("--max-nodes", type=int, default=15, help="最多注入的节点数 (默认 15，保护弱路由内存)")
     parser.add_argument("--wan-iface", help="显式指定 WAN 接口 (如 eth0/pppoe-wan)；部分内核缺 nfqueue 模块时 auto_detect_interface 会使国内直连被 TUN 自捕获，此时必须显式指定")
@@ -532,7 +587,7 @@ def main():
     try:
         if args.router:
             print(f"[*] 正在连接软路由 {args.user}@{args.router}:{args.port} 探测 sing-box 核心版本...", file=sys.stderr)
-            v, raw_ver = detect_remote_version(args.router, args.user, args.port, key_path=args.key)
+            v, raw_ver = detect_remote_version(args.router, args.user, args.port, key_path=args.key, strict_host_key=args.strict_host_key or None, known_hosts=args.known_hosts)
             print(f"[+] 探测到软路由内核版本: {raw_ver} -> 匹配规则集版本: v{v}", file=sys.stderr)
             detected_ver = v
 
@@ -553,8 +608,10 @@ def main():
             main_router_ip=args.main_router_ip,
             clash_secret=args.clash_secret,
             strict_nodes=True,
+            allow_private_sub=args.allow_private_sub or None,
+            allowed_private_targets=args.allow_private_target,
         )
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:
         print(f"[FATAL] 参数校验失败: {e}", file=sys.stderr)
         sys.exit(1)
 

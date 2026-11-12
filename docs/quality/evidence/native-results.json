@@ -1,0 +1,318 @@
+[
+  {
+    "label": "version-1.13",
+    "cmd": [
+      "/root/bin/sing-box-1.13",
+      "version"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "sing-box version 1.13.0\n\nEnvironment: go1.25.7 linux/amd64\nTags: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0,with_naive_outbound,with_musl\nRevision: 6da7e538e122b77c226ce48c1a6b4ecb61fd3fc4\nCGO: enabled\n",
+    "stderr": ""
+  },
+  {
+    "label": "template-1.13-realip",
+    "cmd": [
+      "/root/bin/sing-box-1.13",
+      "check",
+      "-c",
+      "/root/src/skills/singbox-openwrt/assets/templates/openwrt-1.13-tun-realip.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "sing-1.13-realip-main",
+    "cmd": [
+      "/root/bin/sing-box-1.13",
+      "check",
+      "-c",
+      "/root/native-cases/sing-1.13-realip-main.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "sing-1.13-realip-bypass",
+    "cmd": [
+      "/root/bin/sing-box-1.13",
+      "check",
+      "-c",
+      "/root/native-cases/sing-1.13-realip-bypass.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "template-1.13-fakeip",
+    "cmd": [
+      "/root/bin/sing-box-1.13",
+      "check",
+      "-c",
+      "/root/src/skills/singbox-openwrt/assets/templates/openwrt-1.13-tun-fakeip.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "sing-1.13-fakeip-main",
+    "cmd": [
+      "/root/bin/sing-box-1.13",
+      "check",
+      "-c",
+      "/root/native-cases/sing-1.13-fakeip-main.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "sing-1.13-fakeip-bypass",
+    "cmd": [
+      "/root/bin/sing-box-1.13",
+      "check",
+      "-c",
+      "/root/native-cases/sing-1.13-fakeip-bypass.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "reject-invalid-1.13",
+    "cmd": [
+      "/root/bin/sing-box-1.13",
+      "check",
+      "-c",
+      "/root/native-cases/bad.json"
+    ],
+    "returncode": 1,
+    "expected": 1,
+    "pass_": true,
+    "stdout": "",
+    "stderr": "\u001b[31mFATAL\u001b[0m[0000] decode config at /root/native-cases/bad.json: outbounds[0]: unknown outbound type: audit-invalid\n"
+  },
+  {
+    "label": "version-1.14",
+    "cmd": [
+      "/root/bin/sing-box-1.14",
+      "version"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "sing-box version 1.14.4\n\nEnvironment: go1.26.10 linux/amd64\nTags: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_naive_outbound,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0,with_musl\nRevision: c005f35300ce76427dc285481ec5695f5b179cd2\nCGO: enabled\n",
+    "stderr": ""
+  },
+  {
+    "label": "template-1.14-realip",
+    "cmd": [
+      "/root/bin/sing-box-1.14",
+      "check",
+      "-c",
+      "/root/src/skills/singbox-openwrt/assets/templates/openwrt-1.14-tun-realip.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "sing-1.14-realip-main",
+    "cmd": [
+      "/root/bin/sing-box-1.14",
+      "check",
+      "-c",
+      "/root/native-cases/sing-1.14-realip-main.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "sing-1.14-realip-bypass",
+    "cmd": [
+      "/root/bin/sing-box-1.14",
+      "check",
+      "-c",
+      "/root/native-cases/sing-1.14-realip-bypass.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "template-1.14-fakeip",
+    "cmd": [
+      "/root/bin/sing-box-1.14",
+      "check",
+      "-c",
+      "/root/src/skills/singbox-openwrt/assets/templates/openwrt-1.14-tun-fakeip.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "sing-1.14-fakeip-main",
+    "cmd": [
+      "/root/bin/sing-box-1.14",
+      "check",
+      "-c",
+      "/root/native-cases/sing-1.14-fakeip-main.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "sing-1.14-fakeip-bypass",
+    "cmd": [
+      "/root/bin/sing-box-1.14",
+      "check",
+      "-c",
+      "/root/native-cases/sing-1.14-fakeip-bypass.json"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "reject-invalid-1.14",
+    "cmd": [
+      "/root/bin/sing-box-1.14",
+      "check",
+      "-c",
+      "/root/native-cases/bad.json"
+    ],
+    "returncode": 1,
+    "expected": 1,
+    "pass_": true,
+    "stdout": "",
+    "stderr": "\u001b[31mFATAL\u001b[0m[0000] decode config at /root/native-cases/bad.json: outbounds[0]: unknown outbound type: audit-invalid\n"
+  },
+  {
+    "label": "dae-version",
+    "cmd": [
+      "/root/bin/dae",
+      "--version"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "dae version v2.1.1\ngo runtime go1.26.8-X:heapminimum512kib,newinliner,simd linux/amd64\nCopyright (c) 2022-2026 @daeuniverse\nLicense GNU AGPLv3 <https://github.com/daeuniverse/dae/blob/main/LICENSE>\n",
+    "stderr": ""
+  },
+  {
+    "label": "dae-template",
+    "cmd": [
+      "/root/bin/dae",
+      "validate",
+      "-c",
+      "/root/src/skills/dae-openwrt/assets/templates/openwrt.dae"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": "time=\"2026-11-12T13:29:15Z\" level=info msg=\"pname routing: trim \\\"transmission-daemon\\\" to \\\"transmission-dae\\\" because it is too long.\"\n"
+  },
+  {
+    "label": "dae-legacy-main",
+    "cmd": [
+      "/root/bin/dae",
+      "validate",
+      "-c",
+      "/root/native-cases/dae-legacy-main.dae"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": "time=\"2026-11-12T13:29:29Z\" level=info msg=\"pname routing: trim \\\"transmission-daemon\\\" to \\\"transmission-dae\\\" because it is too long.\"\n"
+  },
+  {
+    "label": "dae-legacy-bypass",
+    "cmd": [
+      "/root/bin/dae",
+      "validate",
+      "-c",
+      "/root/native-cases/dae-legacy-bypass.dae"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": "time=\"2026-11-12T13:29:43Z\" level=info msg=\"pname routing: trim \\\"transmission-daemon\\\" to \\\"transmission-dae\\\" because it is too long.\"\n"
+  },
+  {
+    "label": "dae-modern-main",
+    "cmd": [
+      "/root/bin/dae",
+      "validate",
+      "-c",
+      "/root/native-cases/dae-modern-main.dae"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": "time=\"2026-11-12T13:29:57Z\" level=info msg=\"pname routing: trim \\\"transmission-daemon\\\" to \\\"transmission-dae\\\" because it is too long.\"\n"
+  },
+  {
+    "label": "dae-modern-bypass",
+    "cmd": [
+      "/root/bin/dae",
+      "validate",
+      "-c",
+      "/root/native-cases/dae-modern-bypass.dae"
+    ],
+    "returncode": 0,
+    "expected": 0,
+    "pass_": true,
+    "stdout": "",
+    "stderr": "time=\"2026-11-12T13:30:11Z\" level=info msg=\"pname routing: trim \\\"transmission-daemon\\\" to \\\"transmission-dae\\\" because it is too long.\"\n"
+  },
+  {
+    "label": "dae-invalid",
+    "cmd": [
+      "/root/bin/dae",
+      "validate",
+      "-c",
+      "/root/native-cases/invalid.dae"
+    ],
+    "returncode": 1,
+    "expected": 1,
+    "pass_": true,
+    "stdout": "section routing is required but not provided\n",
+    "stderr": ""
+  }
+]

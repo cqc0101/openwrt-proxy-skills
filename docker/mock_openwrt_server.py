@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import shlex
 import socket
 import sys
 import threading
@@ -52,23 +53,32 @@ class OpenWrtState:
 
     def execute_command(self, cmd_line, stdin_data=""):
         cmd = cmd_line.strip()
+        upload = re.fullmatch(r"cat\s*>\s*(/[A-Za-z0-9_./-]+)", cmd)
+        if upload:
+            self.files[upload.group(1)] = stdin_data
+            return "", 0
 
         # 检查是否为 JSON 诊断/探针脚本调用
         if ("--json" in cmd or "-j" in cmd) and ("doctor.sh" in stdin_data or "Smart Log Doctor" in stdin_data):
+            issues = []
+            if not self.singbox_running:
+                issues.append({"issue_id": "service_not_running"})
+            if "tun0" not in self.fw_zone_lan_devices:
+                issues.append({"issue_id": "fw_tun_blocked"})
             return json.dumps({
                 "service": "sing-box",
-                "status": "healthy",
-                "overall_code": 0,
+                "status": "unhealthy" if issues else "healthy",
+                "overall_code": 2 if issues else 0,
                 "singbox_running": self.singbox_running,
                 "dae_running": False,
                 "tun_alive": True,
                 "fw_tun_ok": "tun0" in self.fw_zone_lan_devices,
                 "port53_open": True,
-                "outbound_ok": True,
-                "issue_count": 0,
-                "issues": [],
+                "outbound_ok": not issues,
+                "issue_count": len(issues),
+                "issues": issues,
                 "suggested_actions": [],
-            }), 0
+            }), 2 if issues else 0
         if ("--json" in cmd or "-j" in cmd) and ("diagnose_dns.sh" in stdin_data or "DNS 深度健康体检" in stdin_data):
             return json.dumps({
                 "total_checks": 7,
@@ -84,18 +94,19 @@ class OpenWrtState:
         if "diagnose_openwrt" in cmd or "全链路健康诊断" in stdin_data or "CHECK 1/7" in stdin_data:
             return self.simulate_diagnosis(), 0
 
-        # 复合脚本或多行输入处理 (例如 sh -s 或 tr -d '\r' | sh -s)
-        if "sh -s" in cmd or cmd.startswith("sh"):
-            script = stdin_data if stdin_data else cmd
-            sub_outputs = []
-            for subcmd in script.splitlines():
-                subcmd = subcmd.strip()
-                if not subcmd or subcmd.startswith("#") or subcmd.startswith("case") or subcmd in ("esac", "fi", "HOTPLUG_EOF"):
-                    continue
-                out, rc = self.execute_single_command(subcmd)
+        # This fixture is not a shell interpreter. Never report arbitrary scripts
+        # as executed successfully by dropping syntax or command failures.
+        if re.match(r"^(?:/bin/)?sh(?:\s|$)", cmd) or "| sh -s" in cmd:
+            return "MOCK_UNSUPPORTED: arbitrary shell scripts require Docker/device validation", 126
+        if " && " in cmd:
+            outputs = []
+            for part in cmd.split(" && "):
+                out, rc = self.execute_single_command(part.strip())
                 if out:
-                    sub_outputs.append(out)
-            return "\n".join(sub_outputs), 0
+                    outputs.append(out)
+                if rc:
+                    return "\n".join(outputs), rc
+            return "\n".join(outputs), 0
 
         return self.execute_single_command(cmd)
 
@@ -124,6 +135,15 @@ class OpenWrtState:
         )
 
     def execute_single_command(self, cmd):
+        try:
+            words = shlex.split(cmd)
+        except ValueError:
+            return "MOCK_UNSUPPORTED: malformed command", 2
+        supported = {"uname", "cat", "which", "command", "grep", "uci", "ip", "sing-box",
+                     "/etc/init.d/firewall", "/etc/init.d/sing-box", "service", "pidof",
+                     "netstat", "ss", "logread", "df", "free", "echo", "cp", "mv", "mkdir", "rm"}
+        if not words or words[0] not in supported:
+            return "MOCK_UNSUPPORTED: unknown command", 127
         # 基础架构与版本
         if cmd.startswith("uname -m"):
             return self.arch, 0
@@ -218,11 +238,11 @@ class OpenWrtState:
                 if content:
                     try:
                         cfg = json.loads(content)
-                        if "inbounds" in cfg and "outbounds" in cfg:
+                        if isinstance(cfg, dict) and isinstance(cfg.get("inbounds"), list) and isinstance(cfg.get("outbounds"), list):
                             return "configuration check passed", 0
                     except Exception:
                         return "invalid json syntax", 1
-            return "configuration check passed", 0
+            return "missing or invalid configuration", 1
         if "/etc/init.d/sing-box restart" in cmd or "service sing-box restart" in cmd:
             self.singbox_running = True
             return "[OK] sing-box restarted", 0
@@ -260,19 +280,23 @@ class OpenWrtState:
                 src, dst = parts[1], parts[2]
                 if src in self.files:
                     self.files[dst] = self.files[src]
+                else:
+                    return "source missing", 1
             return "", 0
         if cmd.startswith("mv "):
             parts = cmd.split()
             if len(parts) >= 3:
                 src, dst = parts[1], parts[2]
                 if src in self.files:
-                    self.files[dst] = self.files[src]
+                    self.files[dst] = self.files.pop(src)
+                else:
+                    return "source missing", 1
             return "", 0
         if cmd.startswith("mkdir") or cmd.startswith("rm "):
             return "", 0
 
-        # 兜底成功响应
-        return "", 0
+        # Unknown commands must not turn test failures into successes.
+        return "MOCK_UNSUPPORTED: unknown command", 127
 
 
 if paramiko is not None:

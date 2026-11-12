@@ -60,7 +60,7 @@ class TestDaeSelfContained(unittest.TestCase):
                 dae_text = f.read()
             self.assertIn("global {", dae_text)
             self.assertIn("routing {", dae_text)
-            self.assertIn("'JP-WS': 'trojan://", dae_text)
+            self.assertIn("JP-WS: 'trojan://", dae_text)
             self.assertIn("type=ws&path=/ws&host=b.com", dae_text)
 
     def test_sub_to_dae_bypass_topology_injects_main_router_direct(self):

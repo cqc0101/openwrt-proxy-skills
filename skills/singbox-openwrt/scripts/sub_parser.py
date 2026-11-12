@@ -18,10 +18,13 @@ import json
 import re
 import base64
 import ipaddress
+import http.client
+import socket
 import zlib
+import urllib.error
 import urllib.request
 import urllib.parse
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Sequence
 
 # 单次订阅响应与解压最大字节上限 (10 MiB)，防止 Gzip 炸弹撑爆弱路由内存
 MAX_SUB_BYTES = 10 * 1024 * 1024
@@ -99,28 +102,401 @@ def _decompress(content: bytes, encoding: str = "", max_bytes: int = MAX_SUB_BYT
     return content
 
 
-class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """仅允许重定向至 http/https 协议，阻断 file:// 等危险协议跳转。"""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        parsed = urllib.parse.urlparse(newurl)
-        if parsed.scheme.lower() not in ("http", "https"):
-            raise urllib.error.URLError(f"拒绝不安全的重定向协议: {parsed.scheme}")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+# CGNAT 保留网段 (RFC 6598 100.64.0.0/10)
+_CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
+_NAT64_NETS = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48"))
+_PLATFORM_NETS = tuple(ipaddress.ip_network(net) for net in (
+    "169.254.0.0/16", "100.100.100.200/32", "168.63.129.16/32", "fd00:ec2::254/128"))
+MAX_REDIRECT_HOPS = 5
+MAX_SUB_REDIRECTS = MAX_REDIRECT_HOPS
+_SENSITIVE_QUERY_KEYS = ("token", "key", "secret", "password", "passwd", "pwd", "auth", "sig", "access_token", "jwt", "uuid", "sid", "pbk")
+_SENSITIVE_QUERY_SUBSTRS = ("token", "secret", "pass", "pwd", "key", "auth", "sig", "jwt", "uuid", "sid", "pbk")
 
 
-def fetch_subscription(url: str, timeout: int = 15) -> str:
-    """拉取远程订阅内容（带体积上限与安全重定向保护）"""
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme.lower() not in ("http", "https"):
-        raise ValueError(f"仅支持 HTTP/HTTPS 订阅链接: {url}")
-    headers = {
-        # 使用 clash.meta 或 sing-box 的 User-Agent 触发机场下发完整通用订阅
-        "User-Agent": "sing-box/1.14.0 (OpenWrt; Linux x86_64)",
-        "Accept": "*/*"
-    }
-    req = urllib.request.Request(url, headers=headers)
-    opener = urllib.request.build_opener(_SafeRedirectHandler)
+def _is_sensitive_query_key(key: str) -> bool:
+    kl = str(key or "").strip().lower()
+    return kl in _SENSITIVE_QUERY_KEYS or any(sub in kl for sub in _SENSITIVE_QUERY_SUBSTRS)
+
+
+def redact_sensitive_text(text: str) -> str:
+    """对日志与异常消息中的订阅 Token、密钥参数及节点 URI 密码/UUID 执行脱敏，防止凭据泄露。"""
+    s = str(text or "")
+    if not s:
+        return s
+    # 1. 脱敏 URL 查询参数中的敏感键值 (支持 token/key/secret/password/passwd/pwd/auth/sig/jwt/uuid/sid/pbk 及其组合词如 api_key/sub_token)
+    s = re.sub(
+        r'([?&][a-zA-Z0-9_.-]*(?:token|secret|pass|pwd|key|auth|sig|jwt|uuid|sid|pbk)[a-zA-Z0-9_.-]*=)([^&#\s\'"]+)',
+        r"\1***REDACTED***",
+        s,
+        flags=re.IGNORECASE,
+    )
+    # 2. 脱敏代理 URI 或 HTTP URL 中的 userinfo (scheme://user:pass@host 或 scheme://uuid@host)
+    s = re.sub(
+        r'\b([a-zA-Z][a-zA-Z0-9+.-]*://)([^/@\s\'"]+)@',
+        r"\1***REDACTED***@",
+        s,
+    )
+    # 3. 脱敏非 URL 形态的键值凭据 (如 password=xxx, "password": "xxx", api_key: xxx)
+    s = re.sub(
+        r'((?:password|passwd|pwd|secret|token|api_key|private_key|access_token|pbk)[\s"\x27]*[:=][\s"\x27]*)([^\s"\x27,;}&#]+)',
+        r"\1***REDACTED***",
+        s,
+        flags=re.IGNORECASE,
+    )
+    return s
+
+
+def redact_url(url: str) -> str:
+    """对单个 URL 中的认证凭据与敏感查询参数执行脱敏。"""
+    return redact_sensitive_text(str(url or ""))
+
+
+def redact_text_urls(text: str) -> str:
+    """对任意异常或日志文本中内嵌的所有 URL 与敏感参数执行脱敏。"""
+    return redact_sensitive_text(str(text or ""))
+
+
+def _is_platform_endpoint(ip_obj) -> bool:
+    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped is not None:
+        ip_obj = ip_obj.ipv4_mapped
+    return any(ip_obj in net for net in _PLATFORM_NETS)
+
+
+def _is_disallowed_ip(ip_obj: ipaddress._BaseAddress) -> bool:
+    """检查 IP 地址是否属于回环、私网、链路本地、多播、未指定、保留或 CGNAT 等禁止访问的内网/特殊地址。"""
+    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped is not None:
+        ip_obj = ip_obj.ipv4_mapped
+    if _is_platform_endpoint(ip_obj):
+        return True
+    if (
+        ip_obj.is_loopback
+        or ip_obj.is_private
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_unspecified
+        or ip_obj.is_reserved
+    ):
+        return True
+    if isinstance(ip_obj, ipaddress.IPv4Address) and ip_obj in _CGNAT_NET:
+        return True
+    if isinstance(ip_obj, ipaddress.IPv6Address) and any(ip_obj in net for net in _NAT64_NETS):
+        return True
+    if not getattr(ip_obj, "is_global", True):
+        return True
+    return False
+
+
+_is_blocked_ip = _is_disallowed_ip
+
+
+MAX_LINE_LENGTH = 65536
+MAX_YAML_DEPTH = 32
+
+
+def _match_allowed_private_target(hostname: str, port: int, allowed_private_targets: Optional[Sequence[Any]] = None) -> bool:
+    """检查 (hostname, port) 是否命中显式声明的精确私网白名单 (host:port 或 AllowedPrivateTarget)，拒绝通配符与 CIDR。"""
+    raw_specs: List[str] = []
+    env_spec = os.environ.get("OPENWRT_ALLOWED_PRIVATE_TARGETS", "").strip()
+    if env_spec:
+        raw_specs.extend(x.strip() for x in env_spec.split(",") if x.strip())
+    norm_host = str(hostname or "").strip().strip("[]").rstrip(".").lower()
     try:
+        host_ip_obj = ipaddress.ip_address(norm_host.split("%", 1)[0])
+    except ValueError:
+        host_ip_obj = None
+
+    if allowed_private_targets:
+        for item in allowed_private_targets:
+            if item is None:
+                continue
+            if hasattr(item, "matches") and callable(item.matches):
+                h_attr = str(getattr(item, "host", "") or "").strip().strip("[]").rstrip(".").lower()
+                if not h_attr or any(c in h_attr for c in ("*", "?", "/", "\\")) or h_attr in ("0.0.0.0", "::", "localhost"):
+                    raise ValueError(f"[SSRF 拦截] 严禁使用通配符、CIDR 或未指定地址作为私网白名单目标: {h_attr!r}")
+                if item.matches(norm_host, int(port)):
+                    return True
+            elif item:
+                raw_specs.extend(x.strip() for x in str(item).split(",") if x.strip())
+    if not raw_specs:
+        return False
+    for spec in raw_specs:
+        if spec.startswith("[") or "]" in spec:
+            if not (spec.startswith("[") and "]" in spec):
+                raise ValueError(f"[SSRF 拦截] 非法的私网白名单 IPv6 条目: {spec!r}")
+            h_part, _, p_part = spec[1:].partition("]")
+            if p_part and not p_part.startswith(":"):
+                raise ValueError(f"[SSRF 拦截] 非法的私网白名单条目: {spec!r}")
+            p_part = p_part.lstrip(":")
+        elif spec.count(":") == 1:
+            h_part, p_part = spec.rsplit(":", 1)
+        else:
+            h_part, p_part = spec, "443|80"
+        h_clean = h_part.strip().rstrip(".").lower()
+        if not h_clean or any(c in h_clean for c in ("*", "?", "/", "\\")) or h_clean in ("0.0.0.0", "::", "localhost"):
+            raise ValueError(f"[SSRF 拦截] 严禁使用通配符、CIDR 或未指定地址作为私网白名单目标: {spec!r}")
+        try:
+            spec_ip_obj = ipaddress.ip_address(h_clean.split("%", 1)[0])
+        except ValueError:
+            spec_ip_obj = None
+        if spec_ip_obj is not None:
+            if spec_ip_obj.is_unspecified or spec_ip_obj.is_multicast:
+                raise ValueError(f"[SSRF 拦截] 严禁将未指定或多播地址加入私网白名单: {spec!r}")
+        elif ":" in h_clean:
+            raise ValueError(f"[SSRF 拦截] 非法的私网白名单主机名或 IPv6 地址: {spec!r}")
+
+        allowed_ports: List[int] = []
+        for p in (p_part or "443|80").split("|"):
+            p_s = p.strip()
+            if not p_s.isdigit() or not (1 <= int(p_s) <= 65535):
+                raise ValueError(f"[SSRF 拦截] 私网白名单包含非法端口: {spec!r}")
+            allowed_ports.append(int(p_s))
+
+        host_matched = (h_clean == norm_host) or (
+            spec_ip_obj is not None and host_ip_obj is not None and spec_ip_obj == host_ip_obj
+        )
+        if host_matched and int(port) in allowed_ports:
+            return True
+    return False
+
+
+def _dns_key(host, port):
+    return (str(host).strip("[]").rstrip(".").lower().encode("idna").decode("ascii"), int(port))
+
+
+def _private_exception_ip(ip_obj):
+    """Broad private opt-in permits LAN/ULA/CGNAT, never loopback or link-local metadata."""
+    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped is not None:
+        ip_obj = ip_obj.ipv4_mapped
+    if (ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_unspecified
+            or ip_obj.is_multicast or ip_obj.is_reserved):
+        return False
+    if isinstance(ip_obj, ipaddress.IPv6Address):
+        return ip_obj in ipaddress.ip_network("fc00::/7")
+    return any(ip_obj in ipaddress.ip_network(net) for net in
+               ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"))
+
+
+def validate_safe_subscription_url(
+    url: str,
+    allow_private: Optional[bool] = None,
+    allowed_private_targets: Optional[Sequence[str]] = None,
+    *,
+    _dns_cache=None,
+    _resolver=None,
+) -> List[str]:
+    """Validate every address. A fetch supplies its own DNS cache and resolver.
+
+    Exact host:port entries are explicit trust grants (including local test services).
+    The broad allow_private switch only permits LAN/ULA/CGNAT addresses.
+    """
+    if allow_private is None:
+        allow_private = os.environ.get("OPENWRT_ALLOW_PRIVATE_SUB", "").strip().lower() in ("1", "true", "yes")
+    raw_url = str(url or "").strip()
+    if re.search(r"[\x00-\x20\x7f\\]", raw_url):
+        raise ValueError(f"[SSRF 拦截] 订阅链接包含非法控制字符、空白或反斜杠: {redact_sensitive_text(raw_url)}")
+    parsed = urllib.parse.urlparse(raw_url)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"仅支持 HTTP/HTTPS 订阅链接 (当前协议: {parsed.scheme or 'none'})")
+    hostname = (parsed.hostname or "").strip().strip("[]")
+    if not hostname:
+        raise ValueError("订阅链接缺少有效的主机名")
+    try:
+        raw_port = parsed.port
+    except ValueError:
+        raise ValueError(f"订阅链接包含非法端口: {redact_sensitive_text(url)}")
+    port = raw_port if raw_port is not None else (443 if scheme == "https" else 80)
+    if not 1 <= port <= 65535:
+        raise ValueError(f"订阅链接包含非法端口: {redact_sensitive_text(url)}")
+    exact_exception = _match_allowed_private_target(hostname, port, allowed_private_targets)
+    lower_host = hostname.lower().rstrip(".")
+    if not (allow_private or exact_exception) and (lower_host == "localhost" or lower_host.endswith(
+            (".localhost", ".local", ".lan", ".internal", ".home.arpa"))):
+        raise ValueError(f"[SSRF 拦截] 拒绝访问本地或内网保留主机名: {hostname}")
+    key = _dns_key(hostname, port)
+    if _dns_cache is not None and key in _dns_cache:
+        return list(dict.fromkeys(str(info[4][0]) for info in _dns_cache[key]))
+    bare_ip_candidate = urllib.parse.unquote(hostname).split("%", 1)[0]
+    try:
+        ip_lit = ipaddress.ip_address(bare_ip_candidate)
+    except ValueError:
+        ip_lit = None
+    if ip_lit is not None:
+        if _is_platform_endpoint(ip_lit) or (_is_disallowed_ip(ip_lit) and not exact_exception
+                                             and not (allow_private and _private_exception_ip(ip_lit))):
+            raise ValueError(f"[SSRF 拦截] 拒绝访问内网、回环或保留 IP 地址: {hostname}")
+        # A numeric sockaddr needs no second DNS resolution, including scoped IPv6.
+        if "%" in urllib.parse.unquote(hostname):
+            infos = (_resolver or socket.getaddrinfo)(urllib.parse.unquote(hostname), port, 0, socket.SOCK_STREAM,
+                                                     0, socket.AI_NUMERICHOST)
+        elif ip_lit.version == 6:
+            infos = [(socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (str(ip_lit), port, 0, 0))]
+        else:
+            infos = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (str(ip_lit), port))]
+    else:
+        try:
+            infos = (_resolver or socket.getaddrinfo)(key[0], port, 0, socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            raise RuntimeError(f"无法解析订阅域名 {hostname}: {e}")
+    verified_infos = []
+    resolved_ips = []
+    for info in infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            continue
+        ip_str = str(sockaddr[0]).split("%", 1)[0]
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except ValueError:
+            raise ValueError(f"[SSRF 拦截] 解析到非法 IP 格式: {ip_str}")
+        if _is_platform_endpoint(ip_obj) or (_is_disallowed_ip(ip_obj) and not exact_exception
+                                             and not (allow_private and _private_exception_ip(ip_obj))):
+            raise ValueError(f"[SSRF 拦截] 订阅域名 {hostname} 解析到了禁止访问的内网/保留地址: {ip_str}")
+        verified_infos.append(info)
+        if ip_str not in resolved_ips:
+            resolved_ips.append(ip_str)
+    if not resolved_ips:
+        raise RuntimeError(f"订阅域名 {hostname} 未返回任何有效 IP 记录")
+    if _dns_cache is not None:
+        _dns_cache[key] = tuple(verified_infos)
+    return resolved_ips
+
+
+_validate_remote_url = validate_safe_subscription_url
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """逐跳校验重定向协议、禁止 HTTPS->HTTP 降级、限制最大跳数与 SSRF 边界，并在跨域跳转时剥离敏感请求头。"""
+    def __init__(
+        self,
+        allow_private: Optional[bool] = None,
+        max_redirects: int = MAX_REDIRECT_HOPS,
+        allow_http_downgrade: bool = False,
+        allowed_private_targets: Optional[Sequence[str]] = None,
+        dns_cache=None,
+        resolver=None,
+    ):
+        super().__init__()
+        self.allow_private = allow_private
+        self.max_redirects = max_redirects
+        self.allow_http_downgrade = allow_http_downgrade
+        self.allowed_private_targets = allowed_private_targets
+        self.redirect_count = 0
+        self.dns_cache = dns_cache
+        self.resolver = resolver
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        visited = getattr(req, "_redirect_count", 0) + 1
+        if visited > self.max_redirects:
+            raise urllib.error.URLError(f"[SSRF 拦截] 订阅重定向次数超过安全上限 ({self.max_redirects})")
+        target_url = urllib.parse.urljoin(req.full_url, newurl)
+        old_scheme = urllib.parse.urlparse(req.full_url).scheme.lower()
+        new_scheme = urllib.parse.urlparse(target_url).scheme.lower()
+        if old_scheme == "https" and new_scheme == "http" and not self.allow_http_downgrade:
+            raise urllib.error.URLError("[SSRF 拦截] 拒绝从 HTTPS 降级重定向至不安全的 HTTP 链接")
+        try:
+            validate_safe_subscription_url(
+                target_url,
+                allow_private=self.allow_private,
+                allowed_private_targets=self.allowed_private_targets,
+                _dns_cache=self.dns_cache,
+                _resolver=self.resolver,
+            )
+        except Exception as e:
+            raise urllib.error.URLError(str(e))
+        self.redirect_count = visited
+        new_req = super().redirect_request(req, fp, code, msg, headers, target_url)
+        if new_req is not None:
+            new_req._redirect_count = visited
+            old_p = urllib.parse.urlparse(req.full_url)
+            new_p = urllib.parse.urlparse(target_url)
+            if (old_p.scheme.lower(), old_p.netloc.lower()) != (new_p.scheme.lower(), new_p.netloc.lower()):
+                for hdr_dict in (new_req.headers, new_req.unredirected_hdrs):
+                    for k in list(hdr_dict.keys()):
+                        if k.lower() in ("authorization", "proxy-authorization", "cookie"):
+                            hdr_dict.pop(k, None)
+        return new_req
+
+
+def _connect_pinned(address, timeout, source_address, dns_cache):
+    """Connect only to prevalidated sockaddr tuples; never call process-global DNS."""
+    infos = dns_cache.get(_dns_key(*address))
+    if not infos:
+        raise ValueError("[SSRF 拦截] 连接目标缺少本次请求的 DNS 校验结果")
+    last_error = None
+    for family, socktype, proto, _canonname, sockaddr in infos:
+        sock = socket.socket(family, socktype, proto)
+        try:
+            sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)
+            return sock
+        except OSError as exc:
+            last_error = exc
+            sock.close()
+        except BaseException:
+            sock.close()
+            raise
+    raise last_error or OSError("No validated address could be connected")
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, dns_cache):
+        super().__init__()
+        self.dns_cache = dns_cache
+
+    def connection(self, host, **kwargs):
+        conn = http.client.HTTPConnection(host, **kwargs)
+        conn._create_connection = lambda address, timeout, source_address=None: _connect_pinned(
+            address, timeout, source_address, self.dns_cache)
+        return conn
+
+    def http_open(self, req):
+        return self.do_open(self.connection, req)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, dns_cache):
+        super().__init__()
+        self.dns_cache = dns_cache
+
+    def connection(self, host, **kwargs):
+        # Preserve the original host for SNI and certificate hostname verification.
+        conn = http.client.HTTPSConnection(host, **kwargs)
+        conn._create_connection = lambda address, timeout, source_address=None: _connect_pinned(
+            address, timeout, source_address, self.dns_cache)
+        return conn
+
+    def https_open(self, req):
+        return self.do_open(self.connection, req, context=self._context)
+
+
+def fetch_subscription(
+    url: str,
+    timeout: int = 15,
+    allow_private: Optional[bool] = None,
+    allowed_private_targets: Optional[Sequence[str]] = None,
+) -> str:
+    """Fetch with request-local DNS pinning, redirect validation, size limits and redaction."""
+    if allow_private is None:
+        allow_private = os.environ.get("OPENWRT_ALLOW_PRIVATE_SUB", "").strip().lower() in ("1", "true", "yes")
+    headers = {"User-Agent": "sing-box/1.14.0 (OpenWrt; Linux x86_64)", "Accept": "*/*"}
+    dns_cache = {}
+    resolver = socket.getaddrinfo
+    try:
+        validate_safe_subscription_url(url, allow_private=allow_private,
+                                       allowed_private_targets=allowed_private_targets,
+                                       _dns_cache=dns_cache, _resolver=resolver)
+        req = urllib.request.Request(url, headers=headers)
+        # An environment proxy could perform its own unvalidated DNS resolution.
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _PinnedHTTPHandler(dns_cache), _PinnedHTTPSHandler(dns_cache),
+            _SafeRedirectHandler(allow_private=allow_private,
+                                 allowed_private_targets=allowed_private_targets,
+                                 dns_cache=dns_cache, resolver=resolver),
+        )
         with opener.open(req, timeout=timeout) as resp:
             raw_bytes = resp.read(MAX_SUB_BYTES + 1)
             if len(raw_bytes) > MAX_SUB_BYTES:
@@ -133,8 +509,16 @@ def fetch_subscription(url: str, timeout: int = 15) -> str:
                     return content.decode('gb18030')
                 except UnicodeDecodeError:
                     return content.decode('latin-1', errors='ignore')
+    except ValueError as e:
+        raise ValueError(redact_sensitive_text(str(e))) from None
+    except urllib.error.URLError as e:
+        reason_str = str(getattr(e, "reason", e))
+        if "[SSRF 拦截]" in reason_str or "仅支持 HTTP/HTTPS" in reason_str:
+            raise ValueError(redact_sensitive_text(reason_str)) from None
+        raise RuntimeError(f"拉取订阅链接失败: {redact_sensitive_text(url)} -> {redact_sensitive_text(str(e))}") from None
     except Exception as e:
-        raise RuntimeError(f"拉取订阅链接失败: {url} -> {e}")
+        raise RuntimeError(f"拉取订阅链接失败: {redact_sensitive_text(url)} -> {redact_sensitive_text(str(e))}") from None
+
 
 
 def _apply_clash_alpn(tls_obj: Dict[str, Any], p: Dict[str, Any]):
@@ -579,8 +963,10 @@ def _split_yaml_flow(s: str, sep: str = ",") -> List[str]:
     return parts
 
 
-def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Any]) -> Any:
-    """解析 YAML 标量、别名引用 (*alias)、内联列表 [...] 或内联字典 {...}（递归支持嵌套与锚点引用）。"""
+def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Any], _depth: int = 0) -> Any:
+    """解析 YAML 标量、别名引用 (*alias)、内联列表 [...] 或内联字典 {...}（递归支持嵌套、锚点引用与深度上限保护）。"""
+    if _depth > MAX_YAML_DEPTH:
+        raise ValueError(f"YAML 嵌套深度超过安全上限 ({MAX_YAML_DEPTH})")
     v = val_str.strip()
     if not v:
         return ""
@@ -590,12 +976,12 @@ def _parse_yaml_scalar_or_flow(val_str: str, anchors: Dict[str, Any]) -> Any:
             import copy as _cp
             return _cp.deepcopy(anchors[ref])
     if v.startswith("{") and v.endswith("}"):
-        return _parse_yaml_flow_map(v[1:-1], anchors)
+        return _parse_yaml_flow_map(v[1:-1], anchors, _depth=_depth + 1)
     if v.startswith("[") and v.endswith("]"):
         inner = v[1:-1].strip()
         if not inner:
             return []
-        return [_parse_yaml_scalar_or_flow(x, anchors) for x in _split_yaml_flow(inner, ",")]
+        return [_parse_yaml_scalar_or_flow(x, anchors, _depth=_depth + 1) for x in _split_yaml_flow(inner, ",")]
     if v.startswith('"') and v.endswith('"') and len(v) >= 2:
         return v[1:-1].replace('\\"', '"').replace('\\\\', '\\')
     if v.startswith("'") and v.endswith("'") and len(v) >= 2:
@@ -634,8 +1020,10 @@ def _merge_yaml_anchors(target: Dict[str, Any], v_s: str, anchors: Dict[str, Any
                     target[ak] = _copy.deepcopy(av)
 
 
-def _parse_yaml_flow_map(inner: str, anchors: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def _parse_yaml_flow_map(inner: str, anchors: Dict[str, Dict[str, Any]], _depth: int = 0) -> Dict[str, Any]:
     """解析花括号内部 k: v 列表，支持带冒号引号键名、嵌套字典/列表与 <<: *anchor 继承（显式字段优先于锚点默认值）。"""
+    if _depth > MAX_YAML_DEPTH:
+        raise ValueError(f"YAML 嵌套深度超过安全上限 ({MAX_YAML_DEPTH})")
     res: Dict[str, Any] = {}
     explicit: Dict[str, Any] = {}
     for part in _split_yaml_flow(inner, ","):
@@ -653,7 +1041,7 @@ def _parse_yaml_flow_map(inner: str, anchors: Dict[str, Dict[str, Any]]) -> Dict
                 if m_fa:
                     item_anchor = m_fa.group(1)
                     v_s = m_fa.group(2).strip()
-            val_parsed = _parse_yaml_scalar_or_flow(v_s, anchors)
+            val_parsed = _parse_yaml_scalar_or_flow(v_s, anchors, _depth=_depth + 1)
             explicit[k_s] = val_parsed
             if item_anchor:
                 import copy as _cp
@@ -723,7 +1111,11 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
     4. 多级缩进块式字典与列表 (ws-opts -> headers -> Host 及 alpn 多行列表)
     """
     text = (text or "").lstrip("\ufeff")
-    clean_lines = [_strip_yaml_comment(raw_l.lstrip("\ufeff")) for raw_l in text.splitlines()]
+    raw_lines = text.splitlines()
+    for _rl in raw_lines:
+        if len(_rl) > MAX_LINE_LENGTH:
+            raise ValueError(f"订阅单行长度超过安全上限 ({MAX_LINE_LENGTH} chars)")
+    clean_lines = [_strip_yaml_comment(raw_l.lstrip("\ufeff")) for raw_l in raw_lines]
     anchors: Dict[str, Dict[str, Any]] = {}
 
     # 1. 预备锚点容器（在下方单遍顺序扫描中统一解析流式与块式锚点，确保跨形态先后引用 100% 互通）
@@ -770,6 +1162,8 @@ def parse_clash_yaml_pure_python(text: str) -> List[Dict[str, Any]]:
                         parent_container[pending_key] = child_dict
                         if pending_anchor:
                             anchors[pending_anchor] = child_dict
+                        if len(stack) >= MAX_YAML_DEPTH:
+                            raise ValueError(f"YAML 缩进嵌套深度超过安全上限 ({MAX_YAML_DEPTH})")
                         stack.append((indent, child_dict, "dict"))
                     pending_key = None
                     pending_anchor = None
@@ -1007,6 +1401,9 @@ def _extract_clash_proxies(text: str) -> List[Dict[str, Any]]:
                             results.append(parsed)
                     except Exception:
                         continue
+        except ValueError as ve:
+            if "超过安全上限" in str(ve):
+                raise
         except Exception:
             pass
     return results
@@ -1039,6 +1436,8 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
     results = []
     lines = text.splitlines()
     for line in lines:
+        if len(line) > MAX_LINE_LENGTH:
+            raise ValueError(f"订阅单行长度超过安全上限 ({MAX_LINE_LENGTH} chars)")
         line = line.lstrip("\ufeff").strip()
         if not line or line.startswith("#") or line.startswith("//"):
             continue
@@ -1173,11 +1572,12 @@ def _dae_transport_query(n: Dict[str, Any]) -> str:
 def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
     """将节点导出为 dae node { ... } 语法块。
 
-    dae 使用单引号包裹字符串，因此 tag 与 URI 中的单引号及特殊保留字符必须先转义。
+    dae 的映射键必须是裸标识符；节点显示名称保留在 URI fragment 中。
     VMess 仅支持 v2rayN 风格 base64(JSON) URI。
     """
     lines = ["node {"]
     used_tags = set()
+    used_keys = set()
     tag_counts = {}
 
     for n in nodes:
@@ -1340,7 +1740,13 @@ def to_dae_nodes(nodes: List[Dict[str, Any]]) -> str:
             used_tags.add(tag)
             # 严格防止 URI 中的单引号破坏 .dae 的 '...' 语法定界符（转为合法 RFC 3986 %27）
             safe_uri = raw_uri.replace("'", "%27")
-            lines.append(f"  '{tag}': '{safe_uri}'")
+            # Quoted keys are rejected by the native dae grammar. Keep the
+            # display tag in the escaped URI; use a safe, unique bare key.
+            key = tag if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", tag) else f"node_{len(lines)}"
+            while key in used_keys:
+                key += "_"
+            used_keys.add(key)
+            lines.append(f"  {key}: '{safe_uri}'")
 
     lines.append("}")
     return "\n".join(lines)
@@ -1372,12 +1778,21 @@ def extract_node_domains(nodes: List[Dict[str, Any]]) -> List[str]:
 def parse_source(source: str, 
                  include: str = None, 
                  exclude: str = None, 
-                 max_nodes: int = 15) -> List[Dict[str, Any]]:
+                 max_nodes: int = 15,
+                 allow_private: Optional[bool] = None,
+                 allowed_private_targets: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
     """统一入口：自动识别 URL、本地文件或纯文本并完成解析过滤"""
     content = ""
     source = source.strip()
-    if source.startswith("http://") or source.startswith("https://"):
-        content = fetch_subscription(source)
+    if "\n" not in source and "\r" not in source and re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", source) and not re.match(r"^(?:vless|vmess|trojan|ss|hysteria2|hy2|tuic|anytls)://", source, re.IGNORECASE):
+        if source.lower().startswith(("http://", "https://")):
+            content = fetch_subscription(
+                source,
+                allow_private=allow_private,
+                allowed_private_targets=allowed_private_targets,
+            )
+        else:
+            raise ValueError(f"仅支持 HTTP/HTTPS 订阅链接: {redact_sensitive_text(source)}")
     elif os.path.isfile(source):
         with open(source, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
@@ -1397,11 +1812,20 @@ if __name__ == "__main__":
     parser.add_argument("--exclude", help="排除包含此正则的节点")
     parser.add_argument("--max", type=int, default=15, help="最多保留节点数 (默认 15，防低配路由器 OOM)")
     parser.add_argument("--format", choices=["json", "dae", "tags", "domains"], default="json", help="输出格式 (默认 json)")
+    parser.add_argument("--allow-private-sub", action="store_true", help="允许拉取内网/本地测试订阅 URL（默认开启 SSRF 防护拦截内网地址）")
+    parser.add_argument("--allow-private-target", action="append", default=None, help="精确允许的私网订阅目标白名单 (格式 host:port，如 192.168.1.10:25500)")
 
     args = parser.parse_args()
 
     try:
-        nodes = parse_source(args.source, include=args.include, exclude=args.exclude, max_nodes=args.max)
+        nodes = parse_source(
+            args.source,
+            include=args.include,
+            exclude=args.exclude,
+            max_nodes=args.max,
+            allow_private=args.allow_private_sub or None,
+            allowed_private_targets=args.allow_private_target,
+        )
         if not nodes:
             print("[!] 未解析到任何有效节点，请检查订阅源或过滤条件", file=sys.stderr)
             sys.exit(1)
@@ -1419,5 +1843,5 @@ if __name__ == "__main__":
 
         print(f"[+] 成功解析并清洗得到 {len(nodes)} 个优质节点", file=sys.stderr)
     except Exception as e:
-        print(f"[-] 解析失败: {e}", file=sys.stderr)
+        print(f"[-] 解析失败: {redact_sensitive_text(str(e))}", file=sys.stderr)
         sys.exit(1)

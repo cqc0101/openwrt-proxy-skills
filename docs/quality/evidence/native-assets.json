@@ -1,0 +1,46 @@
+[
+  {
+    "file": "musl13.tar.gz",
+    "url": "https://github.com/SagerNet/sing-box/releases/download/v1.13.0/sing-box-1.13.0-linux-amd64-musl.tar.gz",
+    "sha256": "992a70605a9623108fa97bb92c77d1b3035892911fe0f0bbc1080d446331ddd0",
+    "published_digest": "sha256:992a70605a9623108fa97bb92c77d1b3035892911fe0f0bbc1080d446331ddd0",
+    "published_digest_matches": true,
+    "dae_dgst_matches": null
+  },
+  {
+    "file": "musl14.tar.gz",
+    "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-amd64-musl.tar.gz",
+    "sha256": "8f7c5f0651238850d96a0e488e5473cd77ec1a0098f63942e943f475a12057ca",
+    "published_digest": "sha256:8f7c5f0651238850d96a0e488e5473cd77ec1a0098f63942e943f475a12057ca",
+    "published_digest_matches": true,
+    "dae_dgst_matches": null
+  },
+  {
+    "file": "dae.tar.xz",
+    "url": "https://github.com/daeuniverse/dae/releases/download/v2.1.1/dae-linux-x86_64.tar.xz",
+    "sha256": "c550af580dc97cc90986260da78c4bf72917f3213c2b5d8b79c45199d9c3dc90",
+    "published_digest": "sha256:c550af580dc97cc90986260da78c4bf72917f3213c2b5d8b79c45199d9c3dc90",
+    "published_digest_matches": true,
+    "dae_dgst_matches": true
+  },
+  {
+    "file": "geoip-ready.dat",
+    "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+    "sha256": "90b78ab861c1cdc3f871f305f9ceedfb8d6d6329e3a40295e6773e057297384c"
+  },
+  {
+    "file": "geosite-ready.dat",
+    "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+    "sha256": "8c3cd1740067622985b0182d63ee1ab78f433fa42884b845c6b652a23c4a6318"
+  },
+  {
+    "file": "ready-alpine.iso",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/alpine-virt-3.23.8-x86_64.iso",
+    "sha256": "5e0879304cfbc433bcafd007f5ef88f6c717020bf739a7636b5d5598fd1b4671"
+  },
+  {
+    "file": "assembled-qemu.exe",
+    "url": "https://qemu.weilnetz.de/w64/2026/qemu-w64-setup-20260811.exe",
+    "sha256": "f98a8aeb5f7faea9765b6dee28316c266cd179d80354a2fed8e50176f9a2e59f"
+  }
+]

@@ -107,5 +107,22 @@ class TestDaeDocsFlattened(unittest.TestCase):
         self.assertIn("SSH Stream Pipe", dae_skill)
 
 
+
+    def test_compatibility_matrix_json_schema_and_consistency(self):
+        """验证 docs/compatibility-matrix.json 存在且包含标准风险等级 (R0-R4) 与受控兼容分级 (tested/simulated/compatible/unsupported)。"""
+        import json
+        matrix_path = os.path.join(REPO, "docs", "compatibility-matrix.json")
+        self.assertTrue(os.path.isfile(matrix_path), "缺少 docs/compatibility-matrix.json 权威规范文件")
+        with open(matrix_path, "r", encoding="utf-8") as fh:
+            spec = json.load(fh)
+        self.assertEqual(spec.get("schema_version"), "1.0")
+        for r_lvl in ("R0", "R1", "R2", "R3", "R4"):
+            self.assertIn(r_lvl, spec.get("risk_levels", {}))
+        valid_states = {"tested", "simulated", "compatible", "unknown", "unsupported"}
+        for row in spec.get("supported_matrix", []):
+            self.assertIn(row.get("singbox"), valid_states)
+            self.assertIn(row.get("dae"), valid_states)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -268,6 +268,8 @@ def check_dae_syntax(filepath):
             if ch == "'" and not in_dq:
                 in_sq = not in_sq
             elif ch == '"' and not in_sq:
+                if not in_dq and not re.search(r"(?<![\w])ext:\s*$", line[:idx_c]):
+                    errors.append(f"第 {idx} 行疑似违反单引号规范: {line}。建议统一使用单引号（ext:双引号引用除外）。")
                 in_dq = not in_dq
             elif not in_sq and not in_dq:
                 if ch == "{":
@@ -282,15 +284,6 @@ def check_dae_syntax(filepath):
             errors.append(f"第 {idx} 行存在未配对闭合的单引号: {line}。请检查密码或名称中是否含有未转义的 '。")
         if in_dq:
             errors.append(f"第 {idx} 行存在未配对闭合的双引号: {line}。")
-        line_no_sq = re.sub(r"'((?:\\.|[^'])*)'", "''", line)
-        line_no_ext = re.sub(r'ext:\s*"[^"]*"', "", line_no_sq)
-        if '"' in line_no_ext:
-            matches = re.findall(r'([\w\'\-]+:\s*"[^"]*"|->\s*"[^"]*"|\w+\([^)]*"[^"]*"[^)]*\))', line_no_ext)
-            if matches:
-                for m in matches:
-                    errors.append(f"第 {idx} 行疑似违反单引号规范: {m}。建议统一使用单引号 '...'（ext:\"file.dat:tag\" 除外）。")
-            else:
-                errors.append(f"第 {idx} 行疑似违反单引号规范: {line}。建议统一使用单引号 '...'（ext:\"file.dat:tag\" 除外）。")
     if brace_depth != 0:
         errors.append(f"[语法块未闭合] 配置文件中存在 {brace_depth} 个未闭合的左花括号 '{{'，请检查 global/node/dns/routing 块是否缺少 '}}'！")
 

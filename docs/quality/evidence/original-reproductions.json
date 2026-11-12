@@ -1,0 +1,31 @@
+{
+  "C-02": {
+    "successful_acquisitions_without_release": [
+      "B",
+      "A"
+    ],
+    "final_owner": "A"
+  },
+  "H-04": {
+    "max_uses": 1,
+    "accepted": 8,
+    "used_count": 8
+  },
+  "NEW-SSH": {
+    "intended_argv": [
+      "printf",
+      "%s",
+      "hello world",
+      "x;echo injected"
+    ],
+    "remote_shell_tokens": [
+      "printf",
+      "%s",
+      "hello",
+      "world",
+      "x;echo",
+      "injected"
+    ],
+    "remote_command": "printf %s hello world x;echo injected"
+  }
+}

@@ -4,6 +4,8 @@
 
 更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
+本包包含 2026-11-12 的本地审计修订，原报告逐项核验、修复和实际验证边界见 [审计复核报告](docs/audit-2026-11-12.md)。该修订没有重新完成真机验证。
+
 ## 包含的技能
 
 | 技能 | 引擎 | 说明 |
@@ -32,6 +34,8 @@
 | [dae-rules-and-syntax.md](skills/dae-openwrt/references/dae-rules-and-syntax.md) | dae 5 条语义与拓扑铁律、路由语法、网卡绑定约束与 DNS 重查白名单 |
 | [troubleshooting.md](skills/dae-openwrt/references/troubleshooting.md) | dae 常见故障诊断排查手册与内核 eBPF 日志特征速查 |
 | [warnings-and-limitations.md](docs/warnings-and-limitations.md) | 生产环境已知边界、架构限制、版本演进、避坑与安全免责警告 |
+| [compatibility-matrix.json](docs/compatibility-matrix.json) | 机器可读的发行版/防火墙/包管理器兼容矩阵与 R0~R4 动作风险分级规范 |
+| [BASELINE.md](docs/quality/BASELINE.md) | v1.0.0 质量基线、问题台账 ([KNOWN_ISSUES.md](docs/quality/KNOWN_ISSUES.md))、分层测试 ([TEST_BASELINE.md](docs/quality/TEST_BASELINE.md)) 与发布证据 ([RELEASE_EVIDENCE.md](docs/quality/RELEASE_EVIDENCE.md)) |
 
 ## 目录结构
 
@@ -50,6 +54,7 @@
 │       ├── assets/templates/ # openwrt.dae 基准模板
 │       ├── scripts/          # 探针 / 诊断 / 网络闭环接管脚本
 │       └── references/       # 5条铁律与语法、故障排查手册（一级深度）
+├── core/                     # 核心安全策略、Policy Engine、动作注册表与事务状态机（v1.0.0）
 ├── docker/                   # 本地 OpenWrt 自动化测试基座（Docker 容器 & Mock 仿真）
 ├── docs/                     # 真机验证报告
 ├── tests/                    # 回归测试（unittest，无第三方依赖）
@@ -67,22 +72,12 @@
 技能按 `<agentsHome>/skills/<技能名>/SKILL.md` 发现，因此指向仓库内的 `skills/` 子目录：
 
 ```powershell
-# 1. 设置仓库本地存放路径（可按需修改盘符与路径）
-$repoDir = "C:\openwrt-proxy-skills"
-
-# 2. 从 GitHub 克隆仓库
-git clone https://github.com/cqc0101/openwrt-proxy-skills.git $repoDir
-
-# 3. 确保上级目录存在；若旧链接已存在则安全移除（不影响源文件）
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents" | Out-Null
-if (Test-Path "$env:USERPROFILE\.agents\skills") {
-    (Get-Item "$env:USERPROFILE\.agents\skills").Delete()
-}
-
-# 4. 创建目录联接 (Junction)，修改仓库内容后即时生效
+# Windows（junction 方式，修改仓库内容后即时生效）
+# 注意：把 <仓库路径> 换成你 clone 本仓库的实际位置，例如 D:\openwrt-proxy-skills
+cmd /c rmdir "$env:USERPROFILE\.agents\skills"           # 仅移除链接本身，不影响目标目录
 New-Item -ItemType Junction `
   -Path   "$env:USERPROFILE\.agents\skills" `
-  -Target "$repoDir\skills"
+  -Target "<仓库路径>\skills"
 ```
 
 `~/.agents` 同时是 DSH 的 agents home。如果其它工具（例如 Antigravity）也在使用该目录，请先确认。
@@ -119,7 +114,7 @@ cp -r skills/singbox-openwrt skills/dae-openwrt ~/.claude/skills/
 2. **sing-box 版本演进前瞻警告**：基准模板深度稳定覆盖 sing-box 1.13 与 1.14 架构；针对后续可能推出的重大版本（如 1.15+），**现有模板或将重新适配**，切勿盲目跨大版本替换二进制，升级前必须先在沙盒环境验证配置。
 3. **Clash YAML 锚点降级解析边界**：纯 Python 正则降级解析器支持常规单行标量与缩进列表锚点，但面对部分机场深度复合的多重锚点合并（如 `<<: [*a, *b]`）等极端语法可能受限，软路由建议预装 `python3-pyyaml` 获取 100% 完整解析能力。
 4. **daed (Web 面板) 与 原生 dae (CLI) 二选一铁律**：严禁同时使用 Web 面板管理和脚本外部覆写 `/etc/dae/config.dae`，面板 SQLite 托管与外部文本配置会发生竞争覆写，请二选一。
-5. **弱硬件路由性能与闪存寿命保护**：百级订阅默认截断至前 12 个节点以防弱内存路由 OOM；低配设备加载 eBPF 建议配置 Swap 交换空间；全链路在 `/tmp` 内存虚拟盘缓冲以保护 SPI 闪存寿命。
+5. **弱硬件路由性能与闪存寿命保护**：百级订阅默认截断至前 15 个节点以防弱内存路由 OOM；低配设备加载 eBPF 建议配置 Swap 交换空间；全链路在 `/tmp` 内存虚拟盘缓冲以保护 SPI 闪存寿命。
 6. **FakeIP 引导与 DNS 循环防环**：严禁将 `domain_resolver` 指向自身为 `fakeip` 的上游服务器；生产部署前务必使用 `check_config.py` 与 `check_dae_syntax.py` 执行静态门禁校验。
 7. **旁路由与 IPv6 假死防护**：旁路由网关模式部署必须携带 `--bypass` 自动注入物理网卡 MASQUERADE 动态伪装；建议开启 Dnsmasq `filter_aaaa=1` 避免国内双栈访问转圈假死。
 

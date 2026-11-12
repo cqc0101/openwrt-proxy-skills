@@ -37,7 +37,7 @@ if SUB_PARSER_DIR not in sys.path:
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from sub_parser import parse_source, to_dae_nodes
+from sub_parser import parse_source, to_dae_nodes, redact_sensitive_text
 from check_dae_syntax import check_dae_syntax
 
 # 仅在 dae v1.1+ / v2.x 中引入的新字段；老版本 dae (v0.3 ~ v1.0.0) 不识别这些字段会导致 validate 报错
@@ -59,8 +59,8 @@ def dae_version_ge(ver_str: str, min_major: int, min_minor: int) -> bool:
     return (maj > min_major) or (maj == min_major and mnr >= min_minor)
 
 
-def detect_remote_dae_version(host, user="root", port=22, timeout=5, key_path=None):
-    """通过 SSH 远程执行 dae --version 探测软路由上的 dae 版本，返回 ('modern'|'legacy', raw_version)。"""
+def detect_remote_dae_version(host, user="root", port=22, timeout=5, key_path=None, strict_host_key=None, known_hosts=None):
+    """通过 SSH 远程执行 dae --version 探测软路由上的 dae 版本（含参数注入防护与 SSH 主机密钥安全门控）。"""
     host_str = str(host or "").strip()
     user_str = str(user or "root").strip()
     if not host_str or host_str.startswith("-") or re.search(r"\s", host_str):
@@ -69,19 +69,48 @@ def detect_remote_dae_version(host, user="root", port=22, timeout=5, key_path=No
         raise ValueError(f"非法的 SSH 用户名: {user!r}")
     if isinstance(port, bool) or not (1 <= int(port) <= 65535):
         raise ValueError(f"SSH 端口超出合法范围 (1-65535): {port!r}")
+    if isinstance(timeout, bool) or not (1 <= int(timeout) <= 60):
+        raise ValueError(f"SSH 超时超出合法范围 (1-60s): {timeout!r}")
+    if key_path is not None:
+        kp = str(key_path).strip()
+        if not kp or kp.startswith("-") or re.search(r"[\r\n]", kp) or not os.path.isfile(kp):
+            raise ValueError(f"非法的 SSH 私钥路径: {key_path!r}")
+        key_path = kp
 
+    if strict_host_key is None:
+        strict_env = (
+            os.environ.get("OPENWRT_SSH_STRICT_HOST_KEY", "").strip()
+            or os.environ.get("OPENWRT_STRICT_SSH", "").strip()
+        )
+        strict_host_key = strict_env.lower() in ("1", "true", "yes")
+    if known_hosts is None:
+        known_hosts = (
+            os.environ.get("OPENWRT_SSH_KNOWN_HOSTS", "").strip()
+            or os.environ.get("OPENWRT_KNOWN_HOSTS", "").strip()
+            or None
+        )
+
+    hk_mode = "yes" if strict_host_key else "accept-new"
     ssh_cmd = [
         "ssh",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "BatchMode=yes",
+        "-o", f"StrictHostKeyChecking={hk_mode}",
         "-o", f"ConnectTimeout={int(timeout)}",
         "-p", str(int(port)),
     ]
+    if known_hosts:
+        kh_str = str(known_hosts).strip()
+        if not kh_str or kh_str.startswith("-") or re.search(r"[\r\n\s]", kh_str):
+            raise ValueError(f"非法的 known_hosts 路径: {known_hosts!r}")
+        if os.name != "nt" and os.path.isfile(kh_str) and (os.stat(kh_str).st_mode & 0o022):
+            raise PermissionError(f"known_hosts 权限不安全，拒绝使用可被其他用户篡改的文件: {kh_str}")
+        ssh_cmd.extend(["-o", f"UserKnownHostsFile={kh_str}"])
     if key_path:
         ssh_cmd.extend(["-i", str(key_path)])
     ssh_cmd.extend([
         "--",
         f"{user_str}@{host_str}",
-        "dae --version 2>&1 | head -n 1"
+        "dae --version"
     ])
     try:
         res = subprocess.run(
@@ -93,6 +122,11 @@ def detect_remote_dae_version(host, user="root", port=22, timeout=5, key_path=No
             errors="replace",
             timeout=timeout + 2,
         )
+        combined_err = f"{res.stderr or ''}\n{res.stdout or ''}"
+        if "REMOTE HOST IDENTIFICATION HAS CHANGED" in combined_err or "Host key verification failed" in combined_err:
+            raise RuntimeError(
+                f"[SSH_HOST_KEY_MISMATCH] 远程软路由 ({host_str}) SSH 主机密钥校验失败或发生变化，疑似中间人风险，已安全阻断！"
+            )
         out = (res.stdout or "").strip()
         m = (
             re.search(r"\bdae\s+version\s+(v?\d+\.\d+[^\s]*)", out, re.IGNORECASE)
@@ -110,8 +144,10 @@ def detect_remote_dae_version(host, user="root", port=22, timeout=5, key_path=No
         err_msg = (res.stderr or out or "无输出").strip().splitlines()[0] if (res.stderr or out) else "无响应"
         print(f"[!] 远程探测未返回标准版本号 ({err_msg})，默认采用 modern (v2.x) 规范生成", file=sys.stderr)
         return "modern", out if out else "Fallback-modern"
+    except RuntimeError:
+        raise
     except Exception as e:
-        print(f"[!] 无法探测远程 dae 版本 ({e})，默认采用 modern (v2.x) 规范生成", file=sys.stderr)
+        print(f"[!] 无法探测远程 dae 版本 ({redact_sensitive_text(str(e))})，默认采用 modern (v2.x) 规范生成", file=sys.stderr)
         return "modern", "Fallback-modern"
 
 
@@ -190,6 +226,8 @@ def main():
     parser = argparse.ArgumentParser(description="dae 订阅转换与完整配置生成工具 (兼容新旧全版本 dae)")
     parser.add_argument("source", help="订阅来源 (URL/文件/Base64/单节点URI)")
     parser.add_argument("--max", type=int, default=15, help="保留最大节点数 (默认 15)")
+    parser.add_argument("--allow-private-sub", action="store_true", help="允许从内网/本地 IP 拉取自建订阅转换服务 (如 Subconverter)")
+    parser.add_argument("--allow-private-target", action="append", default=None, help="精确允许的私网订阅目标白名单 (如 192.168.1.10:25500 或 sub.home.arpa:443)")
     parser.add_argument("--include", help="包含节点匹配正则")
     parser.add_argument("--exclude", help="排除节点匹配正则")
     parser.add_argument("--full", action="store_true", help="注入 openwrt.dae 模板生成完整配置文件并执行内置 5 条铁律静态审计")
@@ -202,6 +240,8 @@ def main():
     parser.add_argument("--user", default="root", help="SSH 用户名 (默认: root)")
     parser.add_argument("--port", type=int, default=22, help="SSH 端口 (默认: 22)")
     parser.add_argument("--key", help="SSH 私钥文件路径 (可选，用于远程探测 dae 版本)")
+    parser.add_argument("--strict-host-key", action="store_true", help="强制要求目标路由器已在 known_hosts 中注册 (StrictHostKeyChecking=yes)")
+    parser.add_argument("--known-hosts", default=None, help="自定义 SSH known_hosts 文件路径")
     parser.add_argument(
         "--dae-version",
         choices=["modern", "legacy"],
@@ -213,9 +253,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        nodes = parse_source(args.source, include=args.include, exclude=args.exclude, max_nodes=args.max)
+        nodes = parse_source(args.source, include=args.include, exclude=args.exclude, max_nodes=args.max, allow_private=args.allow_private_sub or None, allowed_private_targets=args.allow_private_target)
     except Exception as e:
-        print(f"[-] 解析订阅失败: {e}", file=sys.stderr)
+        print(f"[-] 解析订阅失败: {redact_sensitive_text(str(e))}", file=sys.stderr)
         sys.exit(1)
     if not nodes:
         print("[-] 未能解析出有效节点", file=sys.stderr)
@@ -226,7 +266,7 @@ def main():
         try:
             if args.router and not args.dae_version:
                 print(f"[*] 正在连接软路由 {args.user}@{args.router}:{args.port} 探测 dae 版本...", file=sys.stderr)
-                target_dae_ver, raw_ver = detect_remote_dae_version(args.router, args.user, args.port, key_path=args.key)
+                target_dae_ver, raw_ver = detect_remote_dae_version(args.router, args.user, args.port, key_path=args.key, strict_host_key=args.strict_host_key or None, known_hosts=args.known_hosts)
                 print(f"[+] 探测到远端 dae 版本: {raw_ver} -> 选用配置模式: {target_dae_ver}", file=sys.stderr)
             out_text = build_full_dae_config(
                 nodes,
@@ -237,7 +277,7 @@ def main():
                 ram_mb=args.ram_mb,
                 dae_version=target_dae_ver,
             )
-        except ValueError as e:
+        except (ValueError, RuntimeError) as e:
             print(f"[FATAL] 参数校验失败: {e}", file=sys.stderr)
             sys.exit(1)
         with tempfile.NamedTemporaryFile("w", suffix=".dae", delete=False, encoding="utf-8") as tf:

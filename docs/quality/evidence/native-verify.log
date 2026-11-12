@@ -1,0 +1,28 @@
+version-1.13 0
+template-1.13-realip 0
+sing-1.13-realip-main 0
+sing-1.13-realip-bypass 0
+template-1.13-fakeip 0
+sing-1.13-fakeip-main 0
+sing-1.13-fakeip-bypass 0
+reject-invalid-1.13 1
+[31mFATAL[0m[0000] decode config at /root/native-cases/bad.json: outbounds[0]: unknown outbound type: audit-invalid
+
+version-1.14 0
+template-1.14-realip 0
+sing-1.14-realip-main 0
+sing-1.14-realip-bypass 0
+template-1.14-fakeip 0
+sing-1.14-fakeip-main 0
+sing-1.14-fakeip-bypass 0
+reject-invalid-1.14 1
+[31mFATAL[0m[0000] decode config at /root/native-cases/bad.json: outbounds[0]: unknown outbound type: audit-invalid
+
+dae-version 0
+dae-template 0
+dae-legacy-main 0
+dae-legacy-bypass 0
+dae-modern-main 0
+dae-modern-bypass 0
+dae-invalid 1
+

@@ -27,6 +27,19 @@ NC='\033[0m'
 
 say() { printf '%b\n' "$1"; }
 
+PRIMARY_ACTION=""
+DRY_RUN=0
+KEEP_IPV6=0
+NO_SYSCTL_TUNING=0
+for _opt in "$@"; do
+    case "$_opt" in
+        --bypass|--revert|--watchdog|--confirm) PRIMARY_ACTION="$_opt" ;;
+        --dry-run) DRY_RUN=1 ;;
+        --keep-ipv6) KEEP_IPV6=1 ;;
+        --no-sysctl-tuning) NO_SYSCTL_TUNING=1 ;;
+    esac
+done
+
 kill_active_watchdog() {
     if [ -f /tmp/proxy_watchdog.pid ]; then
         _wd_pid=$(cat /tmp/proxy_watchdog.pid 2>/dev/null || true)
@@ -52,11 +65,13 @@ clean_dns_redirects() {
 # 核心路由器端本地加固逻辑
 run_router_hardening() {
     ACTION_FLAG="${1:-}"
+    PREVIEW_ACTION="${ACTION_FLAG:-normal}"
+    [ "$DRY_RUN" -eq 1 ] && ACTION_FLAG="--dry-run"
 
     # 检查因突发断电/内核崩溃遗留的闪存启动哨兵，执行启动即时自愈 (防 /tmp 挥发性失效)
     # 关键判定：仅当闪存 .boot_guard 存在且内存盘 /tmp/proxy_watchdog.token 已挥发丢失时，
     # 才说明系统在看门狗期间发生过硬重启；正常部署中 (token 尚在) 绝不误拦截后续网络配置与 --confirm！
-    if [ "$ACTION_FLAG" != "--confirm" ] && [ "$ACTION_FLAG" != "--revert" ] && [ "$ACTION_FLAG" != "--watchdog" ]; then
+    if [ "$DRY_RUN" -eq 0 ] && [ "$ACTION_FLAG" != "--confirm" ] && [ "$ACTION_FLAG" != "--revert" ] && [ "$ACTION_FLAG" != "--watchdog" ]; then
         if [ -f /etc/sing-box/.boot_guard ] && [ ! -f /tmp/proxy_watchdog.token ]; then
             say "${RED}[BOOT GUARD] 检测到前序部署未确认且系统发生过硬重启 (/tmp 已挥发)，正在从闪存快照强力恢复配置与网络...${NC}"
             [ -f /etc/sing-box/.config.json.rollback ] && cp -f /etc/sing-box/.config.json.rollback /etc/sing-box/config.json 2>/dev/null || true
@@ -167,6 +182,10 @@ BOOTGUARD_EOF
             else
                 uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
             fi
+            [ -n "${ORIG_IP_FORWARD:-}" ] && sysctl -w "net.ipv4.ip_forward=${ORIG_IP_FORWARD}" >/dev/null 2>&1 || true
+            [ -n "${ORIG_CONNTRACK_MAX:-}" ] && sysctl -w "net.netfilter.nf_conntrack_max=${ORIG_CONNTRACK_MAX}" >/dev/null 2>&1 || true
+            [ -n "${ORIG_TCP_CC:-}" ] && sysctl -w "net.ipv4.tcp_congestion_control=${ORIG_TCP_CC}" >/dev/null 2>&1 || true
+            [ -n "${ORIG_DEFAULT_QDISC:-}" ] && sysctl -w "net.core.default_qdisc=${ORIG_DEFAULT_QDISC}" >/dev/null 2>&1 || true
             rm -f /etc/sing-box/.network_baseline.bak
         else
             if [ -n "$LAN_INDEX" ]; then
@@ -197,13 +216,22 @@ BOOTGUARD_EOF
             iptables -D input_rule -i tun0 -j ACCEPT 2>/dev/null || true
         fi
         /etc/init.d/sysctl restart 2>/dev/null || sysctl -p 2>/dev/null || true
+        [ -n "${ORIG_IP_FORWARD:-}" ] && sysctl -w "net.ipv4.ip_forward=${ORIG_IP_FORWARD}" >/dev/null 2>&1 || true
+        [ -n "${ORIG_CONNTRACK_MAX:-}" ] && sysctl -w "net.netfilter.nf_conntrack_max=${ORIG_CONNTRACK_MAX}" >/dev/null 2>&1 || true
+        [ -n "${ORIG_TCP_CC:-}" ] && sysctl -w "net.ipv4.tcp_congestion_control=${ORIG_TCP_CC}" >/dev/null 2>&1 || true
+        [ -n "${ORIG_DEFAULT_QDISC:-}" ] && sysctl -w "net.core.default_qdisc=${ORIG_DEFAULT_QDISC}" >/dev/null 2>&1 || true
         say "${GREEN}[OK] 网络配置已无损还原至初始状态！${NC}"
         return 0
     fi
 
-    if [ -z "$LAN_INDEX" ]; then
+    if [ -z "$LAN_INDEX" ] && ( [ "$DRY_RUN" -eq 0 ] || [ -f /etc/config/firewall ] ); then
         say "${RED}[ERROR] 未在 /etc/config/firewall 中找到 lan zone！${NC}"
         return 1
+    fi
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+        say "${YELLOW}[DRY-RUN] 演练模式通过：已定位 LAN zone (@zone[${LAN_INDEX}])，预览动作 [action=${PREVIEW_ACTION:-normal}, keep_ipv6=${KEEP_IPV6}, no_sysctl_tuning=${NO_SYSCTL_TUNING}]，未对系统执行实际修改。${NC}"
+        return 0
     fi
 
     # 首次执行前保存用户原始防火墙与 Dnsmasq 基线，确保 --revert 不误删用户原有配置
@@ -213,7 +241,11 @@ BOOTGUARD_EOF
         _orig_masq=$(uci get "firewall.@zone[${LAN_INDEX}].masq" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
         _orig_mtu=$(uci get "firewall.@zone[${LAN_INDEX}].mtu_fix" 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
         _orig_aaaa=$(uci get dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null | tr -cd '0-9a-zA-Z_.-' || echo "")
-        printf "ORIG_LAN_FORWARD='%s'\nORIG_LAN_MASQ='%s'\nORIG_LAN_MTU_FIX='%s'\nORIG_FILTER_AAAA='%s'\n" "$_orig_fwd" "$_orig_masq" "$_orig_mtu" "$_orig_aaaa" > /etc/sing-box/.network_baseline.bak
+        _orig_ipfwd=$(sysctl -n net.ipv4.ip_forward 2>/dev/null | tr -cd '0-9' || echo "")
+        _orig_ctmax=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null | tr -cd '0-9' || echo "")
+        _orig_tcpcc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null | tr -cd '0-9a-zA-Z_-' || echo "")
+        _orig_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null | tr -cd '0-9a-zA-Z_-' || echo "")
+        printf "ORIG_LAN_FORWARD='%s'\nORIG_LAN_MASQ='%s'\nORIG_LAN_MTU_FIX='%s'\nORIG_FILTER_AAAA='%s'\nORIG_IP_FORWARD='%s'\nORIG_CONNTRACK_MAX='%s'\nORIG_TCP_CC='%s'\nORIG_DEFAULT_QDISC='%s'\n" "$_orig_fwd" "$_orig_masq" "$_orig_mtu" "$_orig_aaaa" "$_orig_ipfwd" "$_orig_ctmax" "$_orig_tcpcc" "$_orig_qdisc" > /etc/sing-box/.network_baseline.bak
     fi
 
     # 按路由器物理内存动态计算安全 nf_conntrack_max，防止小内存设备内核 Slab OOM
@@ -230,29 +262,31 @@ BOOTGUARD_EOF
     say "${BLUE}[1/5] 校验与激活系统 IPv4 路由转发与自适应连接池参数 (nf_conntrack_max=${CONNTRACK_MAX})...${NC}"
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
     sysctl -w net.ipv4.conf.all.forwarding=1 >/dev/null 2>&1
-    sysctl -w "net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}" >/dev/null 2>&1 || true
+    [ "$NO_SYSCTL_TUNING" -eq 0 ] && sysctl -w "net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}" >/dev/null 2>&1 || true
 
     # 守护进程 OOM 豁免保护：防止内存紧张时内核 OOM Killer 误杀 dropbear/sshd 导致失联
     for _ssh_pid in $(pidof dropbear sshd 2>/dev/null); do
         echo -1000 > "/proc/${_ssh_pid}/oom_score_adj" 2>/dev/null || true
     done
-    sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null 2>&1 || true
 
     mkdir -p /etc/sysctl.d
     cat << SYSCTL_EOF > /etc/sysctl.d/99-singbox.conf
 net.ipv4.ip_forward=1
 net.ipv4.conf.all.forwarding=1
 net.ipv4.conf.all.route_localnet=1
-net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}
-net.ipv4.tcp_tw_reuse=1
 SYSCTL_EOF
 
-    # 尝试激活 BBR
-    if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw "bbr"; then
-        sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
-        sysctl -w net.core.default_qdisc=fq_codel >/dev/null 2>&1 || true
-        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.d/99-singbox.conf
-        echo "net.core.default_qdisc=fq_codel" >> /etc/sysctl.d/99-singbox.conf
+    if [ "$NO_SYSCTL_TUNING" -eq 0 ]; then
+        sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null 2>&1 || true
+        echo "net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}" >> /etc/sysctl.d/99-singbox.conf
+        echo "net.ipv4.tcp_tw_reuse=1" >> /etc/sysctl.d/99-singbox.conf
+        # 尝试激活 BBR
+        if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw "bbr"; then
+            sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
+            sysctl -w net.core.default_qdisc=fq_codel >/dev/null 2>&1 || true
+            echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.d/99-singbox.conf
+            echo "net.core.default_qdisc=fq_codel" >> /etc/sysctl.d/99-singbox.conf
+        fi
     fi
 
     say "${BLUE}[2/5] 配置 LAN 区域 (@zone[${LAN_INDEX}]) tun0 放行与转发策略 (forward=ACCEPT)...${NC}"
@@ -293,7 +327,17 @@ SYSCTL_EOF
 
     say "${BLUE}[5/5] 配置 Dnsmasq AAAA 过滤与二级路由私网上游防旁路治理...${NC}"
     if uci get dhcp.@dnsmasq[0] >/dev/null 2>&1; then
-        uci set dhcp.@dnsmasq[0].filter_aaaa='1' 2>/dev/null || true
+        if [ "$KEEP_IPV6" -eq 0 ]; then
+            uci set dhcp.@dnsmasq[0].filter_aaaa='1' 2>/dev/null || true
+        else
+            [ -f /etc/sing-box/.network_baseline.bak ] && . /etc/sing-box/.network_baseline.bak
+            _restore_aaaa="${ORIG_FILTER_AAAA:-${_orig_aaaa:-}}"
+            if [ -n "$_restore_aaaa" ]; then
+                uci set "dhcp.@dnsmasq[0].filter_aaaa=${_restore_aaaa}" 2>/dev/null || true
+            else
+                uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
+            fi
+        fi
         # 二级路由 DHCP 拓扑治理：当 WAN 上游 DNS 为光猫私网 IP 且 Dnsmasq 未显式指定 server 时，
         # Dnsmasq 发往光猫的请求会走物理 WAN 直连链路绕过 tun0。将其切换为公网 223.5.5.5 使其进入 tun0 hijack-dns。
         _RESOLV_FILE="/tmp/resolv.conf.d/resolv.conf.auto"
@@ -320,9 +364,9 @@ SYSCTL_EOF
 
 # 模式判断：本地执行还是远程 SSH 调度
 FIRST_ARG="${1:-}"
-if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--bypass" ] || [ "$FIRST_ARG" = "--revert" ] || [ "$FIRST_ARG" = "--watchdog" ] || [ "$FIRST_ARG" = "--confirm" ]; then
+if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--bypass" ] || [ "$FIRST_ARG" = "--revert" ] || [ "$FIRST_ARG" = "--watchdog" ] || [ "$FIRST_ARG" = "--confirm" ] || [ "$FIRST_ARG" = "--dry-run" ] || [ "$FIRST_ARG" = "--keep-ipv6" ] || [ "$FIRST_ARG" = "--no-sysctl-tuning" ]; then
     # 本地直接在 OpenWrt 路由器上运行
-    run_router_hardening "$FIRST_ARG"
+    run_router_hardening "$PRIMARY_ACTION"
 else
     # 宿主机远程调用 SSH 管道
     ROUTER_IP="$FIRST_ARG"
@@ -338,7 +382,10 @@ else
     while [ $# -gt 0 ]; do
         case "$1" in
             --bypass|--watchdog|--confirm|--revert)
-                EXTRA_FLAG="$1"
+                EXTRA_FLAG="${EXTRA_FLAG:+$EXTRA_FLAG }$1"
+                ;;
+            --dry-run|--keep-ipv6|--no-sysctl-tuning)
+                EXTRA_FLAG="${EXTRA_FLAG:+$EXTRA_FLAG }$1"
                 ;;
             -u|--user)
                 [ $# -ge 2 ] || { say "${RED}[ERROR] 参数 $1 缺少用户名取值${NC}"; exit 1; }
@@ -400,9 +447,23 @@ else
 
     say "${BLUE}[INFO]${NC} 正在连接路由器 ${SSH_USER}@${ROUTER_IP}:${SSH_PORT} 执行最后一公里网络闭环加固..."
     if [ -n "$SSH_KEY" ]; then
+        case "$SSH_KEY" in
+            -*|*[[:space:]]*)
+                say "${RED}[ERROR] 非法的 SSH 密钥路径: $SSH_KEY${NC}"
+                exit 1
+                ;;
+        esac
         [ -f "$SSH_KEY" ] || { say "${RED}指定的 SSH 密钥文件不存在: $SSH_KEY${NC}"; exit 1; }
-        ssh -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
+        if [ "${OPENWRT_STRICT_SSH:-${OPENWRT_SSH_STRICT_HOST_KEY:-0}}" = "1" ]; then
+            ssh -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=yes -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
+        else
+            ssh -i "$SSH_KEY" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
+        fi
     else
-        ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
+        if [ "${OPENWRT_STRICT_SSH:-${OPENWRT_SSH_STRICT_HOST_KEY:-0}}" = "1" ]; then
+            ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=yes -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
+        else
+            ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR -- "${SSH_USER}@${ROUTER_IP}" "sh -s -- ${EXTRA_FLAG}" < "$0"
+        fi
     fi
 fi

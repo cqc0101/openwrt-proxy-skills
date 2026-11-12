@@ -28,8 +28,9 @@ Write-Host "============================================================" -Foreg
 
 # 优先选择包含 paramiko 的虚拟环境 Python 解释器
 $PyCmd = "python"
-if (Test-Path "C:\Users\Administrator\venv\Scripts\python.exe") {
-    $PyCmd = "C:\Users\Administrator\venv\Scripts\python.exe"
+$VenvPython = Join-Path $env:USERPROFILE "venv\Scripts\python.exe"
+if (Test-Path -LiteralPath $VenvPython) {
+    $PyCmd = $VenvPython
 } elseif (Get-Command "python3" -ErrorAction SilentlyContinue) {
     $PyCmd = "python3"
 }

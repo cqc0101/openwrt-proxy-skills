@@ -1,7 +1,7 @@
 # OpenWrt 本地测试环境 (Docker & Mock)
 
 本目录为 `skills/singbox-openwrt` 与 `skills/dae-openwrt` 技能提供免真机的本地自动化测试基座。
-支持在完全不触碰、不影响生产软路由硬件的前提下，验证探针探测、配置生成、UCI 防火墙注入、服务拉起与 7 步全链路健康诊断。
+本地容器和进程内 Mock 可用于验证生成和测试调用流程。Mock 只模拟有限命令及诊断响应，不能执行任意 Shell 脚本，也不能验证真实 UCI、防火墙、eBPF、网络转发或设备健康；这些阶段需要容器或真机。
 
 ## 架构概览
 
@@ -57,13 +57,7 @@ ssh -p 2222 root@127.0.0.1
 
 ## 测试覆盖流水线
 
-每次运行将依次执行以下 5 大阶段：
-
-1. **探针采集 (Probe)**：执行 `probe.sh`，采集架构 (`x86_64`)、OpenWrt 版本 (`23.05.5`)、防火墙 (`fw4`)、WAN/LAN 网卡绑定；
-2. **配置生成 (Auto Config)**：调用 `auto_config.py`，根据探针事实动态选择 `openwrt-1.14-tun-fakeip.json` 模板并注入测试节点；
-3. **防火墙放行 (Firewall)**：调用 `setup_openwrt_network.sh`，将 `tun0` 放行至 LAN 区域 (`@zone[0]`)；
-4. **服务部署 (Deploy)**：安全下发配置至 `/etc/sing-box/config.json`，校验语法并重启 `sing-box` procd 服务；
-5. **全链路诊断 (Diagnose)**：运行 7 步健康诊断，验证进程 PID、TUN 接口、防火墙放行、Clash API 端口 (9090)、DNS 路由与内存配额。
+每次运行依次检查配置生成、静态配置审计、部署调用、诊断 JSON 和网络接管五个阶段。上传或原生校验失败后不再移动配置。Mock 不执行网络接管脚本，明确报告 `SKIP`；模拟诊断不构成真实服务健康证据。
 
 ## 文件清单
 

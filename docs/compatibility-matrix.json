@@ -1,0 +1,127 @@
+{
+  "schema_version": "1.0",
+  "version": "1.0.0",
+  "risk_levels": {
+    "R0": {
+      "name": "read_only_probe",
+      "default_behavior": "auto",
+      "examples": [
+        "probe.sh -j",
+        "doctor.sh --json",
+        "diagnose_dns.sh --json"
+      ]
+    },
+    "R1": {
+      "name": "local_side_effect_free",
+      "default_behavior": "auto",
+      "examples": [
+        "auto_config.py",
+        "sub_to_dae.py",
+        "check_config.py",
+        "check_dae_syntax.py"
+      ]
+    },
+    "R2": {
+      "name": "sandbox_preparation",
+      "default_behavior": "policy_auto",
+      "examples": [
+        "upload /tmp/config.test",
+        "sing-box check -c",
+        "dae validate -c",
+        "setup_openwrt_network.sh --dry-run"
+      ]
+    },
+    "R3": {
+      "name": "production_mutation",
+      "default_behavior": "explicit_approval",
+      "examples": [
+        "atomic mv /etc/sing-box/config.json",
+        "atomic mv /etc/dae/config.dae",
+        "setup_openwrt_network.sh --watchdog"
+      ]
+    },
+    "R4": {
+      "name": "high_impact_recovery",
+      "default_behavior": "mandatory_confirmation",
+      "examples": [
+        "setup_openwrt_network.sh --revert",
+        "disable conflicting daed/passwall"
+      ]
+    }
+  },
+  "supported_matrix": [
+    {
+      "distro": "OpenWrt",
+      "releases": [
+        "18.06",
+        "19.07",
+        "21.02"
+      ],
+      "firewall": "fw3",
+      "pkg_mgr": "opkg",
+      "singbox": "compatible",
+      "dae": "unsupported"
+    },
+    {
+      "distro": "OpenWrt",
+      "releases": [
+        "22.03",
+        "23.05",
+        "24.10"
+      ],
+      "firewall": "fw4",
+      "pkg_mgr": "opkg",
+      "singbox": "tested",
+      "dae": "compatible"
+    },
+    {
+      "distro": "ImmortalWrt",
+      "releases": [
+        "23.05",
+        "24.10"
+      ],
+      "firewall": "fw4",
+      "pkg_mgr": "opkg",
+      "singbox": "tested",
+      "dae": "tested"
+    },
+    {
+      "distro": "ImmortalWrt",
+      "releases": [
+        "SNAPSHOT",
+        "25+"
+      ],
+      "firewall": "fw4",
+      "pkg_mgr": "apk",
+      "singbox": "tested",
+      "dae": "tested"
+    },
+    {
+      "distro": "iStoreOS",
+      "releases": [
+        "22.03",
+        "24.10"
+      ],
+      "firewall": "fw4",
+      "pkg_mgr": "opkg",
+      "singbox": "simulated",
+      "dae": "compatible"
+    }
+  ],
+  "engines": {
+    "sing-box": {
+      "supported_branches": [
+        "1.13",
+        "1.14"
+      ],
+      "validation_cmd": "sing-box check -c /tmp/config.json.test"
+    },
+    "dae": {
+      "supported_branches": [
+        "legacy (<=1.0.0)",
+        "modern (1.1+ / 2.1.1+)"
+      ],
+      "validation_cmd": "dae validate -c /tmp/config.dae.test || dae validate /tmp/config.dae.test"
+    }
+  }
+}

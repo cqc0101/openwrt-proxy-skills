@@ -1,0 +1,27 @@
+[MOCK] 正在本地 127.0.0.1:2222 启动 OpenWrt 仿真守护服务...
+[MOCK] 当前环境未安装 paramiko，自动启用零依赖进程内 OpenWrtState 仿真引擎
+
+=================================================================
+ 开始执行 OpenWrt 技能测试流水线 (目标: 127.0.0.1:2222)
+=================================================================
+[PHASE 1] 调用 auto_config.py 自动匹配软路由架构并生成 1.14 TUN 生产配置...
+[PASS] 配置生成成功并完成自校验: <USER_HOME>\AppData\Local\Temp\test_singbox_docker.json
+[PHASE 2] 调用 check_config.py 深度审计生成的配置文件...
+[PASS] check_config 0 错误 0 告警，字段门控与安全规则完全合规
+[PHASE 3] 执行 Agent SSH 原子部署与服务热重载验证...
+[PASS] sing-box 沙盒校验、原子替换与服务重启验证通过
+[PHASE 4] 执行 DNS 深度体检与 Doctor JSON 校验...
+[PASS] DNS 深度体检与智能医生 JSON 校验执行通过
+[PHASE 5] 验证最后一公里网络加固脚本 (setup_openwrt_network.sh)...
+[SKIP] Mock 不执行任意 shell 脚本；网络接管需要 Docker 或真机验证
+
+=================================================================
+ 测试流水线执行总结
+=================================================================
+ [✔ PASS]   Auto Config Generation         Pass
+ [✔ PASS]   Config Schema Audit            0 Errors
+ [✔ PASS]   Deploy & Reload                Pass
+ [✔ PASS]   Full Diagnostics (7 steps)     0 Errors
+ [SKIP]     Last-Mile Network Hook         SKIP: mock cannot execute shell
+=================================================================
+[SUCCESS] 已执行阶段无失败；SKIP 阶段仍需独立验证。

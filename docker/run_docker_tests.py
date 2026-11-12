@@ -8,6 +8,7 @@
 """
 
 import argparse
+import json
 import os
 import shutil
 import socket
@@ -127,8 +128,12 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
     with open(test_conf_path, "r", encoding="utf-8") as f_conf:
         conf_body = f_conf.read()
     rc_up, _, err_up = _exec_remote("cat > /tmp/config.json.test", conf_body)
-    rc_ck, out_ck, err_ck = _exec_remote("sing-box check -c /tmp/config.json.test")
-    rc_mv, _, err_mv = _exec_remote("mv /tmp/config.json.test /etc/sing-box/config.json && uci set sing-box.main.enabled='1' && /etc/init.d/sing-box restart")
+    rc_ck, out_ck, err_ck = (1, "", "upload failed; native validation skipped")
+    rc_mv, err_mv = 1, "native validation failed; deployment skipped"
+    if rc_up == 0:
+        rc_ck, out_ck, err_ck = _exec_remote("sing-box check -c /tmp/config.json.test")
+        if rc_ck == 0:
+            rc_mv, _, err_mv = _exec_remote("mv /tmp/config.json.test /etc/sing-box/config.json && uci set sing-box.main.enabled='1' && /etc/init.d/sing-box restart")
     if rc_up == 0 and rc_ck == 0 and rc_mv == 0:
         say("PASS", "sing-box 沙盒校验、原子替换与服务重启验证通过")
         results.append(("Deploy & Reload", True, "Pass"))
@@ -146,7 +151,13 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
         doc_body = f_doc.read()
     rc_diag, out_diag, _ = _exec_remote("sh -s -- --json", diag_body)
     rc_doc, out_doc, _ = _exec_remote("sh -s -- sing-box --json", doc_body)
-    if out_diag and out_doc:
+    try:
+        diag_result, doc_result = json.loads(out_diag), json.loads(out_doc)
+        diagnostics_ok = (rc_diag == 0 and rc_doc == 0 and diag_result.get("errors") == 0
+                          and doc_result.get("status") == "healthy" and doc_result.get("issue_count") == 0)
+    except (ValueError, AttributeError):
+        diagnostics_ok = False
+    if diagnostics_ok:
         say("PASS", "DNS 深度体检与智能医生 JSON 校验执行通过")
         results.append(("Full Diagnostics (7 steps)", True, "0 Errors"))
     else:
@@ -158,7 +169,10 @@ def run_pipeline(router, port, key_path=None, mock_state=None):
     with open(network_sh, "r", encoding="utf-8") as f_n:
         net_body = f_n.read()
     rc_net, _, _ = _exec_remote("sh -s", net_body)
-    if rc_net == 0:
+    if mock_state is not None and rc_net == 126:
+        say("SKIP", "Mock 不执行任意 shell 脚本；网络接管需要 Docker 或真机验证")
+        results.append(("Last-Mile Network Hook", None, "SKIP: mock cannot execute shell"))
+    elif rc_net == 0:
         say("PASS", "最后一公里网络接管加固脚本执行通过")
         results.append(("Last-Mile Network Hook", True, "Pass"))
     else:
@@ -250,14 +264,14 @@ def main():
         print("=" * 65)
         all_passed = True
         for name, ok, detail in results:
-            mark = "[✔ PASS]" if ok else "[✘ FAIL]"
-            if not ok:
+            mark = "[SKIP]" if ok is None else ("[✔ PASS]" if ok else "[✘ FAIL]")
+            if ok is False:
                 all_passed = False
             print(f" {mark:<10} {name:<30} {detail}")
         print("=" * 65)
 
         if all_passed:
-            say("SUCCESS", "所有 OpenWrt 自动化流水线阶段测试全部通过！")
+            say("SUCCESS", "已执行阶段无失败；SKIP 阶段仍需独立验证。")
             sys.exit(0)
         else:
             say("FAILED", "部分测试阶段未通过，请检查上方日志。")

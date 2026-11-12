@@ -4,7 +4,7 @@
 # 纯 POSIX /bin/sh 编写，无第三方依赖，兼容 opkg/apk 及全版本架构
 # 支持标准输出或 JSON 输出 (-j / --json)
 # ==============================================================================
-# [共享脚本] 本文件与 singbox-openwrt/scripts/probe.sh 完全一致，修改需双份同步！
+# [共享脚本] 本文件与 dae-openwrt/scripts/probe.sh 完全一致，修改需双份同步！
 
 OUTPUT_JSON=0
 for arg in "$@"; do
@@ -334,7 +334,8 @@ elif lsmod 2>/dev/null | grep -qw "tcp_bbr"; then
     BBR_AVAILABLE=1
 fi
 
-IP_FORWARD=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
+IP_FORWARD=$(sysctl -n net.ipv4.ip_forward 2>/dev/null | tr -cd '0-9')
+[ -z "$IP_FORWARD" ] && IP_FORWARD=0
 # 默认路由接口（WAN）：缺 nfqueue 模块的内核上 auto_detect_interface 自保会失效，
 # 生成配置时可用 --wan-iface 显式指定该接口
 WAN_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
@@ -354,9 +355,45 @@ je() {
 }
 CONFLICT_STR=$(echo $CONFLICT_PLUGINS | xargs 2>/dev/null)
 
+# 构建 Capability-Based 三态能力分级模型 (verified / supported / unsupported) 与限制列表
+CAP_BTF=$([ "$HAS_BTF" -eq 1 ] && echo "verified" || echo "unsupported")
+CAP_TUN=$([ "$HAS_TUN" -eq 1 ] && echo "verified" || echo "unsupported")
+CAP_NFT=$([ "$FW_TYPE" = "fw4" ] && echo "verified" || echo "unsupported")
+CAP_IPT=$([ "$FW_TYPE" = "fw3" ] && echo "verified" || echo "unsupported")
+CAP_SINGBOX="unsupported"
+if [ "$HAS_TUN" -eq 1 ] && [ "$SINGBOX_VER" != "none" ]; then
+    CAP_SINGBOX="verified"
+elif [ "$HAS_TUN" -eq 1 ]; then
+    CAP_SINGBOX="supported"
+fi
+CAP_DAE="unsupported"
+if [ "$DAE_CAPABLE" -eq 1 ] && [ "$DAE_VER" != "none" ] && [ "$DAE_GEODATA_OK" -eq 1 ]; then
+    CAP_DAE="verified"
+elif [ "$DAE_CAPABLE" -eq 1 ]; then
+    CAP_DAE="supported"
+fi
+
+LIMITS_JSON=""
+add_limit() {
+    _lim_item="\"$(je "$1")\""
+    if [ -z "$LIMITS_JSON" ]; then
+        LIMITS_JSON="$_lim_item"
+    else
+        LIMITS_JSON="${LIMITS_JSON},${_lim_item}"
+    fi
+}
+[ "${FREE_ROM:-0}" -lt 15 ] && add_limit "critical_low_rom"
+[ "${TOTAL_RAM:-0}" -gt 0 ] && [ "${TOTAL_RAM:-0}" -lt 256 ] && add_limit "low_ram_under_256mb"
+[ "$KERNEL_GE_515" -eq 0 ] && add_limit "kernel_under_5_15_no_ebpf"
+[ "$HAS_BTF" -eq 0 ] && add_limit "missing_btf"
+[ "$NFQUEUE_OK" -eq 0 ] && add_limit "missing_nfqueue"
+( [ "$SW_OFFLOAD" = "1" ] || [ "$HW_OFFLOAD" = "1" ] ) && add_limit "flow_offload_enabled"
+[ "$DAED_RUNNING" -eq 1 ] && add_limit "daed_conflict"
+
 if [ "$OUTPUT_JSON" -eq 1 ]; then
     cat << EOF
 {
+  "schema_version": "1.0",
   "distro": {
     "name": "$(je "$DISTRO")",
     "version": "$(je "$DISTRO_VER")",
@@ -402,8 +439,54 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
     "software_flow_offload": "$(je "$SW_OFFLOAD")",
     "hardware_flow_offload": "$(je "$HW_OFFLOAD")"
   },
+  "capabilities": {
+    "singbox_tun": "$CAP_SINGBOX",
+    "dae_ebpf": "$CAP_DAE",
+    "btf": "$CAP_BTF",
+    "tun": "$CAP_TUN",
+    "nftables": "$CAP_NFT",
+    "iptables_legacy": "$CAP_IPT"
+  },
+  "capability_details": {
+    "singbox_tun": {
+      "detected": $( [ "$SINGBOX_VER" != "none" ] && echo true || echo false ),
+      "supported": $( [ "$HAS_TUN" -eq 1 ] && echo true || echo false ),
+      "verified": $( [ "$CAP_SINGBOX" = "verified" ] && echo true || echo false ),
+      "state": "$CAP_SINGBOX",
+      "evidence": [ "has_tun=${HAS_TUN}", "singbox_version=$(je "$SINGBOX_VER")" ]
+    },
+    "dae_ebpf": {
+      "detected": $( [ "$DAE_VER" != "none" ] && echo true || echo false ),
+      "supported": $( [ "$DAE_CAPABLE" -eq 1 ] && echo true || echo false ),
+      "verified": $( [ "$CAP_DAE" = "verified" ] && echo true || echo false ),
+      "state": "$CAP_DAE",
+      "evidence": [ "kernel_ge_515=${KERNEL_GE_515}", "has_btf=${HAS_BTF}", "geodata_ready=${DAE_GEODATA_OK}" ]
+    },
+    "btf": {
+      "detected": $( [ "$HAS_BTF" -eq 1 ] && echo true || echo false ),
+      "supported": $( [ "$HAS_BTF" -eq 1 ] && echo true || echo false ),
+      "verified": $( [ "$HAS_BTF" -eq 1 ] && echo true || echo false ),
+      "state": "$CAP_BTF",
+      "evidence": [ "btf_path=$(je "$BTF_PATH")" ]
+    },
+    "tun": {
+      "detected": $( [ "$HAS_TUN" -eq 1 ] && echo true || echo false ),
+      "supported": $( [ "$HAS_TUN" -eq 1 ] && echo true || echo false ),
+      "verified": $( [ "$HAS_TUN" -eq 1 ] && echo true || echo false ),
+      "state": "$CAP_TUN",
+      "evidence": [ "has_tun=${HAS_TUN}" ]
+    },
+    "nfqueue": {
+      "detected": $( [ "$NFQUEUE_OK" -eq 1 ] && echo true || echo false ),
+      "supported": $( [ "$NFQUEUE_OK" -eq 1 ] && echo true || echo false ),
+      "verified": $( [ "$NFQUEUE_OK" -eq 1 ] && echo true || echo false ),
+      "state": "$( [ "$NFQUEUE_OK" -eq 1 ] && echo verified || echo unsupported )",
+      "evidence": [ "nfqueue_ok=${NFQUEUE_OK}" ]
+    }
+  },
+  "limitations": [ $LIMITS_JSON ],
   "tuning": {
-    "ip_forward": $IP_FORWARD,
+    "ip_forward": ${IP_FORWARD:-0},
     "tcp_congestion_control": "$(je "$CURRENT_CC")",
     "bbr_available": $BBR_AVAILABLE,
     "wan_iface": "$(je "$WAN_IF")"

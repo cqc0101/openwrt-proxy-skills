@@ -293,5 +293,32 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             self.assertIn("--dae-version legacy", doc_txt)
 
 
+
+    def test_capability_model_doctor_metadata_and_network_dry_run_flags(self):
+        """验证 v0.7.0 probe.sh 三态能力模型 (capabilities/limitations)、doctor.sh 结构化元数据 (confidence/repair_id/requires_human) 及网络脚本 --dry-run/--keep-ipv6/--no-sysctl-tuning。"""
+        data = _run_probe_json()
+        self.assertEqual(data.get("schema_version"), "1.0")
+        self.assertIn("capabilities", data)
+        caps = data["capabilities"]
+        for k in ("singbox_tun", "dae_ebpf", "btf", "tun", "nftables", "iptables_legacy"):
+            self.assertIn(caps.get(k), ("verified", "supported", "unsupported"))
+        self.assertIsInstance(data.get("limitations"), list)
+
+        for base_dir in (SINGBOX, DAE):
+            doc_txt = _read(os.path.join(base_dir, "doctor.sh"))
+            self.assertIn('\"schema_version\": \"1.0\"', doc_txt.replace('"', '\"'))
+            self.assertIn("confidence", doc_txt)
+            self.assertIn("requires_human", doc_txt)
+            self.assertIn("repair_id", doc_txt)
+
+            net_txt = _read(os.path.join(base_dir, "setup_openwrt_network.sh"))
+            self.assertIn("--dry-run", net_txt)
+            self.assertIn("--keep-ipv6", net_txt)
+            self.assertIn("--no-sysctl-tuning", net_txt)
+            self.assertIn('if [ "$DRY_RUN" -eq 1 ]; then', net_txt)
+            self.assertIn('if [ "$KEEP_IPV6" -eq 0 ]; then', net_txt)
+            self.assertIn('if [ "$NO_SYSCTL_TUNING" -eq 0 ]; then', net_txt)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -159,8 +159,8 @@ class TestClashProxy(unittest.TestCase):
                   "uuid": "u", "security": "auto", "alter_id": 0,
                   "transport": {"type": "grpc", "service_name": "svc"},
                   "tls": {"enabled": True, "server_name": "s.com"}}]
-        line = [l for l in to_dae_nodes(nodes).splitlines() if l.strip().startswith("'")][0]
-        payload = line.split("'")[3].replace("vmess://", "")
+        line = [l for l in to_dae_nodes(nodes).splitlines() if ": '" in l][0]
+        payload = line.split("'")[1].replace("vmess://", "")
         d = json.loads(base64.b64decode(payload + "=" * (-len(payload) % 4)).decode())
         self.assertEqual(d["net"], "grpc")
         self.assertEqual(d["path"], "svc")
@@ -177,7 +177,7 @@ class TestClashProxy(unittest.TestCase):
 
 class TestToDaeNodes(unittest.TestCase):
     def _lines(self, nodes):
-        return [l for l in to_dae_nodes(nodes).splitlines() if l.strip().startswith("'")]
+        return [l for l in to_dae_nodes(nodes).splitlines() if ": '" in l]
 
     def test_vmess_is_valid_v2rayn_base64_json(self):
         nodes = [{"type": "vmess", "tag": "SG", "server": "8.8.8.8", "server_port": 80,
@@ -185,7 +185,7 @@ class TestToDaeNodes(unittest.TestCase):
                   "transport": {"type": "ws", "path": "/ws", "headers": {"Host": "h.com"}},
                   "tls": {"enabled": True, "server_name": "s.com"}}]
         line = self._lines(nodes)[0]
-        payload = line.split("'")[3].replace("vmess://", "")
+        payload = line.split("'")[1].replace("vmess://", "")
         d = json.loads(base64.b64decode(payload + "=" * (-len(payload) % 4)).decode())
         self.assertEqual(d["v"], "2")
         self.assertEqual(d["net"], "ws")
@@ -196,36 +196,36 @@ class TestToDaeNodes(unittest.TestCase):
     def test_vless_tls_keeps_sni(self):
         nodes = [{"type": "vless", "tag": "US", "server": "1.2.3.4", "server_port": 443,
                   "uuid": "u", "tls": {"enabled": True, "server_name": "a.com"}}]
-        uri = self._lines(nodes)[0].split("'")[3]
+        uri = self._lines(nodes)[0].split("'")[1]
         self.assertIn("security=tls", uri)
         self.assertIn("sni=a.com", uri)
 
-    def test_tags_sanitized_and_quoted(self):
+    def test_tags_sanitized_with_bare_keys(self):
         nodes = [
             {"type": "trojan", "tag": "JP'01", "server": "5.6.7.8", "server_port": 443,
              "password": "pw", "tls": {"enabled": True, "server_name": "b.com"}},
         ]
         line = self._lines(nodes)[0]
         self.assertNotIn("JP'01", line)
-        self.assertTrue(line.startswith("  'JP-01': 'trojan://"))
+        self.assertTrue(line.startswith("  JP-01: 'trojan://"))
 
     def test_hy2_insecure_flag(self):
         nodes = [{"type": "hysteria2", "tag": "HK", "server": "9.9.9.9", "server_port": 3456,
                   "password": "pw", "tls": {"enabled": True, "server_name": "c.com", "insecure": True}}]
-        uri = self._lines(nodes)[0].split("'")[3]
+        uri = self._lines(nodes)[0].split("'")[1]
         self.assertIn("insecure=1", uri)
 
     def test_single_quote_in_password_escaped(self):
         nodes = [{"type": "hysteria2", "tag": "HK", "server": "9.9.9.9", "server_port": 3456,
                   "password": "pass'word", "tls": {"enabled": True, "server_name": "c.com"}}]
         line = self._lines(nodes)[0]
-        self.assertEqual(line.count("'"), 4, f"内部单引号未正确转义打断语法: {line}")
+        self.assertEqual(line.count("'"), 2, f"内部单引号未正确转义打断语法: {line}")
         self.assertIn("pass%27word", line)
 
     def test_vless_plaintext_no_tls(self):
         nodes = [{"type": "vless", "tag": "PLAIN", "server": "1.2.3.4", "server_port": 80,
                   "uuid": "u-plain"}]
-        uri = self._lines(nodes)[0].split("'")[3]
+        uri = self._lines(nodes)[0].split("'")[1]
         self.assertIn("security=none", uri)
         self.assertNotIn("security=tls", uri)
 
@@ -243,8 +243,8 @@ class TestToDaeNodes(unittest.TestCase):
             },
         ]
         lines = self._lines(nodes)
-        vless_uri = lines[0].split("'")[3]
-        trojan_uri = lines[1].split("'")[3]
+        vless_uri = lines[0].split("'")[1]
+        trojan_uri = lines[1].split("'")[1]
         self.assertIn("type=ws", vless_uri)
         self.assertIn("path=/vless-ws", vless_uri)
         self.assertIn("host=cdn.example.com", vless_uri)
@@ -256,8 +256,8 @@ class TestToDaeNodesIPv6(unittest.TestCase):
     V6 = "240e:123:456::1"
 
     def _uri(self, node):
-        lines = [l for l in to_dae_nodes([node]).splitlines() if l.strip().startswith("'")]
-        return lines[0].split("'")[3]
+        lines = [l for l in to_dae_nodes([node]).splitlines() if ": '" in l]
+        return lines[0].split("'")[1]
 
     def test_hysteria2_brackets(self):
         uri = self._uri({"type": "hysteria2", "tag": "H6", "server": self.V6,
@@ -360,7 +360,7 @@ class TestSubParserFuzzAndEdgeCases(unittest.TestCase):
             {"type": "hysteria2", "tag": "good", "server": "5.6.7.8", "server_port": 34589, "password": "pw"},
         ]
         out = to_dae_nodes(broken_nodes)
-        self.assertIn("'good'", out)
+        self.assertIn("good:", out)
         self.assertNotIn("'bad1'", out)
         self.assertNotIn("'bad2'", out)
 
@@ -535,8 +535,8 @@ proxies:
             "tls": {"enabled": True, "server_name": "sni.example.com", "alpn": ["h2", "http/1.1"], "insecure": True},
         }
         dae_out = to_dae_nodes([vm_node])
-        line = [l for l in dae_out.splitlines() if l.strip().startswith("'")][0]
-        payload = line.split("'")[3].replace("vmess://", "")
+        line = [l for l in dae_out.splitlines() if ": '" in l][0]
+        payload = line.split("'")[1].replace("vmess://", "")
         decoded = json.loads(base64.b64decode(payload + "=" * (-len(payload) % 4)).decode("utf-8"))
         self.assertEqual(decoded["host"], "hu.example.com")
         self.assertEqual(decoded["alpn"], "h2,http/1.1")
@@ -983,8 +983,8 @@ proxies:
             {"type": "vless", "tag": "HK", "server": "1.1.1.1", "server_port": 443, "uuid": "u-1", "tls": {"enabled": True, "reality": {"enabled": True, "public_key": ""}}},
             {"type": "vless", "tag": "HK", "server": "1.1.1.1", "server_port": 443, "uuid": "u-1"},
         ])
-        self.assertIn("'HK':", dae_out)
-        self.assertNotIn("'HK-2':", dae_out)
+        self.assertIn("HK:", dae_out)
+        self.assertNotIn("HK-2:", dae_out)
 
 
     def test_utf8_bom_all_formats_and_seven_protocol_round_trip_and_hy2_edge_cases(self):
@@ -1071,7 +1071,7 @@ proxies:
             sb1 = parse_clash_proxy(sample)
             self.assertTrue(sb1, f"Failed to parse {sample['name']}")
             dae_block = to_dae_nodes([sb1])
-            m = re.search(r"'[^']+':\s*'([^']+)'", dae_block)
+            m = re.search(r"[A-Za-z_][A-Za-z0-9_-]*:\s*'([^']+)'", dae_block)
             self.assertIsNotNone(m, f"Failed to export dae URI for {sample['name']}: {dae_block}")
             sb2 = parse_uri(m.group(1))
             self.assertEqual(sb1, sb2, f"Round-trip mismatch for {sample['name']}")
@@ -1090,12 +1090,96 @@ proxies:
                 "transport": {"type": "ws", "path": None, "headers": None, "host": None},
                 "server_ports": [None, "20000:30000"],
             }])
-            self.assertIn("'node':", out)
-            self.assertNotIn("'None':", out)
+            self.assertIn("node:", out)
+            self.assertNotIn("None:", out)
         with self.assertRaises(ValueError):
             filter_nodes([], max_nodes=True)
         vm_bool_aid = parse_clash_proxy({"name": "v", "type": "vmess", "server": "1.1.1.1", "port": 443, "uuid": "u1", "alterId": True})
         self.assertEqual(vm_bool_aid["alter_id"], 0)
+
+
+    def test_ssrf_and_redirect_hop_protection_and_secret_redaction(self):
+        """验证 v0.7.0 SSRF 防护（拦截 localhost/私网/回环/元数据/CGNAT/IPv4-mapped IPv6/危险重定向跳）与日志凭据脱敏。"""
+        from unittest import mock
+        import urllib.request
+        import urllib.error
+        from sub_parser import (
+            validate_safe_subscription_url,
+            redact_sensitive_text,
+            _SafeRedirectHandler,
+            fetch_subscription,
+        )
+
+        # 1. 敏感凭据脱敏测试
+        raw_msg = "拉取失败: https://sub.example.com/api/v1?token=my_secret_123&flag=clash or trojan://my_pass_word@1.2.3.4:443#HK"
+        redacted = redact_sensitive_text(raw_msg)
+        self.assertNotIn("my_secret_123", redacted)
+        self.assertNotIn("my_pass_word", redacted)
+        self.assertIn("token=***REDACTED***", redacted)
+        self.assertIn("trojan://***REDACTED***@1.2.3.4:443", redacted)
+
+        # 2. 直接 IP 字面量与保留主机名 SSRF 拦截测试
+        unsafe_urls = [
+            "http://localhost:8080/sub",
+            "http://router.lan/cgi-bin/luci",
+            "http://127.0.0.1:9090/configs",
+            "http://192.168.1.1/sub",
+            "http://10.0.0.1/sub",
+            "http://172.16.0.1/sub",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://100.64.0.1/sub",
+            "http://0.0.0.0/sub",
+            "http://[::1]:8080/sub",
+            "http://[::ffff:127.0.0.1]:8080/sub",
+            "http://[::ffff:192.168.1.1]/sub",
+            "http://[fe80::1%25eth0]/sub",
+            "file:///etc/passwd",
+        ]
+        for bad_u in unsafe_urls:
+            with self.assertRaises(ValueError, msg=f"未拦截危险 URL: {bad_u}"):
+                validate_safe_subscription_url(bad_u, allow_private=False)
+
+        # 3. 域名 DNS 解析返回私网记录或混合记录时必须被拦截
+        with mock.patch("sub_parser.socket.getaddrinfo") as m_dns:
+            m_dns.return_value = [
+                (2, 1, 6, "", ("93.184.216.34", 443)),
+                (2, 1, 6, "", ("192.168.1.1", 443)),
+            ]
+            with self.assertRaises(ValueError) as ctx:
+                validate_safe_subscription_url("https://evil-rebind.example.com/sub", allow_private=False)
+            self.assertIn("SSRF 拦截", str(ctx.exception))
+
+        # 4. 逐跳重定向 SSRF 拦截与跨域敏感 Header 剥离 + 最大跳数限制
+        handler = _SafeRedirectHandler(allow_private=False, max_redirects=3)
+        req = urllib.request.Request(
+            "https://public.example.com/sub?token=abc",
+            headers={"Authorization": "Bearer secret", "Cookie": "sid=123"},
+        )
+        # 跳转到内网地址必须被阻断
+        with self.assertRaises(urllib.error.URLError) as r_ctx:
+            handler.redirect_request(req, None, 302, "Found", {}, "http://192.168.1.1/admin")
+        self.assertIn("SSRF 拦截", str(r_ctx.exception))
+
+        # 跳转到合法公网地址时，跨域必须剥离 Authorization / Cookie，且超过 max_redirects 必须阻断
+        with mock.patch("sub_parser.socket.getaddrinfo") as m_dns2:
+            m_dns2.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+            handler2 = _SafeRedirectHandler(allow_private=False, max_redirects=2)
+            r1 = handler2.redirect_request(req, None, 302, "Found", {}, "https://cdn.other-domain.com/sub")
+            self.assertNotIn("Authorization", r1.headers)
+            self.assertNotIn("Cookie", r1.headers)
+            r2 = handler2.redirect_request(r1, None, 302, "Found", {}, "https://cdn2.other-domain.com/sub")
+            with self.assertRaises(urllib.error.URLError) as hop_ctx:
+                handler2.redirect_request(r2, None, 302, "Found", {}, "https://cdn3.other-domain.com/sub")
+            self.assertIn("超过安全上限", str(hop_ctx.exception))
+
+        # 5. fetch_subscription 异常消息必须自动脱敏 token
+        with mock.patch("sub_parser.socket.getaddrinfo") as m_dns3:
+            m_dns3.side_effect = RuntimeError("network unreachable")
+            with self.assertRaises(RuntimeError) as f_ctx:
+                fetch_subscription("https://sub.example.com/link?token=TOP_SECRET_TOKEN_999", allow_private=False)
+            self.assertNotIn("TOP_SECRET_TOKEN_999", str(f_ctx.exception))
+            self.assertIn("***REDACTED***", str(f_ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

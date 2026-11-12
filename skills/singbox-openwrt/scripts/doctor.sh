@@ -4,7 +4,7 @@
 # 纯 POSIX /bin/sh 编写，智能解析 sing-box / dae 运行日志并提供针对性解法
 # 支持标准输出 (带颜色) 或机器可读 JSON 输出 (-j / --json)
 # ==============================================================================
-# [共享脚本] 本文件与 singbox-openwrt/scripts/doctor.sh 完全一致，修改需双份同步！
+# [共享脚本] 本文件与 dae-openwrt/scripts/doctor.sh 完全一致，修改需双份同步！
 
 OUTPUT_JSON=0
 SERVICE_NAME="all"
@@ -149,7 +149,24 @@ add_issue() {
         [ "$OVERALL_CODE" -eq 0 ] && OVERALL_CODE=1
     fi
 
-    item="{\"id\":\"$(je "$i_id")\",\"severity\":\"$(je "$i_sev")\",\"title\":\"$(je "$i_title")\",\"description\":\"$(je "$i_desc")\",\"action\":\"$(je "$i_action")\"}"
+    i_conf="0.95"
+    i_human="false"
+    case "$i_id" in
+        oom_killed|ebpf_btf_missing|node_auth_failed|daed_conflict|port_conflict)
+            i_human="true"
+            ;;
+    esac
+    i_comp="service"
+    case "$i_id" in
+        dns_lookup_timeout|ruleset_download_blocked) i_comp="dns" ;;
+        fw_tun_untrusted|tun_missing) i_comp="firewall" ;;
+        ebpf_btf_missing|nfqueue_missing_loop) i_comp="kernel" ;;
+        oom_killed|tls_clock_skew|port_conflict) i_comp="system" ;;
+        config_syntax_error) i_comp="config" ;;
+        node_auth_failed) i_comp="outbound" ;;
+    esac
+    i_repair="repair_${i_id}"
+    item="{\"id\":\"$(je "$i_id")\",\"issue_id\":\"$(je "$i_id")\",\"component\":\"$(je "$i_comp")\",\"severity\":\"$(je "$i_sev")\",\"confidence\":${i_conf},\"requires_human\":${i_human},\"repair_id\":\"$(je "$i_repair")\",\"repair_candidates\":[\"$(je "$i_repair")\"],\"title\":\"$(je "$i_title")\",\"description\":\"$(je "$i_desc")\",\"action\":\"$(je "$i_action")\"}"
     if [ -z "$ISSUES_JSON" ]; then
         ISSUES_JSON="$item"
     else
@@ -276,12 +293,17 @@ if [ -n "$RAW_LOGS" ]; then
     fi
 fi
 
+redact_logs() {
+    sed -E 's/([?&][a-zA-Z0-9_.-]*([Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd]|[Aa][Uu][Tt][Hh]|[Ss][Ii][Gg]|[Jj][Ww][Tt]|[Uu][Uu][Ii][Dd]|[Ss][Ii][Dd]|[Pp][Bb][Kk])[a-zA-Z0-9_.-]*=)[^&#[:space:]"'"'"']+/\1***/g; s/(([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Dd])["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"']?)[^&#[:space:]"'"'"',;}]+/\1***/g; s#([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@[:space:]"'"'"']+@#\1***@#g'
+}
+
 if [ "$OUTPUT_JSON" -eq 1 ]; then
     NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")
-    LOG_TAIL_RAW=$(printf '%s\n' "$RAW_LOGS" | tail -n 20)
+    LOG_TAIL_RAW=$(printf '%s\n' "$RAW_LOGS" | tail -n 20 | redact_logs)
     LOG_TAIL_JSON=$(je "$LOG_TAIL_RAW")
     cat << EOF
 {
+  "schema_version": "1.0",
   "service": "$(je "$SERVICE_NAME")",
   "status": "$OVERALL_SEVERITY",
   "overall_code": $OVERALL_CODE,
@@ -301,7 +323,7 @@ EOF
 else
     if [ -n "$RAW_LOGS" ]; then
         say "${CYAN}[1/2] 最近运行日志摘录 (最近 15 行):${NC}"
-        echo "$RAW_LOGS" | tail -n 15
+        printf '%s\n' "$RAW_LOGS" | tail -n 15 | redact_logs
         echo ""
     else
         say "  ${YELLOW}[!] 未在系统 logread 中检索到相关运行日志 (服务可能未启动或刚重启)。${NC}"
