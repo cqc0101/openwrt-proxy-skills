@@ -285,6 +285,17 @@ REPAIR_REGISTRY: Dict[str, RepairSpec] = {
         rollback=("restore_previous_service_state",),
         max_retries=1,
     ),
+    "repair_node_parse_failed": RepairSpec(
+        repair_id="repair_node_parse_failed",
+        issue_id="node_parse_failed",
+        risk="R3",
+        requires_approval=True,
+        requires_human=True,
+        preconditions=("valid_subscription_credentials_supplied",),
+        verification=("outbound_connectivity_ok",),
+        rollback=("restore_previous_service_state",),
+        max_retries=1,
+    ),
     "repair_fw_tun_untrusted": RepairSpec(
         repair_id="repair_fw_tun_untrusted",
         issue_id="fw_tun_untrusted",

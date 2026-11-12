@@ -16,6 +16,7 @@
 # ==============================================================================
 
 set -e
+umask 077
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -39,17 +40,218 @@ for _opt in "$@"; do
     esac
 done
 
-kill_active_watchdog() {
-    if [ -f /tmp/proxy_watchdog.pid ]; then
-        _wd_pid=$(cat /tmp/proxy_watchdog.pid 2>/dev/null || true)
-        if [ -n "$_wd_pid" ]; then
-            pkill -P "$_wd_pid" 2>/dev/null || true
-            kill "$_wd_pid" 2>/dev/null || true
-        fi
-        rm -f /tmp/proxy_watchdog.pid
+ENGINE=dae
+ENGINE_DIR=/etc/dae
+ENGINE_REL=etc/dae
+ENGINE_CONFIG=etc/dae/config.dae
+# Shared, embedded transaction support: works with SSH sh -s and needs no sibling file.
+# Recovery code is persisted before any network mutation and never sourced as shell data.
+STATE_ROOT=/etc/proxy-skills-network
+STATE="$STATE_ROOT/$ENGINE"
+HOOK=/etc/init.d/proxy-skills-recovery
+APPLY_STARTED=0
+
+secure_state() {
+    [ "$(id -u)" = 0 ] || { say '[ERROR] root required'; return 1; }
+    for dep in flock sha256sum tar mktemp uci sysctl; do
+        command -v "$dep" >/dev/null 2>&1 || { say "[ERROR] required command missing: $dep"; return 1; }
+    done
+    if [ ! -e "$STATE_ROOT" ] && [ ! -L "$STATE_ROOT" ]; then
+        (umask 077; mkdir -m 700 "$STATE_ROOT") || return 1
     fi
-    rm -f /tmp/proxy_watchdog.token
+    [ -d "$STATE_ROOT" ] && [ ! -L "$STATE_ROOT" ] &&
+        [ "$(ls -ldn "$STATE_ROOT" | awk '{print $1 ":" $3}')" = drwx------:0 ] || {
+        say '[ERROR] unsafe transaction directory'; return 1;
+    }
+    [ ! -L "$STATE_ROOT/lock" ] || return 1
+    exec 9>"$STATE_ROOT/lock"
+    flock -n 9 || { say '[ERROR] another network operation is running'; return 1; }
+    if [ -f "$STATE_ROOT/owner" ] && [ "$(cat "$STATE_ROOT/owner")" != "$ENGINE" ]; then
+        say '[ERROR] another engine owns the pending network baseline; revert it first'
+        return 1
+    fi
+    if [ -e "$STATE" ] || [ -L "$STATE" ]; then
+        [ -d "$STATE" ] && [ ! -L "$STATE" ] &&
+            [ "$(ls -ldn "$STATE" | awk '{print $1 ":" $3}')" = drwx------:0 ] || return 1
+    fi
 }
+
+current_files() {
+    for f in /etc/config/firewall /etc/config/dhcp /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf; do
+        if [ -f "$f" ] && [ ! -L "$f" ]; then sha256sum "$f"; else printf 'ABSENT %s\n' "$f"; fi
+    done
+}
+
+verify_current() {
+    [ -f "$STATE/applied" ] || return 0
+    tmp=$(mktemp "$STATE/.current.XXXXXX")
+    current_files > "$tmp"
+    a=$(sha256sum "$tmp"); b=$(sha256sum "$STATE/applied")
+    rm -f "$tmp"
+    [ "${a%% *}" = "${b%% *}" ] || {
+        say '[ERROR] external configuration changes detected; baseline retained for manual reconciliation'
+        return 1
+    }
+}
+
+snapshot_prepare() {
+    if pidof "$ENGINE" >/dev/null 2>&1 && [ ! -x "/etc/init.d/$ENGINE" ]; then
+        say '[ERROR] running engine has no init service; install a recoverable service before network takeover'
+        return 1
+    fi
+    if [ -f "$STATE/ready" ]; then
+        (cd "$STATE" && sha256sum -c snapshot.sha256 >/dev/null) || return 1
+        verify_current || return 1
+        return 0
+    fi
+    [ ! -e "$STATE" ] || { say '[ERROR] incomplete snapshot retained; inspect before retry'; return 1; }
+    # Refuse to mix a legacy partial backup with the new complete snapshot.
+    [ ! -f "$ENGINE_DIR/.network_baseline.bak" ] || {
+        say '[ERROR] legacy baseline requires manual recovery before a new deployment'; return 1;
+    }
+    [ ! -e "$HOOK" ] && [ ! -L "$HOOK" ] || { say '[ERROR] recovery hook already exists'; return 1; }
+    mkdir -m 700 "$STATE"
+    printf '%s\n' "$ENGINE" > "$STATE_ROOT/owner"
+    : > "$STATE/present"; : > "$STATE/absent"
+    for f in etc/config/firewall etc/config/dhcp etc/sysctl.d/99-singbox.conf etc/sysctl.d/99-dae.conf etc/sysctl.d/99-proxy-tuning.conf "$ENGINE_CONFIG" "$ENGINE_REL/.network_baseline.bak" "$ENGINE_REL/.dnsmasq_upstream.bak" "$ENGINE_REL/.flow_offload.bak"; do
+        [ ! -L "/$f" ] || { say '[ERROR] symlink target refused'; return 1; }
+        if [ -e "/$f" ]; then
+            [ -f "/$f" ] || return 1
+            printf '%s\n' "$f" >> "$STATE/present"
+        else
+            printf '%s\n' "$f" >> "$STATE/absent"
+        fi
+    done
+    tar -cf "$STATE/snapshot.tar" -C / -T "$STATE/present"
+    (cd "$STATE" && sha256sum snapshot.tar present absent > snapshot.sha256)
+    : > "$STATE/sysctl"
+    for k in net.ipv4.ip_forward net.ipv4.conf.all.forwarding net.ipv4.conf.all.route_localnet net.netfilter.nf_conntrack_max net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.tcp_tw_reuse; do
+        v=$(sysctl -n "$k" 2>/dev/null) || continue
+        printf '%s=%s\n' "$k" "$v" >> "$STATE/sysctl"
+    done
+    if pidof "$ENGINE" >/dev/null 2>&1; then printf '1\n'; else printf '0\n'; fi > "$STATE/running"
+    [ "$(cat "$STATE/running")" != 1 ] || [ -x "/etc/init.d/$ENGINE" ] || return 1
+    printf '%s\n' "$ENGINE" > "$STATE/engine"
+    cat > "$STATE/recovery.sh" <<'RECOVERY_EOF'
+#!/bin/sh
+set -eu
+umask 077
+D=${0%/*}
+ROOT=${D%/*}
+ENGINE=$(cat "$D/engine")
+case "$ENGINE" in sing-box|dae) ;; *) exit 1 ;; esac
+# Validate all backup metadata before touching a live file; retain evidence on any error.
+(cd "$D" && sha256sum -c snapshot.sha256 >/dev/null)
+if [ -f "$D/applied" ]; then
+    tmp=$(mktemp "$D/.current.XXXXXX")
+    for f in /etc/config/firewall /etc/config/dhcp /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf; do
+        if [ -f "$f" ] && [ ! -L "$f" ]; then sha256sum "$f"; else printf 'ABSENT %s\n' "$f"; fi
+    done > "$tmp"
+    a=$(sha256sum "$tmp"); b=$(sha256sum "$D/applied")
+    rm -f "$tmp"
+    [ "${a%% *}" = "${b%% *}" ] || { echo '[RECOVERY FAILED] external configuration changes detected; snapshot retained'; exit 1; }
+fi
+mkdir -p "$D/extracted"
+tar -xf "$D/snapshot.tar" -C "$D/extracted"
+while IFS= read -r f; do
+    case "$f" in etc/config/firewall|etc/config/dhcp|etc/sysctl.d/99-singbox.conf|etc/sysctl.d/99-dae.conf|etc/sysctl.d/99-proxy-tuning.conf|etc/sing-box/config.json|etc/dae/config.dae|etc/sing-box/.network_baseline.bak|etc/dae/.network_baseline.bak|etc/sing-box/.dnsmasq_upstream.bak|etc/dae/.dnsmasq_upstream.bak|etc/sing-box/.flow_offload.bak|etc/dae/.flow_offload.bak) ;; *) exit 1 ;; esac
+    [ ! -L "/$f" ] || exit 1
+    dest="/${f%/*}"
+    mkdir -p "$dest"
+    tmp=$(mktemp "$dest/.proxy-restore.XXXXXX")
+    cp -p "$D/extracted/$f" "$tmp"
+    mv -f "$tmp" "/$f"
+done < "$D/present"
+while IFS= read -r f; do
+    case "$f" in etc/config/firewall|etc/config/dhcp) exit 1 ;; etc/sysctl.d/99-singbox.conf|etc/sysctl.d/99-dae.conf|etc/sysctl.d/99-proxy-tuning.conf|etc/sing-box/config.json|etc/dae/config.dae|etc/sing-box/.network_baseline.bak|etc/dae/.network_baseline.bak|etc/sing-box/.dnsmasq_upstream.bak|etc/dae/.dnsmasq_upstream.bak|etc/sing-box/.flow_offload.bak|etc/dae/.flow_offload.bak) rm -f "/$f" ;; *) exit 1 ;; esac
+done < "$D/absent"
+/etc/init.d/firewall reload
+/etc/init.d/dnsmasq reload
+while IFS= read -r pair; do sysctl -w "$pair" >/dev/null; done < "$D/sysctl"
+# Restart the baseline service only when its configuration was changed.
+if [ "$(cat "$D/running")" = 1 ]; then
+    [ -x "/etc/init.d/$ENGINE" ] || exit 1
+    "/etc/init.d/$ENGINE" restart
+    sleep 2
+    pidof "$ENGINE" >/dev/null
+elif [ -x "/etc/init.d/$ENGINE" ]; then
+    "/etc/init.d/$ENGINE" stop
+    if pidof "$ENGINE" >/dev/null 2>&1; then exit 1; fi
+fi
+if [ "$(cat "$D/running")" = 0 ] && pidof "$ENGINE" >/dev/null 2>&1; then
+    echo '[RECOVERY FAILED] unexpected unmanaged engine is still running; snapshot retained'
+    exit 1
+fi
+while IFS= read -r f; do
+    a=$(sha256sum "$D/extracted/$f"); b=$(sha256sum "/$f")
+    [ "${a%% *}" = "${b%% *}" ]
+done < "$D/present"
+while IFS= read -r f; do [ ! -e "/$f" ] && [ ! -L "/$f" ]; done < "$D/absent"
+while IFS= read -r pair; do
+    k=${pair%%=*}; expected=${pair#*=}
+    [ "$(sysctl -n "$k")" = "$expected" ]
+done < "$D/sysctl"
+rm -f /etc/rc.d/S99proxy-skills-recovery /etc/rc.d/K10proxy-skills-recovery /etc/init.d/proxy-skills-recovery
+# Only fixed, validated engine directories can reach this cleanup.
+case "$D" in /etc/proxy-skills-network/sing-box|/etc/proxy-skills-network/dae) ;; *) exit 1 ;; esac
+rm -rf "$D"
+rm -f "$ROOT/owner"
+printf '[RECOVERY] files, sysctl and service state verified\n'
+RECOVERY_EOF
+    chmod 700 "$STATE/recovery.sh"
+    (cd "$STATE" && sha256sum -c snapshot.sha256 >/dev/null)
+    (cd "$STATE" && sha256sum sysctl running engine >> snapshot.sha256)
+    touch "$STATE/ready"
+}
+
+arm_watchdog() {
+    snapshot_prepare
+    [ ! -f "$STATE/pending" ] || { say '[WATCHDOG] already armed'; return 0; }
+    _wd_token="wd_$$_$(date +%s)"
+    printf '%s\n' "$_wd_token" > "$STATE/pending"
+    cat > "$HOOK" <<'HOOK_EOF'
+#!/bin/sh /etc/rc.common
+START=99
+STOP=10
+start() {
+    # Persistent recovery is self-contained; it does not depend on /tmp or installed skills.
+    for d in /etc/proxy-skills-network/sing-box /etc/proxy-skills-network/dae; do
+        [ -f "$d/pending" ] || continue
+        exec 9>/etc/proxy-skills-network/lock
+        flock 9 || return 1
+        sh "$d/recovery.sh" || return 1
+    done
+}
+HOOK_EOF
+    chmod 700 "$HOOK"
+    "$HOOK" enable
+    (
+        exec 9>&-
+        sleep 45
+        exec 9>"$STATE_ROOT/lock"
+        flock 9 || exit 1
+        if [ -f "$STATE/pending" ] && [ "$(cat "$STATE/pending")" = "$_wd_token" ]; then
+            sh "$STATE/recovery.sh" >"$STATE_ROOT/last-recovery.log" 2>&1
+        fi
+    ) </dev/null >/dev/null 2>&1 &
+    say '[WATCHDOG] 45 seconds; confirmation requires a fresh connection and business checks'
+}
+
+kill_active_watchdog() {
+    # Revoke a private token. Never kill a PID read from a shared temporary file.
+    rm -f "$STATE/pending"
+}
+
+transaction_exit() {
+    _rc=$?
+    trap - EXIT
+    if [ "$_rc" -ne 0 ] && [ "$APPLY_STARTED" -eq 1 ] && [ -f "$STATE/ready" ]; then
+        say '[ERROR] apply failed; attempting verified recovery'
+        sh "$STATE/recovery.sh" || say '[ERROR] RECOVERY FAILED; snapshot and recovery hook retained'
+    fi
+    exit "$_rc"
+}
+
 
 # 逆序清理名为 Redirect-DNS-Proxy 的遗留防火墙 redirect 规则，避免干扰 dae 透明劫持
 clean_dns_redirects() {
@@ -64,23 +266,11 @@ clean_dns_redirects() {
 run_dae_hardening() {
     ACTION_FLAG="${1:-}"
     PREVIEW_ACTION="${ACTION_FLAG:-normal}"
-    [ "$DRY_RUN" -eq 1 ] && ACTION_FLAG="--dry-run"
-
-    # 检查因突发断电/内核崩溃遗留的闪存启动哨兵，执行启动即时自愈 (防 /tmp 挥发性失效)
-    # 关键判定：仅当闪存 .boot_guard 存在且内存盘 /tmp/proxy_watchdog.token 已挥发丢失时，
-    # 才说明系统在看门狗期间发生过硬重启；正常部署中 (token 尚在) 绝不误拦截后续网络配置与 --confirm！
-    if [ "$DRY_RUN" -eq 0 ] && [ "$ACTION_FLAG" != "--confirm" ] && [ "$ACTION_FLAG" != "--revert" ] && [ "$ACTION_FLAG" != "--watchdog" ]; then
-        if [ -f /etc/dae/.boot_guard ] && [ ! -f /tmp/proxy_watchdog.token ]; then
-            say "${RED}[BOOT GUARD] 检测到前序部署未确认且系统发生过硬重启 (/tmp 已挥发)，正在从闪存快照强力恢复配置与网络...${NC}"
-            [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
-            rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
-            ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
-            run_dae_hardening "--revert" 2>/dev/null || true
-            return 0
-        fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        say "[DRY-RUN] action=${PREVIEW_ACTION}, keep_ipv6=${KEEP_IPV6}, no_sysctl_tuning=${NO_SYSCTL_TUNING}; no changes"
+        return 0
     fi
 
-    # 定位 LAN zone 索引
     LAN_INDEX=""
     ZONE_IDX=0
     while true; do
@@ -93,125 +283,24 @@ run_dae_hardening() {
     done
 
     if [ "$ACTION_FLAG" = "--confirm" ]; then
-        touch /tmp/proxy_deploy_confirmed
+        [ -f "$STATE/ready" ] || { say '[CONFIRM] no pending deployment'; return 1; }
+        (cd "$STATE" && sha256sum -c snapshot.sha256 >/dev/null)
         kill_active_watchdog
-        rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
-        say "${GREEN}[OK] 已确认新配置连通性正常，本地回滚看门狗与闪存启动哨兵已解除并清理。${NC}"
+        "$HOOK" disable 2>/dev/null || true
+        rm -f "$HOOK"
+        say '[CONFIRM] watchdog disarmed; complete baseline retained for --revert'
         return 0
     fi
-
     if [ "$ACTION_FLAG" = "--watchdog" ]; then
-        kill_active_watchdog
-        rm -f /tmp/proxy_deploy_confirmed
-        _wd_token="wd_$$_$(date +%s 2>/dev/null || echo 1)"
-        echo "$_wd_token" > /tmp/proxy_watchdog.token 2>/dev/null || true
-
-        # 闪存持久化防失联哨兵 + OpenWrt uci-defaults 开机自动恢复钩子
-        # (根治因突发内核 Panic / 硬件断电导致 /tmp 内存盘挥发失效的边界死穴)
-        mkdir -p /etc/dae /etc/uci-defaults 2>/dev/null || true
-        if [ -f /etc/dae/config.dae ] && [ ! -f /etc/dae/.config.dae.rollback ]; then
-            cp -f /etc/dae/config.dae /etc/dae/.config.dae.rollback 2>/dev/null || true
-        fi
-        echo "$_wd_token" > /etc/dae/.boot_guard 2>/dev/null || true
-        cat << 'BOOTGUARD_EOF' > /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
-#!/bin/sh
-if [ -f /etc/dae/.boot_guard ] && [ ! -f /tmp/proxy_watchdog.token ]; then
-    [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
-    rm -f /etc/dae/.boot_guard /etc/dae/.config.dae.rollback 2>/dev/null || true
-    [ -f /etc/dae/setup_openwrt_network.sh ] && sh /etc/dae/setup_openwrt_network.sh --revert 2>/dev/null || true
-    ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
-fi
-exit 0
-BOOTGUARD_EOF
-
-        say "${YELLOW}[WATCHDOG] 已启动 45 秒本地防失联看门狗 (含闪存启动哨兵防死机)...${NC}"
-        (
-            (
-                sleep 45
-                _cur_token=$(cat /tmp/proxy_watchdog.token 2>/dev/null || true)
-                if [ ! -f /tmp/proxy_deploy_confirmed ] && [ "$_cur_token" = "$_wd_token" ]; then
-                    [ -f /etc/dae/.config.dae.rollback ] && cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
-                    [ -f /tmp/config.dae.bak ] && cp -f /tmp/config.dae.bak /etc/dae/config.dae 2>/dev/null || true
-                    rm -f /etc/dae/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
-                    ( [ -x /etc/init.d/dae ] && /etc/init.d/dae reload 2>/dev/null || dae reload 2>/dev/null ) || true
-                    run_dae_hardening "--revert" 2>/dev/null || true
-                fi
-                if [ "$_cur_token" = "$_wd_token" ]; then
-                    rm -f /tmp/proxy_watchdog.pid /tmp/proxy_watchdog.token 2>/dev/null || true
-                fi
-            ) </dev/null >/dev/null 2>&1 &
-            echo $! > /tmp/proxy_watchdog.pid 2>/dev/null || true
-        )
+        arm_watchdog
         return 0
     fi
-
     if [ "$ACTION_FLAG" = "--revert" ]; then
-        say "${YELLOW}[REVERT] 正在撤销 dae 网络加固并还原基线...${NC}"
-        touch /tmp/proxy_deploy_confirmed 2>/dev/null || true
-        kill_active_watchdog
-        if [ -f /etc/dae/.config.dae.rollback ]; then
-            cp -f /etc/dae/.config.dae.rollback /etc/dae/config.dae 2>/dev/null || true
-            rm -f /etc/dae/.config.dae.rollback 2>/dev/null || true
+        if [ ! -f "$STATE/ready" ]; then
+            say '[REVERT] no complete baseline; no configuration changed'
+            return 0
         fi
-        rm -f /etc/dae/.boot_guard /etc/uci-defaults/99-proxy-boot-guard 2>/dev/null || true
-        if [ -f /etc/dae/.flow_offload.bak ]; then
-            . /etc/dae/.flow_offload.bak
-            if [ -n "${ORIG_SW_OFFLOAD:-}" ]; then
-                uci set "firewall.@defaults[0].flow_offloading=${ORIG_SW_OFFLOAD}" 2>/dev/null || true
-            else
-                uci delete firewall.@defaults[0].flow_offloading 2>/dev/null || true
-            fi
-            if [ -n "${ORIG_HW_OFFLOAD:-}" ]; then
-                uci set "firewall.@defaults[0].flow_offloading_hw=${ORIG_HW_OFFLOAD}" 2>/dev/null || true
-            else
-                uci delete firewall.@defaults[0].flow_offloading_hw 2>/dev/null || true
-            fi
-            rm -f /etc/dae/.flow_offload.bak
-        fi
-        if [ -f /etc/dae/.network_baseline.bak ]; then
-            . /etc/dae/.network_baseline.bak
-            if [ -n "$LAN_INDEX" ]; then
-                uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
-                if [ -n "${ORIG_LAN_MASQ:-}" ]; then
-                    uci set "firewall.@zone[${LAN_INDEX}].masq=${ORIG_LAN_MASQ}" 2>/dev/null || true
-                else
-                    uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
-                fi
-                if [ -n "${ORIG_LAN_MTU_FIX:-}" ]; then
-                    uci set "firewall.@zone[${LAN_INDEX}].mtu_fix=${ORIG_LAN_MTU_FIX}" 2>/dev/null || true
-                else
-                    uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
-                fi
-            fi
-            if [ -n "${ORIG_FILTER_AAAA:-}" ]; then
-                uci set "dhcp.@dnsmasq[0].filter_aaaa=${ORIG_FILTER_AAAA}" 2>/dev/null || true
-            else
-                uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
-            fi
-            [ -n "${ORIG_IP_FORWARD:-}" ] && sysctl -w "net.ipv4.ip_forward=${ORIG_IP_FORWARD}" >/dev/null 2>&1 || true
-            [ -n "${ORIG_CONNTRACK_MAX:-}" ] && sysctl -w "net.netfilter.nf_conntrack_max=${ORIG_CONNTRACK_MAX}" >/dev/null 2>&1 || true
-            [ -n "${ORIG_TCP_CC:-}" ] && sysctl -w "net.ipv4.tcp_congestion_control=${ORIG_TCP_CC}" >/dev/null 2>&1 || true
-            [ -n "${ORIG_DEFAULT_QDISC:-}" ] && sysctl -w "net.core.default_qdisc=${ORIG_DEFAULT_QDISC}" >/dev/null 2>&1 || true
-            rm -f /etc/dae/.network_baseline.bak
-        else
-            if [ -n "$LAN_INDEX" ]; then
-                uci delete firewall.@zone[${LAN_INDEX}].masq 2>/dev/null || true
-                uci delete firewall.@zone[${LAN_INDEX}].masquerade 2>/dev/null || true
-                uci delete firewall.@zone[${LAN_INDEX}].mtu_fix 2>/dev/null || true
-            fi
-            uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
-        fi
-        uci commit firewall 2>/dev/null || true
-        /etc/init.d/firewall reload 2>/dev/null || true
-        rm -f /etc/sysctl.d/99-singbox.conf /etc/sysctl.d/99-dae.conf /etc/sysctl.d/99-proxy-tuning.conf
-        uci commit dhcp 2>/dev/null || true
-        /etc/init.d/dnsmasq reload 2>/dev/null || true
-        /etc/init.d/sysctl restart 2>/dev/null || sysctl -p 2>/dev/null || true
-        [ -n "${ORIG_IP_FORWARD:-}" ] && sysctl -w "net.ipv4.ip_forward=${ORIG_IP_FORWARD}" >/dev/null 2>&1 || true
-        [ -n "${ORIG_CONNTRACK_MAX:-}" ] && sysctl -w "net.netfilter.nf_conntrack_max=${ORIG_CONNTRACK_MAX}" >/dev/null 2>&1 || true
-        [ -n "${ORIG_TCP_CC:-}" ] && sysctl -w "net.ipv4.tcp_congestion_control=${ORIG_TCP_CC}" >/dev/null 2>&1 || true
-        [ -n "${ORIG_DEFAULT_QDISC:-}" ] && sysctl -w "net.core.default_qdisc=${ORIG_DEFAULT_QDISC}" >/dev/null 2>&1 || true
-        say "${GREEN}[OK] 基线还原完成！${NC}"
+        sh "$STATE/recovery.sh"
         return 0
     fi
 
@@ -220,10 +309,12 @@ BOOTGUARD_EOF
         return 1
     fi
 
-    if [ "$DRY_RUN" -eq 1 ]; then
-        say "${YELLOW}[DRY-RUN] 演练模式通过：已定位 LAN zone (@zone[${LAN_INDEX}])，预览动作 [action=${PREVIEW_ACTION:-normal}, keep_ipv6=${KEEP_IPV6}, no_sysctl_tuning=${NO_SYSCTL_TUNING}]，未对系统执行实际修改。${NC}"
-        return 0
-    fi
+
+
+    snapshot_prepare
+    APPLY_STARTED=1
+    arm_watchdog
+    rm -f "$STATE/applied"
 
     mkdir -p /etc/dae
     if [ ! -f /etc/dae/.network_baseline.bak ]; then
@@ -257,10 +348,6 @@ BOOTGUARD_EOF
     sysctl -w net.ipv4.conf.all.forwarding=1 >/dev/null 2>&1
     [ "$NO_SYSCTL_TUNING" -eq 0 ] && sysctl -w "net.netfilter.nf_conntrack_max=${CONNTRACK_MAX}" >/dev/null 2>&1 || true
 
-    # 守护进程 OOM 豁免保护：防止内存紧张时内核 OOM Killer 误杀 dropbear/sshd 导致失联
-    for _ssh_pid in $(pidof dropbear sshd 2>/dev/null); do
-        echo -1000 > "/proc/${_ssh_pid}/oom_score_adj" 2>/dev/null || true
-    done
 
     mkdir -p /etc/sysctl.d
     cat << SYSCTL_EOF > /etc/sysctl.d/99-dae.conf
@@ -313,8 +400,9 @@ SYSCTL_EOF
     # 清理遗留的本机 53 端口 DNAT 重定向规则并合并提交所有防火墙变更（仅执行 1 次 reload）
     if command -v uci >/dev/null 2>&1; then
         clean_dns_redirects
-        uci commit firewall 2>/dev/null || true
-        /etc/init.d/firewall reload 2>/dev/null || true
+        uci commit firewall
+        if command -v fw4 >/dev/null 2>&1; then fw4 check; fi
+    /etc/init.d/firewall reload
     fi
 
     say "${BLUE}[4/5] 配置 Dnsmasq AAAA 过滤 (filter_aaaa=1，纯净 IPv4 模式)...${NC}"
@@ -330,15 +418,30 @@ SYSCTL_EOF
                 uci delete dhcp.@dnsmasq[0].filter_aaaa 2>/dev/null || true
             fi
         fi
-        uci commit dhcp 2>/dev/null || true
-        /etc/init.d/dnsmasq reload 2>/dev/null || true
+        uci commit dhcp
+        /etc/init.d/dnsmasq reload
     fi
 
-    say "${GREEN}[OK] dae eBPF 运行环境加固完成！${NC}"
+    current_files > "$STATE/.applied.new"
+    mv -f "$STATE/.applied.new" "$STATE/applied"
+    say "${GREEN}[OK] dae 网络配置已应用；请验证引擎、DNS 与实际流量路径后再执行 --confirm。${NC}"
 }
 
 FIRST_ARG="${1:-}"
 if [ -z "$FIRST_ARG" ] || [ "$FIRST_ARG" = "--bypass" ] || [ "$FIRST_ARG" = "--revert" ] || [ "$FIRST_ARG" = "--watchdog" ] || [ "$FIRST_ARG" = "--confirm" ] || [ "$FIRST_ARG" = "--dry-run" ] || [ "$FIRST_ARG" = "--keep-ipv6" ] || [ "$FIRST_ARG" = "--no-sysctl-tuning" ]; then
+    _primary_count=0
+    for _arg in "$@"; do
+        case "$_arg" in
+            --bypass|--watchdog|--confirm|--revert) _primary_count=$((_primary_count + 1)) ;;
+            --dry-run|--keep-ipv6|--no-sysctl-tuning) ;;
+            *) say '[ERROR] unsupported local argument'; exit 2 ;;
+        esac
+    done
+    [ "$_primary_count" -le 1 ] || { say '[ERROR] conflicting actions'; exit 2; }
+    if [ "$DRY_RUN" -eq 0 ]; then
+        secure_state
+        trap transaction_exit EXIT
+    fi
     run_dae_hardening "$PRIMARY_ACTION"
 else
     ROUTER_IP="$FIRST_ARG"

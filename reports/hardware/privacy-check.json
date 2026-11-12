@@ -1,0 +1,7 @@
+{
+  "status": "PASS",
+  "real_node_credential_patterns_checked": 6,
+  "matches": 0,
+  "backups_or_known_hosts_published": false,
+  "raw_service_log_tails_published": false
+}

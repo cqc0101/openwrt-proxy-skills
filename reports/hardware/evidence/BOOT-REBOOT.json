@@ -1,0 +1,8 @@
+{
+  "command": "reboot",
+  "stdout": "",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.102,
+  "id": "BOOT-REBOOT"
+}

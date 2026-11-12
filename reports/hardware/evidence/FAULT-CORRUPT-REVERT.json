@@ -1,0 +1,8 @@
+{
+  "command": "sh /tmp/skills-audit.hmOBIM/fixed-dae-openwrt.sh --revert; rc=$?; test -f /etc/proxy-skills-network/dae/ready && echo evidence_retained; sha256sum /etc/config/firewall /etc/config/dhcp; exit $rc",
+  "stdout": "evidence_retained\n0968c8d653122455b2447313484c69caa08b12c7166e17483c6b38e1288be9f0  /etc/config/firewall\ne4581c1a061624da6568c503832817b13b0f0041e472b23770ffa1df87d076c1  /etc/config/dhcp\n",
+  "stderr": "sha256sum: WARNING: 1 of 6 computed checksums did NOT match\n",
+  "returncode": 1,
+  "seconds": 0.089,
+  "id": "FAULT-CORRUPT-REVERT"
+}

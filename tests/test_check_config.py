@@ -427,5 +427,20 @@ class TestAuditHardeningCheckConfig(unittest.TestCase):
         })
         self.assertEqual(sum(1 for e in errs if "[非法端口]" in e), 2, errs)
 
+
+
+class TestControlPlaneExposure(unittest.TestCase):
+    def test_unprotected_remote_controller_is_rejected(self):
+        for listener in ("0.0.0.0:9090", "[::]:9090", "192.0.2.1:9090", "api.example:9090"):
+            with self.subTest(listener=listener):
+                errors, _ = run({"experimental": {"clash_api": {"external_controller": listener, "secret": ""}}})
+                self.assertTrue(any("Clash API 暴露" in e for e in errors))
+
+    def test_loopback_or_authenticated_controller_is_accepted(self):
+        for listener, secret in (("127.0.0.1:9090", ""), ("[::1]:9090", ""), ("0.0.0.0:9090", "test-only-key")):
+            with self.subTest(listener=listener):
+                errors, _ = run({"experimental": {"clash_api": {"external_controller": listener, "secret": secret}}})
+                self.assertFalse(any("Clash API 暴露" in e for e in errors))
+
 if __name__ == "__main__":
     unittest.main()

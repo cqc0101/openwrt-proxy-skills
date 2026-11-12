@@ -1,0 +1,8 @@
+{
+  "command": "cat > /tmp/skills-audit.hmOBIM/bad.json && /tmp/skills-audit.hmOBIM/sing-box check -c /tmp/skills-audit.hmOBIM/bad.json",
+  "stdout": "",
+  "stderr": "\u001b[31mFATAL\u001b[0m[0000] decode config at /tmp/skills-audit.hmOBIM/bad.json: invalid character 'i' looking for beginning of object key string: row 1, column 2\n",
+  "returncode": 1,
+  "seconds": 0.46,
+  "id": "NATIVE-SING-BAD"
+}

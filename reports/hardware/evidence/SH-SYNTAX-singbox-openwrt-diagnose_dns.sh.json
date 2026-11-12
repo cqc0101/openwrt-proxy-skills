@@ -1,0 +1,8 @@
+{
+  "command": "sh -n -s",
+  "stdout": "",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.055,
+  "id": "SH-SYNTAX-singbox-openwrt-diagnose_dns.sh"
+}

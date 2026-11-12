@@ -1,0 +1,8 @@
+{
+  "command": "sh /tmp/skills-audit.hmOBIM/fixed-singbox-openwrt.sh --revert",
+  "stdout": "[ERROR] another engine owns the pending network baseline; revert it first\n",
+  "stderr": "",
+  "returncode": 1,
+  "seconds": 0.054,
+  "id": "FIX-CONFLICT-dae-openwrt"
+}

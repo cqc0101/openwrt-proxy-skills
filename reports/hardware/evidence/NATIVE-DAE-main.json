@@ -1,0 +1,8 @@
+{
+  "command": "cat > /tmp/skills-audit.hmOBIM/check.dae && chmod 600 /tmp/skills-audit.hmOBIM/check.dae && dae validate -c /tmp/skills-audit.hmOBIM/check.dae",
+  "stdout": "",
+  "stderr": "time=\"2026-11-12T14:42:02Z\" level=info msg=\"pname routing: trim \\\"transmission-daemon\\\" to \\\"transmission-dae\\\" because it is too long.\"\n",
+  "returncode": 0,
+  "seconds": 0.668,
+  "id": "NATIVE-DAE-main"
+}

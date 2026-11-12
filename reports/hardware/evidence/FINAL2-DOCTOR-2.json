@@ -1,0 +1,8 @@
+{
+  "command": "PATH=/tmp/skills-final.IOpgaa/bin:$PATH sh -s -- dae --json",
+  "stdout": "{\"schema_version\": \"1.0\", \"service\": \"dae\", \"status\": \"error\", \"overall_code\": 2, \"timestamp\": \"2026-11-12T15:02:22Z\", \"singbox_running\": false, \"dae_running\": true, \"tun_alive\": false, \"fw_tun_ok\": false, \"port53_open\": true, \"outbound_ok\": true, \"issue_count\": 1, \"issues\": [{\"id\": \"config_syntax_error\", \"issue_id\": \"config_syntax_error\", \"component\": \"config\", \"severity\": \"error\", \"confidence\": 0.95, \"requires_human\": false, \"repair_id\": \"repair_config_syntax_error\", \"repair_candidates\": [\"repair_config_syntax_error\"], \"title\": \"dae 配置文件语法或版本字段不兼容\", \"description\": \"配置文件存在 qname 无前缀裸域名 (addQName: unsupported key) 或老版本 dae (<= v1.0.0) 不识别 v2.x 新增字段\", \"action\": \"使用 python scripts/sub_to_dae.py ... --full --dae-version legacy 重新生成并在路由器执行 (dae validate -c /etc/dae/config.dae || dae validate /etc/dae/config.dae)\"}], \"suggested_actions\": [\"使用 python scripts/sub_to_dae.py ... --full --dae-version legacy 重新生成并在路由器执行 (dae validate -c /etc/dae/config.dae || dae validate /etc/dae/config.dae)\"], \"recent_logs\": \"<private service logs omitted>\"}",
+  "stderr": "",
+  "returncode": 2,
+  "seconds": 2.135,
+  "id": "FINAL2-DOCTOR-2"
+}

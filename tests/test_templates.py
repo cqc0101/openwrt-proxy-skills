@@ -35,9 +35,9 @@ class TestAllTemplates(unittest.TestCase):
                     # 防环 + 防死锁
                     self.assertIs(cfg["route"]["auto_detect_interface"], True)
                     self.assertEqual(cfg["route"]["default_domain_resolver"], "alidns")
-                    # Clash API 局域网控制
+                    # Clash API 本机控制（远程管理使用 SSH 隧道）
                     self.assertEqual(cfg["experimental"]["clash_api"]["external_controller"],
-                                     "0.0.0.0:9090")
+                                     "127.0.0.1:9090")
 
     def test_tun_ipv4_only_and_no_deprecated_stack(self):
         for v in VERSIONS:

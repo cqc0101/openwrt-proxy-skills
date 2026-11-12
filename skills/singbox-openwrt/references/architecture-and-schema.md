@@ -23,7 +23,7 @@
 ### 必须强制满足的 3 项硬件底线：
 1. **闪存零磨损**：`experimental.cache_file.path` **必须**指向 `/tmp/sing-box-cache.db`，严禁写入 `/etc` 导致 SPI 闪存写穿变砖。
 2. **防环与直连解析**：`route.auto_detect_interface: true`，且 `route.default_domain_resolver: "alidns"`，防止代理内核首启时下载规则集死锁。
-3. **局域网可视化管理**：`experimental.clash_api.external_controller: "0.0.0.0:9090"`，局域网终端浏览器可直接使用在线控制面板（`yacd.haishan.me` 或 `metacubexd`）。
+3. **局域网可视化管理**：`experimental.clash_api.external_controller: "127.0.0.1:9090"`，默认只在本机监听；使用 SSH 隧道接入控制面板，若手动开放 LAN 监听必须配置强口令和防火墙限制。可使用控制面板（`yacd.haishan.me` 或 `metacubexd`）。
 
 ---
 

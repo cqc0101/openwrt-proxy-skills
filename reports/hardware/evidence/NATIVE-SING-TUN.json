@@ -1,0 +1,8 @@
+{
+  "command": "cat > /tmp/skills-audit.hmOBIM/tun.json && chmod 600 /tmp/skills-audit.hmOBIM/tun.json\n/tmp/skills-audit.hmOBIM/sing-box check -c /tmp/skills-audit.hmOBIM/tun.json || exit\n/tmp/skills-audit.hmOBIM/sing-box run -c /tmp/skills-audit.hmOBIM/tun.json >/tmp/skills-audit.hmOBIM/tun.log 2>&1 & p=$!\nsleep 2\nif kill -0 \"$p\" 2>/dev/null; then echo tun_process_running; ip link show tun-hwtest; kill \"$p\"; else wait \"$p\"; echo tun_exit=$?; fi\ncat /tmp/skills-audit.hmOBIM/tun.log\n",
+  "stdout": "tun_exit=1\n\u001b[31mFATAL\u001b[0m[0000] start service: start inbound: start inbound/tun[tun-test]: configure tun interface: open tun: open /dev/net/tun: no such file or directory\n",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 2.46,
+  "id": "NATIVE-SING-TUN"
+}

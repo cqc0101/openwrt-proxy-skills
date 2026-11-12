@@ -270,10 +270,10 @@ def build_config(version="1.13", dns_mode="fakeip", node_uris=None, sub_source=N
     # 闪存写保护锁定在 /tmp
     config["experimental"]["cache_file"]["path"] = "/tmp/sing-box-cache.db"
 
-    # Clash API 监听全网段，允许局域网设备控制与面板接入
+    # Clash API 默认仅本机可访问，避免无口令控制面暴露给 LAN/WAN
     if "clash_api" not in config["experimental"]:
         config["experimental"]["clash_api"] = {}
-    config["experimental"]["clash_api"]["external_controller"] = "0.0.0.0:9090"
+    config["experimental"]["clash_api"]["external_controller"] = "127.0.0.1:9090"
     config["experimental"]["clash_api"].pop("external_ui", None)
     if clash_secret is not None:
         config["experimental"]["clash_api"]["secret"] = str(clash_secret)

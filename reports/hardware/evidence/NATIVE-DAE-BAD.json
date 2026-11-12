@@ -1,0 +1,8 @@
+{
+  "command": "cat > /tmp/skills-audit.hmOBIM/bad.dae && chmod 600 /tmp/skills-audit.hmOBIM/bad.dae && dae validate -c /tmp/skills-audit.hmOBIM/bad.dae",
+  "stdout": "failed to parse \"global\": unexpected key: invalid_key\n",
+  "stderr": "",
+  "returncode": 1,
+  "seconds": 0.13,
+  "id": "NATIVE-DAE-BAD"
+}

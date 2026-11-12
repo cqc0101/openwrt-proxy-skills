@@ -1,0 +1,8 @@
+{
+  "command": "wget -qO /tmp/skills-audit.hmOBIM/api-local-result <REDACTED_URL> rc=$?; wc -c /tmp/skills-audit.hmOBIM/api-local-result; netstat -lnt | grep 19090; exit $rc",
+  "stdout": "187 /tmp/skills-audit.hmOBIM/api-local-result\ntcp        0      0 <IP>:19090         <IP>:*               LISTEN      \n",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.17,
+  "id": "FIX-API-LOCAL"
+}

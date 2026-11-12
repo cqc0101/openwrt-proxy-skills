@@ -1,0 +1,8 @@
+{
+  "command": "rm -f /tmp/skills-final.IOpgaa/firewall.original /tmp/skills-final.IOpgaa/dhcp.original /tmp/skills-final.IOpgaa/firewall.seed /tmp/skills-final.IOpgaa/dhcp.seed /tmp/skills-final.IOpgaa/fixture.log /tmp/skills-final.IOpgaa/singbox-openwrt.sh /tmp/skills-final.IOpgaa/dae-openwrt.sh /tmp/skills-final.IOpgaa/bin/logread; rmdir /tmp/skills-final.IOpgaa/bin; rmdir /tmp/skills-final.IOpgaa; ls /tmp | grep -E \"skills-audit|skills-final\" || true",
+  "stdout": "",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.081,
+  "id": "FINAL2-TMP-CLEAN"
+}

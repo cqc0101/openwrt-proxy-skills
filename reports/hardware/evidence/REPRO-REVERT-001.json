@@ -1,0 +1,8 @@
+{
+  "command": "sh -s",
+  "stdout": "before\ntun0\n1\n1\n20d1e7e63ac174177faefaacccdca871c07eac3741b5ac623fd368bf1827b17d  /etc/sysctl.d/99-dae.conf\n\u001b[1;33m[REVERT] 正在撤销最后一公里网络接管配置并恢复基线...\u001b[0m\n\u001b[0;32m[OK] 网络配置已无损还原至初始状态！\u001b[0m\nafter\n",
+  "stderr": "uci: Entry not found\n",
+  "returncode": 1,
+  "seconds": 1.759,
+  "id": "REPRO-REVERT-001"
+}

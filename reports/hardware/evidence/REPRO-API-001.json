@@ -1,0 +1,20 @@
+{
+  "id": "REPRO-API-001",
+  "status": 200,
+  "unauthenticated": true,
+  "remote_interface": true,
+  "body_keys": [
+    "port",
+    "socks-port",
+    "redir-port",
+    "tproxy-port",
+    "mixed-port",
+    "allow-lan",
+    "bind-address",
+    "mode",
+    "mode-list",
+    "log-level",
+    "ipv6",
+    "tun"
+  ]
+}

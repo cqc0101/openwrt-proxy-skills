@@ -1,0 +1,8 @@
+{
+  "command": "date +%s; dd if=/dev/zero of=/tmp/skills-audit.hmOBIM/bounded.bin bs=1048576 count=16 2>/dev/null; for i in 1 2 3 4 5 6 7 8; do sha256sum /tmp/skills-audit.hmOBIM/bounded.bin >/dev/null || exit; done; rm -f /tmp/skills-audit.hmOBIM/bounded.bin; date +%s; grep MemAvailable /proc/meminfo; pidof dae dnsmasq; df -h / /tmp",
+  "stdout": "1794494814\n1794494818\nMemAvailable:     698252 kB\n12501 8568 8547\nFilesystem                Size      Used Available Use% Mounted on\n/dev/root               290.4M    103.4M    181.0M  36% /\ntmpfs                   488.5M    114.3M    374.2M  23% /tmp\n",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 3.837,
+  "id": "RESOURCE-BOUNDED"
+}

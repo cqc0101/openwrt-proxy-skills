@@ -45,7 +45,7 @@ class TestModularMixins(unittest.TestCase):
         self.assertTrue(cache_file.get("enabled"))
         self.assertEqual(cache_file.get("path"), "/tmp/sing-box-cache.db", "闪存保护：cache_file 必须挂在 /tmp 内存盘")
         clash_api = exp.get("clash_api", {})
-        self.assertEqual(clash_api.get("external_controller"), "0.0.0.0:9090")
+        self.assertEqual(clash_api.get("external_controller"), "127.0.0.1:9090")
 
     def test_dns_base_mixin_canary_and_loop_prevention(self):
         path = os.path.join(MIXINS_DIR, "dns_base.json")

@@ -76,6 +76,22 @@ def check_config_obj(cfg):
     if cfg.get("inbounds") is not None and not isinstance(cfg.get("inbounds"), list):
         errors.append("[数据结构错误] inbounds 模块必须是列表 (list)")
 
+    # Control-plane exposure: wildcard/LAN/host-name listeners require authentication.
+    experimental = cfg.get("experimental")
+    api = experimental.get("clash_api") if isinstance(experimental, dict) else None
+    if isinstance(api, dict) and api.get("external_controller"):
+        listener = api["external_controller"]
+        secret = api.get("secret", "")
+        loopback = False
+        if isinstance(listener, str):
+            host, _, port = listener.rpartition(":")
+            try:
+                loopback = ipaddress.ip_address(host.strip("[]")).is_loopback
+            except ValueError:
+                pass
+        if not loopback and (not isinstance(secret, str) or not secret.strip()):
+            errors.append("[Clash API 暴露] 非回环控制接口必须配置非空 secret；建议监听 127.0.0.1 并使用 SSH 隧道。")
+
     # 0. 检查各模块是否存在重复 Tag 冲突
     def _collect_tags(items, module_name):
         seen = set()

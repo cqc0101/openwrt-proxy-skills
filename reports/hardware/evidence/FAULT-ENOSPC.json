@@ -1,0 +1,8 @@
+{
+  "command": "if mount -t tmpfs -o size=32k,mode=0700 tmpfs /etc/proxy-skills-network; then\n dd if=/dev/zero of=/etc/proxy-skills-network/fill bs=1024 count=24 2>/dev/null\n sh /tmp/skills-audit.hmOBIM/fixed-dae-openwrt.sh --watchdog\n rc=$?; echo injected_rc=$rc\n sha256sum /etc/config/firewall /etc/config/dhcp\n umount /etc/proxy-skills-network || exit 1\n [ \"$rc\" -ne 0 ]\nelse echo tmpfs_mount_blocked; exit 77; fi",
+  "stdout": "injected_rc=1\n0968c8d653122455b2447313484c69caa08b12c7166e17483c6b38e1288be9f0  /etc/config/firewall\ne4581c1a061624da6568c503832817b13b0f0041e472b23770ffa1df87d076c1  /etc/config/dhcp\n",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.112,
+  "id": "FAULT-ENOSPC"
+}

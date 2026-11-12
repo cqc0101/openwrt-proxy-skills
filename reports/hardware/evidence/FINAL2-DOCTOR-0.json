@@ -1,0 +1,8 @@
+{
+  "command": "PATH=/tmp/skills-final.IOpgaa/bin:$PATH sh -s -- dae --json",
+  "stdout": "{\"schema_version\": \"1.0\", \"service\": \"dae\", \"status\": \"healthy\", \"overall_code\": 0, \"timestamp\": \"2026-11-12T15:02:16Z\", \"singbox_running\": false, \"dae_running\": true, \"tun_alive\": false, \"fw_tun_ok\": false, \"port53_open\": true, \"outbound_ok\": true, \"issue_count\": 0, \"issues\": [], \"suggested_actions\": [], \"recent_logs\": \"<private service logs omitted>\"}",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 3.198,
+  "id": "FINAL2-DOCTOR-0"
+}

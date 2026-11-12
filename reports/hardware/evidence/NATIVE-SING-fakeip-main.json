@@ -1,0 +1,8 @@
+{
+  "command": "cat > /tmp/skills-audit.hmOBIM/check.json && chmod 600 /tmp/skills-audit.hmOBIM/check.json && /tmp/skills-audit.hmOBIM/sing-box check -c /tmp/skills-audit.hmOBIM/check.json",
+  "stdout": "",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.438,
+  "id": "NATIVE-SING-fakeip-main"
+}

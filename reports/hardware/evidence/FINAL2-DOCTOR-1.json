@@ -1,0 +1,8 @@
+{
+  "command": "PATH=/tmp/skills-final.IOpgaa/bin:$PATH sh -s -- dae --json",
+  "stdout": "{\"schema_version\": \"1.0\", \"service\": \"dae\", \"status\": \"warning\", \"overall_code\": 1, \"timestamp\": \"2026-11-12T15:02:20Z\", \"singbox_running\": false, \"dae_running\": true, \"tun_alive\": false, \"fw_tun_ok\": false, \"port53_open\": true, \"outbound_ok\": false, \"issue_count\": 1, \"issues\": [{\"id\": \"node_parse_failed\", \"issue_id\": \"node_parse_failed\", \"component\": \"outbound\", \"severity\": \"warning\", \"confidence\": 0.95, \"requires_human\": true, \"repair_id\": \"repair_node_parse_failed\", \"repair_candidates\": [\"repair_node_parse_failed\"], \"title\": \"部分节点解析失败\", \"description\": \"原生引擎拒绝了至少一个节点；配置语法检查可能仍通过\", \"action\": \"检查对应节点协议和 TLS 参数，不要据此切换整个配置版本\"}], \"suggested_actions\": [\"检查对应节点协议和 TLS 参数，不要据此切换整个配置版本\"], \"recent_logs\": \"<private service logs omitted>\"}",
+  "stderr": "",
+  "returncode": 1,
+  "seconds": 3.675,
+  "id": "FINAL2-DOCTOR-1"
+}

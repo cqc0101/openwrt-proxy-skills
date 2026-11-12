@@ -1,0 +1,8 @@
+{
+  "command": "sh -n -s",
+  "stdout": "",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.069,
+  "id": "SH-SYNTAX-dae-openwrt-diagnose_dns.sh"
+}

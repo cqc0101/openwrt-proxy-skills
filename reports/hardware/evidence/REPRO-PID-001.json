@@ -1,0 +1,8 @@
+{
+  "command": "sh -s",
+  "stdout": "\u001b[0;32m[OK] 已确认新配置连通性正常，本地回滚看门狗与闪存启动哨兵已解除并清理。\u001b[0m\nbenign_target_killed_by_confirm\n",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.069,
+  "id": "REPRO-PID-001"
+}

@@ -1,0 +1,422 @@
+test_escaped_quote_in_ext_reference_is_not_misclassified (test_audit_regressions.TestDaeLexerAndMock.test_escaped_quote_in_ext_reference_is_not_misclassified) ... ok
+test_mock_never_reports_unknown_commands_or_scripts_as_success (test_audit_regressions.TestDaeLexerAndMock.test_mock_never_reports_unknown_commands_or_scripts_as_success) ... ok
+test_mock_pipeline_does_not_deploy_when_native_validation_fails (test_audit_regressions.TestDaeLexerAndMock.test_mock_pipeline_does_not_deploy_when_native_validation_fails) ... ok
+test_interior_journal_corruption_is_not_skipped (test_audit_regressions.TestLockAndJournal.test_interior_journal_corruption_is_not_skipped) ... ok
+test_invalid_ttl_and_corrupt_lock_fail_closed (test_audit_regressions.TestLockAndJournal.test_invalid_ttl_and_corrupt_lock_fail_closed) ... ok
+test_journal_device_binding_and_latest_state (test_audit_regressions.TestLockAndJournal.test_journal_device_binding_and_latest_state) ... ok
+test_pid_probe_does_not_terminate_process (test_audit_regressions.TestLockAndJournal.test_pid_probe_does_not_terminate_process) ... ok
+test_same_owner_and_task_cannot_impersonate_holder (test_audit_regressions.TestLockAndJournal.test_same_owner_and_task_cannot_impersonate_holder) ... ok
+test_stale_recovery_has_one_cross_process_winner (test_audit_regressions.TestLockAndJournal.test_stale_recovery_has_one_cross_process_winner) ... ok
+test_task_identifier_cannot_reset_windows_drive (test_audit_regressions.TestLockAndJournal.test_task_identifier_cannot_reset_windows_drive) ... ok
+test_torn_journal_tail_recovers_and_can_continue (test_audit_regressions.TestLockAndJournal.test_torn_journal_tail_recovers_and_can_continue) ... ok
+test_invalid_approval_values_and_expiry_boundary (test_audit_regressions.TestPolicyAndValidation.test_invalid_approval_values_and_expiry_boundary) ... ok
+test_path_prefix_uses_directory_boundaries (test_audit_regressions.TestPolicyAndValidation.test_path_prefix_uses_directory_boundaries) ... ok
+test_single_token_concurrent_uses_across_engines (test_audit_regressions.TestPolicyAndValidation.test_single_token_concurrent_uses_across_engines) ... ok
+test_ssh_rejects_string_and_control_char_commands (test_audit_regressions.TestPolicyAndValidation.test_ssh_rejects_string_and_control_char_commands) ... ok
+test_ssh_remote_arguments_survive_shell_parsing (test_audit_regressions.TestPolicyAndValidation.test_ssh_remote_arguments_survive_shell_parsing) ... ok
+test_unimplemented_fingerprint_option_is_not_silently_ignored (test_audit_regressions.TestPolicyAndValidation.test_unimplemented_fingerprint_option_is_not_silently_ignored) ... ok
+test_unknown_engine_and_nonobject_json_fail_structure_validation (test_audit_regressions.TestPolicyAndValidation.test_unknown_engine_and_nonobject_json_fail_structure_validation) ... ok
+test_broad_private_exception_keeps_special_addresses_blocked (test_audit_regressions.TestRequestLocalDNS.test_broad_private_exception_keeps_special_addresses_blocked) ... ok
+test_concurrent_fetches_do_not_replace_global_dns (test_audit_regressions.TestRequestLocalDNS.test_concurrent_fetches_do_not_replace_global_dns) ... ok
+test_dns_rebinding_is_pinned_at_connection (test_audit_regressions.TestRequestLocalDNS.test_dns_rebinding_is_pinned_at_connection) ... ok
+test_environment_proxy_does_not_bypass_pinning (test_audit_regressions.TestRequestLocalDNS.test_environment_proxy_does_not_bypass_pinning) ... ok
+test_failure_does_not_expose_secrets_in_traceback (test_audit_regressions.TestRequestLocalDNS.test_failure_does_not_expose_secrets_in_traceback) ... ok
+test_https_keeps_certificate_verification_and_original_sni (test_audit_regressions.TestRequestLocalDNS.test_https_keeps_certificate_verification_and_original_sni) ... ok
+test_mixed_dns_answer_is_rejected_before_any_connection (test_audit_regressions.TestRequestLocalDNS.test_mixed_dns_answer_is_rejected_before_any_connection) ... ok
+test_platform_endpoints_cannot_be_whitelisted (test_audit_regressions.TestRequestLocalDNS.test_platform_endpoints_cannot_be_whitelisted) ... ok
+test_redirect_metadata_is_blocked_even_with_broad_private_opt_in (test_audit_regressions.TestRequestLocalDNS.test_redirect_metadata_is_blocked_even_with_broad_private_opt_in) ... ok
+test_audit_event_ids_are_unique_across_instances (test_audit_regressions.TestTransactionFailurePaths.test_audit_event_ids_are_unique_across_instances) ... ok
+test_audit_failure_blocks_replacement_and_commit (test_audit_regressions.TestTransactionFailurePaths.test_audit_failure_blocks_replacement_and_commit) ... ok
+test_corrupt_manifest_never_recovers_as_empty_backup (test_audit_regressions.TestTransactionFailurePaths.test_corrupt_manifest_never_recovers_as_empty_backup) ... ok
+test_manifest_identity_and_backup_path_binding (test_audit_regressions.TestTransactionFailurePaths.test_manifest_identity_and_backup_path_binding) ... ok
+test_missing_manifest_in_deployment_state_fails_closed (test_audit_regressions.TestTransactionFailurePaths.test_missing_manifest_in_deployment_state_fails_closed) ... ok
+test_restore_replace_and_cleanup_errors_are_both_recorded (test_audit_regressions.TestTransactionFailurePaths.test_restore_replace_and_cleanup_errors_are_both_recorded) ... ok
+test_service_snapshots_cannot_be_silently_omitted_during_rollback (test_audit_regressions.TestTransactionFailurePaths.test_service_snapshots_cannot_be_silently_omitted_during_rollback) ... ok
+test_staging_validator_cannot_change_approved_payload (test_audit_regressions.TestTransactionFailurePaths.test_staging_validator_cannot_change_approved_payload) ... ok
+test_unbacked_target_cannot_be_deployed (test_audit_regressions.TestTransactionFailurePaths.test_unbacked_target_cannot_be_deployed) ... ok
+test_bypass_ipv6_and_invalid_main_router_ip_rejected (test_auto_config.TestAuditHardeningAutoConfig.test_bypass_ipv6_and_invalid_main_router_ip_rejected) ... ok
+test_canary_and_ads_precede_clash_global_mode_in_dns_rules (test_auto_config.TestAuditHardeningAutoConfig.test_canary_and_ads_precede_clash_global_mode_in_dns_rules) ... ok
+test_cli_fails_when_all_nodes_invalid (test_auto_config.TestAuditHardeningAutoConfig.test_cli_fails_when_all_nodes_invalid) ... ok
+test_deprecated_ss_cipher_isolated_in_auto_config (test_auto_config.TestAuditHardeningAutoConfig.test_deprecated_ss_cipher_isolated_in_auto_config) ... [!] 忽略无效节点 URI: Shadowsocks 加密方式已废弃不受 sing-box 支持: 'aes-256-cfb'
+ok
+test_dns_cn_doh_passes_check_config_and_cli (test_auto_config.TestAuditHardeningAutoConfig.test_dns_cn_doh_passes_check_config_and_cli) ... ok
+test_dns_ip_port_and_tls_quic_schemes_supported (test_auto_config.TestAuditHardeningAutoConfig.test_dns_ip_port_and_tls_quic_schemes_supported) ... ok
+test_invalid_wan_iface_and_nonpositive_max_nodes_rejected (test_auto_config.TestAuditHardeningAutoConfig.test_invalid_wan_iface_and_nonpositive_max_nodes_rejected) ... ok
+test_ssh_host_key_mismatch_blocks_execution (test_auto_config.TestAuditHardeningAutoConfig.test_ssh_host_key_mismatch_blocks_execution)
+验证远程 SSH 探测遇到主机密钥篡改 (REMOTE HOST IDENTIFICATION HAS CHANGED) 时强制抛出 RuntimeError 阻断执行。 ... ok
+test_tag_dedup_no_collision_with_existing_suffixed_tag (test_auto_config.TestAuditHardeningAutoConfig.test_tag_dedup_no_collision_with_existing_suffixed_tag) ... ok
+test_node_domain_injected_to_dns_and_route (test_auto_config.TestBootstrapDns.test_node_domain_injected_to_dns_and_route) ... ok
+test_bypass_with_main_router_ip (test_auto_config.TestBypassTopology.test_bypass_with_main_router_ip) ... ok
+test_generated_config_retains_canary_blocking (test_auto_config.TestCanaryDomainRejection.test_generated_config_retains_canary_blocking) ... ok
+test_direct_noop (test_auto_config.TestCdnMirror.test_direct_noop) ... ok
+test_jsdelivr_rewrite (test_auto_config.TestCdnMirror.test_jsdelivr_rewrite) ... ok
+test_dns_cn_custom_ip_and_doh (test_auto_config.TestCustomDnsUpstreams.test_dns_cn_custom_ip_and_doh) ... ok
+test_dns_cn_presets (test_auto_config.TestCustomDnsUpstreams.test_dns_cn_presets) ... ok
+test_dns_remote_presets_and_doh (test_auto_config.TestCustomDnsUpstreams.test_dns_remote_presets_and_doh) ... ok
+test_cli_generates_and_self_validates (test_auto_config.TestEndToEndAndSelfCheck.test_cli_generates_and_self_validates) ... ok
+test_cli_invalid_node_ignored_but_still_succeeds (test_auto_config.TestEndToEndAndSelfCheck.test_cli_invalid_node_ignored_but_still_succeeds) ... ok
+test_duplicate_tags_renamed (test_auto_config.TestNodeInjection.test_duplicate_tags_renamed) ... ok
+test_no_wan_iface_keeps_auto_detect (test_auto_config.TestNodeInjection.test_no_wan_iface_keeps_auto_detect) ... ok
+test_placeholder_removed_and_selectors_rewired (test_auto_config.TestNodeInjection.test_placeholder_removed_and_selectors_rewired) ... ok
+test_wan_iface_replaces_auto_detect (test_auto_config.TestNodeInjection.test_wan_iface_replaces_auto_detect) ... ok
+test_node_named_auto_not_self_referencing (test_auto_config.TestReservedTags.test_node_named_auto_not_self_referencing) ... ok
+test_node_named_direct_renamed (test_auto_config.TestReservedTags.test_node_named_direct_renamed) ... ok
+test_fakeip_is_really_fakeip (test_auto_config.TestTemplateSelection.test_fakeip_is_really_fakeip) ... ok
+test_missing_template_hard_fails (test_auto_config.TestTemplateSelection.test_missing_template_hard_fails) ... [FATAL] 找不到模板 openwrt-1.15-tun-realip.json！
+       请求: sing-box v1.15 + REALIP 模式
+       assets/templates/ 目录现有模板: openwrt-1.13-tun-fakeip.json, openwrt-1.13-tun-realip.json, openwrt-1.14-tun-fakeip.json, openwrt-1.14-tun-realip.json
+       请检查 --version / --dns-mode 组合是否正确。
+ok
+test_realip_is_really_realip (test_auto_config.TestTemplateSelection.test_realip_is_really_realip) ... ok
+test_edges (test_auto_config.TestVersionGe.test_edges) ... ok
+test_dangling_route_final_blocked (test_check_config.TestAuditHardeningCheckConfig.test_dangling_route_final_blocked) ... ok
+test_dangling_selector_default_and_empty_outbounds_blocked (test_check_config.TestAuditHardeningCheckConfig.test_dangling_selector_default_and_empty_outbounds_blocked) ... ok
+test_deprecated_shadowsocks_cipher_blocked (test_check_config.TestAuditHardeningCheckConfig.test_deprecated_shadowsocks_cipher_blocked) ... ok
+test_dict_form_route_default_domain_resolver_supported (test_check_config.TestAuditHardeningCheckConfig.test_dict_form_route_default_domain_resolver_supported)
+验证 route.default_domain_resolver 为字典格式 {"server": "..."} 时不会触发 TypeError: unhashable type: 'dict'。 ... ok
+test_dns_server_port_and_inbound_listen_port_range_validated (test_check_config.TestAuditHardeningCheckConfig.test_dns_server_port_and_inbound_listen_port_range_validated)
+验证 dns.servers[].server_port 与 inbounds[].listen_port 越界或布尔值被静态拦截。 ... ok
+test_domain_dns_server_without_any_resolver_blocked (test_check_config.TestAuditHardeningCheckConfig.test_domain_dns_server_without_any_resolver_blocked)
+域名型 DNS Server (如 DoH/DoT) 既无自身 domain_resolver 也无 route.default_domain_resolver 时必须被拦截。 ... ok
+test_domain_resolver_pointing_to_fakeip_blocked_and_outbound_domain_resolver_honored (test_check_config.TestAuditHardeningCheckConfig.test_domain_resolver_pointing_to_fakeip_blocked_and_outbound_domain_resolver_honored)
+验证 default_domain_resolver / domain_resolver 指向 fakeip 服务器时被拦截，且 outbound 自身 domain_resolver 被 Bootstrap 检查识别。 ... ok
+test_domain_resolver_with_colon_port_or_url_blocked (test_check_config.TestAuditHardeningCheckConfig.test_domain_resolver_with_colon_port_or_url_blocked) ... ok
+test_duplicate_outbound_tags_blocked (test_check_config.TestAuditHardeningCheckConfig.test_duplicate_outbound_tags_blocked) ... ok
+test_heterogeneous_type_injection_fuzz_and_hy2_server_ports_validation (test_check_config.TestAuditHardeningCheckConfig.test_heterogeneous_type_injection_fuzz_and_hy2_server_ports_validation)
+R7-01: 验证异构 JSON 类型 (list/dict/int/bool) 注入任意引用字段时零崩溃 (不抛 TypeError)，且拦截非法 hysteria2 server_ports。 ... ok
+test_incomplete_proxy_outbound_and_dangling_outbound_domain_resolver_blocked (test_check_config.TestAuditHardeningCheckConfig.test_incomplete_proxy_outbound_and_dangling_outbound_domain_resolver_blocked) ... ok
+test_invalid_tun_address_cidr_and_urltest_default_blocked (test_check_config.TestAuditHardeningCheckConfig.test_invalid_tun_address_cidr_and_urltest_default_blocked) ... ok
+test_multi_hop_dns_and_outbound_detour_cycles_blocked (test_check_config.TestAuditHardeningCheckConfig.test_multi_hop_dns_and_outbound_detour_cycles_blocked)
+验证 check_config.py 能够拦截多跳 DNS domain_resolver 循环 (A->B->A) 与 outbound detour 循环。 ... ok
+test_nested_logical_ruleset_dangling_blocked (test_check_config.TestAuditHardeningCheckConfig.test_nested_logical_ruleset_dangling_blocked) ... ok
+test_self_referencing_dns_domain_resolver_and_incomplete_reality_blocked (test_check_config.TestAuditHardeningCheckConfig.test_self_referencing_dns_domain_resolver_and_incomplete_reality_blocked) ... ok
+test_tuic_outbound_missing_password_blocked (test_check_config.TestAuditHardeningCheckConfig.test_tuic_outbound_missing_password_blocked)
+TUIC 出站缺少 password 必须被 check_config 静态拦截。 ... ok
+test_unsupported_outbound_transport_and_invalid_port_blocked (test_check_config.TestAuditHardeningCheckConfig.test_unsupported_outbound_transport_and_invalid_port_blocked) ... ok
+test_loopback_or_authenticated_controller_is_accepted (test_check_config.TestControlPlaneExposure.test_loopback_or_authenticated_controller_is_accepted) ... ok
+test_unprotected_remote_controller_is_rejected (test_check_config.TestControlPlaneExposure.test_unprotected_remote_controller_is_rejected) ... ok
+test_dangling_dns_detour (test_check_config.TestDanglingRefs.test_dangling_dns_detour) ... ok
+test_dangling_dns_server (test_check_config.TestDanglingRefs.test_dangling_dns_server) ... ok
+test_dangling_outbound (test_check_config.TestDanglingRefs.test_dangling_outbound) ... ok
+test_dangling_outbound_detour (test_check_config.TestDanglingRefs.test_dangling_outbound_detour) ... ok
+test_dangling_ruleset (test_check_config.TestDanglingRefs.test_dangling_ruleset) ... ok
+test_auto_detect_default_interface_conflict_warned (test_check_config.TestFieldGates.test_auto_detect_default_interface_conflict_warned) ... ok
+test_cache_path_warning (test_check_config.TestFieldGates.test_cache_path_warning) ... ok
+test_deprecated_tun_stack_warn (test_check_config.TestFieldGates.test_deprecated_tun_stack_warn) ... ok
+test_download_detour_direct_blocked (test_check_config.TestFieldGates.test_download_detour_direct_blocked) ... ok
+test_http_client_detour_direct_blocked (test_check_config.TestFieldGates.test_http_client_detour_direct_blocked) ... ok
+test_network_tcp_ok (test_check_config.TestFieldGates.test_network_tcp_ok) ... ok
+test_network_ws_blocked (test_check_config.TestFieldGates.test_network_ws_blocked) ... ok
+test_version_mix_warning (test_check_config.TestFieldGates.test_version_mix_warning) ... ok
+test_domain_resolver_with_domain_server_blocked (test_check_config.TestFuzzAndEdgeCases.test_domain_resolver_with_domain_server_blocked) ... ok
+test_malformed_and_none_blocks_do_not_crash (test_check_config.TestFuzzAndEdgeCases.test_malformed_and_none_blocks_do_not_crash) ... ok
+test_all_templates_have_zero_errors (test_check_config.TestTemplatesPass.test_all_templates_have_zero_errors) ... ok
+test_arrow_inside_quotes_and_inline_multi_groups_upstreams_and_bare_node (test_check_dae_syntax.TestDaeChecker.test_arrow_inside_quotes_and_inline_multi_groups_upstreams_and_bare_node)
+引号内的 '->' 不应被误判为路由目标；单行多 group/upstream 定义与无键名裸节点 #Tag 引用均应被正确识别。 ... ok
+test_dangling_dae_group_and_dns_upstream_blocked (test_check_dae_syntax.TestDaeChecker.test_dangling_dae_group_and_dns_upstream_blocked) ... ok
+test_dnsmasq_with_conditions_detected (test_check_dae_syntax.TestDaeChecker.test_dnsmasq_with_conditions_detected) ... ok
+test_double_quote_flagged (test_check_dae_syntax.TestDaeChecker.test_double_quote_flagged) ... ok
+test_double_quoted_node_with_fragment_flagged (test_check_dae_syntax.TestDaeChecker.test_double_quoted_node_with_fragment_flagged) ... ok
+test_ext_quoted_allowed (test_check_dae_syntax.TestDaeChecker.test_ext_quoted_allowed) ... ok
+test_hyphen_in_dnsmasq_or_response_rules_and_escaped_backslash_before_quote (test_check_dae_syntax.TestDaeChecker.test_hyphen_in_dnsmasq_or_response_rules_and_escaped_backslash_before_quote)
+验证 dnsmasq / response 规则条件含连字符 '-' 时不误报，且以转义反斜杠 '\' 结尾的字符串不误报单引号未闭合。 ... ok
+test_missing_dnsmasq_protection_is_blocking (test_check_dae_syntax.TestDaeChecker.test_missing_dnsmasq_protection_is_blocking) ... ok
+test_missing_interfaces_warn (test_check_dae_syntax.TestDaeChecker.test_missing_interfaces_warn) ... ok
+test_multiple_negated_rules_warn (test_check_dae_syntax.TestDaeChecker.test_multiple_negated_rules_warn) ... ok
+test_openwrt_dae_has_canary_blocking (test_check_dae_syntax.TestDaeChecker.test_openwrt_dae_has_canary_blocking) ... ok
+test_openwrt_dae_has_dns_request_canary_rejection (test_check_dae_syntax.TestDaeChecker.test_openwrt_dae_has_dns_request_canary_rejection)
+验证 openwrt.dae 将无前缀 Canary 域名拦截置于 routing.domain 中，且 check_dae_syntax 拦截 qname 无前缀裸域名 (addQName 崩溃陷阱)。 ... ok
+test_quoted_upstream_in_response_relookup_without_whitelist_blocked (test_check_dae_syntax.TestDaeChecker.test_quoted_upstream_in_response_relookup_without_whitelist_blocked)
+R7-04: response 块中私网重查指向单引号包裹的上游名 (如 -> 'googledns') 且缺少前置 accept 白名单时必须被拦截。 ... ok
+test_response_block_with_regex_brace_quantifier_not_truncated (test_check_dae_syntax.TestDaeChecker.test_response_block_with_regex_brace_quantifier_not_truncated)
+验证 response 块内含正则量词 '{1,2}' 时不会被 [^}]* 提前截断而漏检私网重查死循环。 ... ok
+test_response_loop_with_whitelist_passes (test_check_dae_syntax.TestDaeChecker.test_response_loop_with_whitelist_passes) ... ok
+test_response_loop_without_whitelist_blocked (test_check_dae_syntax.TestDaeChecker.test_response_loop_without_whitelist_blocked) ... ok
+test_routing_to_defined_node_is_valid (test_check_dae_syntax.TestDaeChecker.test_routing_to_defined_node_is_valid)
+dae 路由规则直接指向 node {} 中已定义的独立节点应判定为合法，不报悬空策略组错误。 ... ok
+test_selector_double_quotes_and_empty_node_pool_warned (test_check_dae_syntax.TestDaeChecker.test_selector_double_quotes_and_empty_node_pool_warned) ... ok
+test_single_quoted_group_and_upstream_targets_checked (test_check_dae_syntax.TestDaeChecker.test_single_quoted_group_and_upstream_targets_checked)
+验证 check_dae_syntax.py 对单引号包裹的策略组与 DNS 上游引用执行准确的悬空检测与匹配。 ... ok
+test_template_passes (test_check_dae_syntax.TestDaeChecker.test_template_passes) ... ok
+test_unbalanced_curly_braces_flagged (test_check_dae_syntax.TestDaeChecker.test_unbalanced_curly_braces_flagged) ... ok
+test_unbalanced_single_quote_flagged (test_check_dae_syntax.TestDaeChecker.test_unbalanced_single_quote_flagged) ... ok
+test_uri_and_regex_tokens_do_not_pollute_defined_sets_and_quoted_fallback_ignored (test_check_dae_syntax.TestDaeChecker.test_uri_and_regex_tokens_do_not_pollute_defined_sets_and_quoted_fallback_ignored)
+验证 node/upstream URI 内部的协议名/域名片段及 group 内正则不会污染合法出站/上游集合，且引号内 fallback: 不触发误报。 ... ok
+test_local_copies_exist (test_dae_selfcontained.TestDaeSelfContained.test_local_copies_exist) ... ok
+test_local_parser_works_without_sibling (test_dae_selfcontained.TestDaeSelfContained.test_local_parser_works_without_sibling) ... ok
+test_sub_to_dae_bypass_topology_injects_main_router_direct (test_dae_selfcontained.TestDaeSelfContained.test_sub_to_dae_bypass_topology_injects_main_router_direct) ... ok
+test_sub_to_dae_full_config_generation_and_self_check (test_dae_selfcontained.TestDaeSelfContained.test_sub_to_dae_full_config_generation_and_self_check) ... ok
+test_sub_to_dae_ipv6_bypass_quoted_and_invalid_iface_rejected (test_dae_selfcontained.TestDaeSelfContained.test_sub_to_dae_ipv6_bypass_quoted_and_invalid_iface_rejected) ... ok
+test_sub_to_dae_legacy_vs_modern_version_compatibility (test_dae_selfcontained.TestDaeSelfContained.test_sub_to_dae_legacy_vs_modern_version_compatibility)
+验证新旧版本 dae 兼容：legacy (<= v1.0.0) 自动剥离 5 个 v2.x 专属字段并通过静态审计；modern 保留全部字段。 ... [!] 探测到老版本 dae (dae version 1.0.0-r1 < v1.1)，自动切换为 legacy 兼容模式（剥离 v2.x 专属字段以保 100% 通过校验）
+[!] 远程探测未返回标准版本号 (sh: /usr/bin/dae: libc.so.6: version `GLIBC_2.34' not found)，默认采用 modern (v2.x) 规范生成
+ok
+test_sub_to_dae_ram_adaptive_map_size (test_dae_selfcontained.TestDaeSelfContained.test_sub_to_dae_ram_adaptive_map_size) ... ok
+test_dae_network_script_security_and_features (test_deploy_scripts.TestNetworkSetupScripts.test_dae_network_script_security_and_features) ... ok
+test_dae_network_script_single_firewall_reload_in_normal_flow (test_deploy_scripts.TestNetworkSetupScripts.test_dae_network_script_single_firewall_reload_in_normal_flow)
+dae 网络加固主流程应合并提交防火墙变更，避免连续 3 次执行 /etc/init.d/firewall reload。 ... ok
+test_doctor_ruleset_regex_does_not_catch_bare_context_deadline (test_deploy_scripts.TestNetworkSetupScripts.test_doctor_ruleset_regex_does_not_catch_bare_context_deadline)
+防止普通的 Go 链接超时 (context deadline exceeded) 误报为规则集阻断。 ... ok
+test_doctor_script_features (test_deploy_scripts.TestNetworkSetupScripts.test_doctor_script_features)
+doctor 脚本必须支持 JSON 模式与核心报错特征扫描。 ... ok
+test_local_watchdog_and_confirm_flags (test_deploy_scripts.TestNetworkSetupScripts.test_local_watchdog_and_confirm_flags)
+路由器本地防失联看门狗：支持 --watchdog 与 --confirm 闭环。 ... ok
+test_network_scripts_cli_flags_not_misassigned (test_deploy_scripts.TestNetworkSetupScripts.test_network_scripts_cli_flags_not_misassigned)
+防止 --bypass/--revert 错位赋值给 SSH_USER。 ... ok
+test_non_destructive_baseline_backup_and_ram_adaptive_conntrack (test_deploy_scripts.TestNetworkSetupScripts.test_non_destructive_baseline_backup_and_ram_adaptive_conntrack)
+首次运行必须备份 ORIG_LAN_MASQ/ORIG_LAN_MTU_FIX/ORIG_FILTER_AAAA，且按物理内存自适应 nf_conntrack_max。 ... ok
+test_probe_reports_hardening_facts (test_deploy_scripts.TestNetworkSetupScripts.test_probe_reports_hardening_facts)
+真机验证沉淀：probe 必须报告 nfqueue 缺失、sing-box-tiny 安装建议以及 JSON 模式下的 dnsmasq_loop_risk。 ... ok
+test_secondary_router_private_wan_dns_governance (test_deploy_scripts.TestNetworkSetupScripts.test_secondary_router_private_wan_dns_governance)
+二级路由防旁路：检测 resolv.conf.auto 私网 nameserver 并自动切换 Dnsmasq 上游至 <IP>，且 --revert 可还原。 ... ok
+test_singbox_network_script_security_and_features (test_deploy_scripts.TestNetworkSetupScripts.test_singbox_network_script_security_and_features) ... ok
+test_watchdog_uses_in_memory_revert_not_sh_dollar0 (test_deploy_scripts.TestNetworkSetupScripts.test_watchdog_uses_in_memory_revert_not_sh_dollar0)
+通过 ssh 'sh -s -- --watchdog' 管道执行时 $0 为 'sh'，回滚必须直接调用内存函数而非 sh "$0" --revert。 ... ok
+test_boot_guard_does_not_self_rollback_when_watchdog_token_exists (test_deploy_scripts.TestSharedScriptsConsistency.test_boot_guard_does_not_self_rollback_when_watchdog_token_exists) ... ok
+test_bypass_to_normal_mode_restores_orig_masq_and_boot_guard_reverts_network (test_deploy_scripts.TestSharedScriptsConsistency.test_bypass_to_normal_mode_restores_orig_masq_and_boot_guard_reverts_network)
+从 --bypass 切换回普通主路由模式时必须恢复 ORIG_LAN_MASQ (清理残留 masq=1)，且 99-proxy-boot-guard 必须触发 --revert。 ... ok
+test_capability_model_doctor_metadata_and_network_dry_run_flags (test_deploy_scripts.TestSharedScriptsConsistency.test_capability_model_doctor_metadata_and_network_dry_run_flags)
+验证 v0.7.0 probe.sh 三态能力模型 (capabilities/limitations)、doctor.sh 结构化元数据 (confidence/repair_id/requires_human) 及网络脚本 --dry-run/--keep-ipv6/--no-sysctl-tuning。 ... ok
+test_confirm_watchdog_and_revert_precede_lan_index_error_gate (test_deploy_scripts.TestSharedScriptsConsistency.test_confirm_watchdog_and_revert_precede_lan_index_error_gate)
+R7-06: --confirm / --watchdog / --revert 必须位于 LAN_INDEX 为空报错退出门禁之前，防止防火墙异常时无法解除看门狗。 ... ok
+test_doctor_issue_deduplication (test_deploy_scripts.TestSharedScriptsConsistency.test_doctor_issue_deduplication)
+doctor.sh 必须实现 issue ID 去重，防止多重检测规则命中时输出重复问题及错误计数膨胀。 ... ok
+test_doctor_no_dead_port_5335_loop_suggestion (test_deploy_scripts.TestSharedScriptsConsistency.test_doctor_no_dead_port_5335_loop_suggestion) ... ok
+test_flash_boot_guard_and_daed_conflict_detection (test_deploy_scripts.TestSharedScriptsConsistency.test_flash_boot_guard_and_daed_conflict_detection) ... ok
+test_legacy_fw3_iptables_fallback_and_probe_engine_versions (test_deploy_scripts.TestSharedScriptsConsistency.test_legacy_fw3_iptables_fallback_and_probe_engine_versions)
+验证新老软路由兼容：probe.sh 输出 kernel_ge_517 与 dae/singbox 版本字段；setup_openwrt_network.sh 含 fw3 iptables 兜底放行与回滚清理。 ... ok
+test_pairs_exist_and_match (test_deploy_scripts.TestSharedScriptsConsistency.test_pairs_exist_and_match) ... ok
+test_probe_istoreos_description_detection (test_deploy_scripts.TestSharedScriptsConsistency.test_probe_istoreos_description_detection) ... ok
+test_probe_rom_free_fallback (test_deploy_scripts.TestSharedScriptsConsistency.test_probe_rom_free_fallback)
+probe.sh 在 /overlay 不存在时必须正确回退到 df -m /，不得因 FREE_ROM=0 初始非空而跳过回退导致 rom_free_mb 恒为 0。 ... ok
+test_setup_network_revert_cleans_tun0 (test_deploy_scripts.TestSharedScriptsConsistency.test_setup_network_revert_cleans_tun0)
+setup_openwrt_network.sh --revert 必须从 firewall lan zone 中注销 tun0，彻底杜绝虚拟网卡残留。 ... ok
+test_watchdog_token_isolation_and_doctor_all_mode (test_deploy_scripts.TestSharedScriptsConsistency.test_watchdog_token_isolation_and_doctor_all_mode) ... ok
+test_bracketed_ipv6_and_canary_unspecified_support (test_diagnose_dns.TestDnsDoctorScripts.test_bracketed_ipv6_and_canary_unspecified_support)
+diagnose_dns.sh 必须支持剥离带端口或裸方括号的 IPv6 地址，并在 Canary 阻断审计中识别 :: 未指定地址。 ... ok
+test_diagnostic_steps_present (test_diagnose_dns.TestDnsDoctorScripts.test_diagnostic_steps_present) ... ok
+test_dns_queries_have_strict_timeouts (test_diagnose_dns.TestDnsDoctorScripts.test_dns_queries_have_strict_timeouts) ... ok
+test_ipv6_awk_precision (test_diagnose_dns.TestDnsDoctorScripts.test_ipv6_awk_precision)
+awk 提取 IPv6 时必须要求至少包含两个冒号或双冒号前缀/后缀，杜绝单冒号十六进制单词误报。 ... ok
+test_ipv6_colon_not_stripped_by_awk (test_diagnose_dns.TestDnsDoctorScripts.test_ipv6_colon_not_stripped_by_awk) ... ok
+test_json_flag_support (test_diagnose_dns.TestDnsDoctorScripts.test_json_flag_support) ... ok
+test_known_poison_ip_database_present (test_diagnose_dns.TestDnsDoctorScripts.test_known_poison_ip_database_present) ... ok
+test_posix_compliance_no_echo_e (test_diagnose_dns.TestDnsDoctorScripts.test_posix_compliance_no_echo_e) ... ok
+test_query_ips_nslookup_fallback_not_short_circuited_by_server_address (test_diagnose_dns.TestDnsDoctorScripts.test_query_ips_nslookup_fallback_not_short_circuited_by_server_address)
+query_ips 检查 <IP> 响应是否有效时不得使用恒匹配首行 Server Address 的 'Address.*:'，必须检查 Name:/answer:/NXDOMAIN。 ... ok
+test_scripts_exist_in_both_skills (test_diagnose_dns.TestDnsDoctorScripts.test_scripts_exist_in_both_skills) ... ok
+test_step4_aaaa_awk_regex_precision (test_diagnose_dns.TestDnsDoctorScripts.test_step4_aaaa_awk_regex_precision)
+第 4 关 AAAA 响应提取正则必须包含多冒号精确匹配，杜绝宽泛单冒号单词误伤。 ... ok
+test_compatibility_matrix_json_schema_and_consistency (test_doc_consistency.TestDaeDocsFlattened.test_compatibility_matrix_json_schema_and_consistency)
+验证 docs/compatibility-matrix.json 存在且包含标准风险等级 (R0-R4) 与受控兼容分级 (tested/simulated/compatible/unsupported)。 ... ok
+test_dae_validate_dash_c_and_ssh_stream_pipe_documented (test_doc_consistency.TestDaeDocsFlattened.test_dae_validate_dash_c_and_ssh_stream_pipe_documented)
+验证 dae validate -c <file> 强制参数规范与 SSH Stream Pipe 纯本地流式交付闭环在文档与检查器中一致。 ... ok
+test_reference_depth (test_doc_consistency.TestDaeDocsFlattened.test_reference_depth) ... ok
+test_skill_frontmatter_follows_agentskills_spec (test_doc_consistency.TestDaeDocsFlattened.test_skill_frontmatter_follows_agentskills_spec) ... ok
+test_scoped_rule_in_skill_and_guidelines (test_doc_consistency.TestDaeMustDirectGranularity.test_scoped_rule_in_skill_and_guidelines) ... ok
+test_compat_matrix_keeps_2410_opkg_fact (test_doc_consistency.TestSingboxDefaults.test_compat_matrix_keeps_2410_opkg_fact)
+24.10 使用 opkg（apk 仅 main 分支）——这条曾被写错，必须留证。 ... ok
+test_workflow_default_is_fakeip (test_doc_consistency.TestSingboxDefaults.test_workflow_default_is_fakeip) ... ok
+test_legacy_fields_documented (test_doc_consistency.TestSingboxVersionGatingDocs.test_legacy_fields_documented) ... ok
+test_modern_fields_documented (test_doc_consistency.TestSingboxVersionGatingDocs.test_modern_fields_documented) ... ok
+test_docker_compose_specs (test_docker_setup.TestDockerSetup.test_docker_compose_specs) ... ok
+test_dockerfile_openwrt_specs (test_docker_setup.TestDockerSetup.test_dockerfile_openwrt_specs) ... ok
+test_entrypoint_sh_specs (test_docker_setup.TestDockerSetup.test_entrypoint_sh_specs) ... ok
+test_no_crlf_and_no_bom (test_docker_setup.TestDockerSetup.test_no_crlf_and_no_bom) ... ok
+test_required_files_exist (test_docker_setup.TestDockerSetup.test_required_files_exist) ... ok
+test_run_docker_tests_options (test_docker_setup.TestDockerSetup.test_run_docker_tests_options) ... ok
+test_all_relative_links_resolve (test_docs.TestDocLinks.test_all_relative_links_resolve) ... ok
+test_no_deprecated_script_names_or_typos (test_docs.TestDocLinks.test_no_deprecated_script_names_or_typos)
+防呆测试：确保所有 .md / .py / .sh 中绝不残留废弃脚本名或命令行拼写笔误。 ... ok
+test_real_configuration_failure_is_detected (test_doctor_evidence.TestDoctorEvidence.test_real_configuration_failure_is_detected) ... ok
+test_real_rule_download_failure_is_detected (test_doctor_evidence.TestDoctorEvidence.test_real_rule_download_failure_is_detected) ... ok
+test_real_tls_failure_is_detected (test_doctor_evidence.TestDoctorEvidence.test_real_tls_failure_is_detected) ... ok
+test_rejected_node_is_not_a_schema_failure (test_doctor_evidence.TestDoctorEvidence.test_rejected_node_is_not_a_schema_failure) ... ok
+test_success_logs_are_not_syntax_or_download_failures (test_doctor_evidence.TestDoctorEvidence.test_success_logs_are_not_syntax_or_download_failures) ... ok
+test_export_uses_unique_safe_bare_keys_and_preserves_display_names (test_linux_regressions.TestDaeNativeKeyFormat.test_export_uses_unique_safe_bare_keys_and_preserves_display_names) ... ok
+test_forked_child_cannot_release_parent_lock (test_linux_regressions.TestLinuxGuard.test_forked_child_cannot_release_parent_lock) ... ok
+test_guard_released_on_process_exit_without_cleanup (test_linux_regressions.TestLinuxGuard.test_guard_released_on_process_exit_without_cleanup) ... ok
+test_guard_symlink_is_rejected_without_touching_victim (test_linux_regressions.TestLinuxGuard.test_guard_symlink_is_rejected_without_touching_victim) ... ok
+test_threads_share_stable_guard_inode (test_linux_regressions.TestLinuxGuard.test_threads_share_stable_guard_inode) ... ok
+test_all_mixins_exist_and_valid_json (test_mixins.TestModularMixins.test_all_mixins_exist_and_valid_json) ... ok
+test_compose_from_mixins_matches_all_templates (test_mixins.TestModularMixins.test_compose_from_mixins_matches_all_templates)
+确保 auto_config.compose_from_mixins() 动态合成结果与 assets/templates/ 下的 4 个基准模板 100% 一致，彻底消除双数据源漂移。 ... ok
+test_dns_base_has_no_nonstandard_preferred_by (test_mixins.TestModularMixins.test_dns_base_has_no_nonstandard_preferred_by) ... ok
+test_dns_base_mixin_canary_and_loop_prevention (test_mixins.TestModularMixins.test_dns_base_mixin_canary_and_loop_prevention) ... ok
+test_experimental_mixin_flash_protection (test_mixins.TestModularMixins.test_experimental_mixin_flash_protection) ... ok
+test_inbound_tun_mixin_contract (test_mixins.TestModularMixins.test_inbound_tun_mixin_contract) ... ok
+test_route_base_mixin_anti_loop (test_mixins.TestModularMixins.test_route_base_mixin_anti_loop) ... ok
+test_httpupgrade_and_http_transports (test_parse_node.TestAuditHardeningParseNode.test_httpupgrade_and_http_transports) ... ok
+test_hysteria2_invalid_ports_and_inverted_ranges_rejected (test_parse_node.TestAuditHardeningParseNode.test_hysteria2_invalid_ports_and_inverted_ranges_rejected) ... ok
+test_hysteria2_port_hopping (test_parse_node.TestAuditHardeningParseNode.test_hysteria2_port_hopping) ... ok
+test_hysteria2_user_password_auth (test_parse_node.TestAuditHardeningParseNode.test_hysteria2_user_password_auth) ... ok
+test_out_of_range_ports_rejected_at_parse_time (test_parse_node.TestAuditHardeningParseNode.test_out_of_range_ports_rejected_at_parse_time) ... ok
+test_shadowsocks_plain_default_port (test_parse_node.TestAuditHardeningParseNode.test_shadowsocks_plain_default_port) ... ok
+test_shadowsocks_sip002_plugin_and_reality_missing_pbk (test_parse_node.TestAuditHardeningParseNode.test_shadowsocks_sip002_plugin_and_reality_missing_pbk) ... ok
+test_sip002_urlencoded_base64 (test_parse_node.TestAuditHardeningParseNode.test_sip002_urlencoded_base64) ... ok
+test_tuic_and_anytls_uris (test_parse_node.TestAuditHardeningParseNode.test_tuic_and_anytls_uris) ... ok
+test_tuic_missing_password_rejected (test_parse_node.TestAuditHardeningParseNode.test_tuic_missing_password_rejected)
+TUIC 节点缺少 password 时必须抛出 ValueError，严禁生成空密码残缺节点。 ... ok
+test_unknown_transport_raises_not_silently_downgraded (test_parse_node.TestAuditHardeningParseNode.test_unknown_transport_raises_not_silently_downgraded) ... ok
+test_vmess_boolean_port_rejected (test_parse_node.TestAuditHardeningParseNode.test_vmess_boolean_port_rejected) ... ok
+test_vmess_empty_ps_fallback_to_fragment_or_server (test_parse_node.TestAuditHardeningParseNode.test_vmess_empty_ps_fallback_to_fragment_or_server) ... ok
+test_whole_base64_ss_preserves_plugin_and_servername_fallback (test_parse_node.TestAuditHardeningParseNode.test_whole_base64_ss_preserves_plugin_and_servername_fallback) ... ok
+test_colon_password_formats (test_parse_node.TestDispatch.test_colon_password_formats) ... ok
+test_hy2_alias (test_parse_node.TestDispatch.test_hy2_alias) ... ok
+test_unknown_scheme_raises (test_parse_node.TestDispatch.test_unknown_scheme_raises) ... ok
+test_basic (test_parse_node.TestHysteria2.test_basic) ... ok
+test_obfs (test_parse_node.TestHysteria2.test_obfs) ... ok
+test_hysteria2_ipv6 (test_parse_node.TestIPv6Hosts.test_hysteria2_ipv6) ... ok
+test_trojan_ipv6 (test_parse_node.TestIPv6Hosts.test_trojan_ipv6) ... ok
+test_vless_ipv6 (test_parse_node.TestIPv6Hosts.test_vless_ipv6) ... ok
+test_base64_userpass (test_parse_node.TestShadowsocks.test_base64_userpass) ... ok
+test_ipv6_base64_userinfo (test_parse_node.TestShadowsocks.test_ipv6_base64_userinfo) ... ok
+test_ipv6_whole_base64 (test_parse_node.TestShadowsocks.test_ipv6_whole_base64) ... ok
+test_plain_userpass (test_parse_node.TestShadowsocks.test_plain_userpass) ... ok
+test_urlsafe_userinfo_rejected_cleanly (test_parse_node.TestShadowsocks.test_urlsafe_userinfo_rejected_cleanly) ... ok
+test_urlsafe_userinfo_supported (test_parse_node.TestShadowsocks.test_urlsafe_userinfo_supported) ... ok
+test_whole_base64 (test_parse_node.TestShadowsocks.test_whole_base64) ... ok
+test_whole_base64_with_inner_tag (test_parse_node.TestShadowsocks.test_whole_base64_with_inner_tag) ... ok
+test_whole_base64_with_query_and_inner_tag (test_parse_node.TestShadowsocks.test_whole_base64_with_query_and_inner_tag) ... ok
+test_b64_gbk_tolerance (test_parse_node.TestSplitHostPortAndB64.test_b64_gbk_tolerance) ... ok
+test_split_host_port_edge_cases (test_parse_node.TestSplitHostPortAndB64.test_split_host_port_edge_cases) ... ok
+test_basic (test_parse_node.TestTrojan.test_basic) ... ok
+test_ws_and_insecure (test_parse_node.TestTrojan.test_ws_and_insecure) ... ok
+test_grpc_transport (test_parse_node.TestVLESS.test_grpc_transport) ... ok
+test_reality (test_parse_node.TestVLESS.test_reality) ... ok
+test_tls_ws_transport_not_network (test_parse_node.TestVLESS.test_tls_ws_transport_not_network) ... ok
+test_udp_network (test_parse_node.TestVLESS.test_udp_network) ... ok
+test_v2rayn_json_ws (test_parse_node.TestVMess.test_v2rayn_json_ws) ... ok
+test_vmess_with_native_fragment (test_parse_node.TestVMess.test_vmess_with_native_fragment)
+<REDACTED_URL> —— fragment 必须剥离，否则 base64 解码被污染 ... ok
+test_auto_config_build_config_propagates_ssrf_error (test_security_v070.TestSshAndShellSecurity.test_auto_config_build_config_propagates_ssrf_error) ... ok
+test_cross_origin_proxy_authorization_case_insensitive_stripping (test_security_v070.TestSshAndShellSecurity.test_cross_origin_proxy_authorization_case_insensitive_stripping) ... ok
+test_doctor_redacts_sensitive_tokens_in_logs (test_security_v070.TestSshAndShellSecurity.test_doctor_redacts_sensitive_tokens_in_logs) ... ok
+test_redact_text_urls_and_invalid_port (test_security_v070.TestSshAndShellSecurity.test_redact_text_urls_and_invalid_port) ... ok
+test_setup_network_dry_run_and_ssh_key_dash_guard (test_security_v070.TestSshAndShellSecurity.test_setup_network_dry_run_and_ssh_key_dash_guard) ... ok
+test_ssh_key_path_and_timeout_validation_and_strict_mode (test_security_v070.TestSshAndShellSecurity.test_ssh_key_path_and_timeout_validation_and_strict_mode) ... ok
+test_blocked_ssrf_urls_rejected (test_security_v070.TestSsrfAndRedaction.test_blocked_ssrf_urls_rejected) ... ok
+test_dns_resolution_to_private_ip_blocked (test_security_v070.TestSsrfAndRedaction.test_dns_resolution_to_private_ip_blocked) ... ok
+test_error_message_redacts_token_and_userinfo (test_security_v070.TestSsrfAndRedaction.test_error_message_redacts_token_and_userinfo) ... ok
+test_multiline_text_starting_with_http_not_treated_as_url (test_security_v070.TestSsrfAndRedaction.test_multiline_text_starting_with_http_not_treated_as_url) ... ok
+test_redirect_to_private_ip_and_excess_redirects_blocked (test_security_v070.TestSsrfAndRedaction.test_redirect_to_private_ip_and_excess_redirects_blocked) ... ok
+test_no_crlf_no_bom (test_shell_syntax.TestLineEndings.test_no_crlf_no_bom) ... ok
+test_skills_scripts_have_zero_bashisms (test_shell_syntax.TestNoBashisms.test_skills_scripts_have_zero_bashisms) ... ok
+test_bash_n_all_scripts (test_shell_syntax.TestShellSyntax.test_bash_n_all_scripts) ... ok
+test_all_subprocess_run_text_calls_specify_utf8_encoding (test_structure.TestStructureMatchesDocs.test_all_subprocess_run_text_calls_specify_utf8_encoding)
+防止中文 Windows (cp936/gbk) 下 subprocess.run(..., text=True) 因未指定 encoding='utf-8' 在 _readerthread 中抛出 UnicodeDecodeError。 ... ok
+test_no_orphan_reference_docs (test_structure.TestStructureMatchesDocs.test_no_orphan_reference_docs) ... ok
+test_no_top_level_omitted (test_structure.TestStructureMatchesDocs.test_no_top_level_omitted) ... ok
+test_readme_tree_exists (test_structure.TestStructureMatchesDocs.test_readme_tree_exists) ... ok
+test_tree_paths_all_exist (test_structure.TestStructureMatchesDocs.test_tree_paths_all_exist) ... ok
+test_clash_bool_port_and_to_dae_invalid_port_rejected (test_sub_parser.TestAuditHardeningSubParser.test_clash_bool_port_and_to_dae_invalid_port_rejected) ... ok
+test_clash_out_of_range_port_filtered_and_invalid_max_nodes_rejected (test_sub_parser.TestAuditHardeningSubParser.test_clash_out_of_range_port_filtered_and_invalid_max_nodes_rejected) ... ok
+test_clash_proxy_missing_credentials_filtered (test_sub_parser.TestAuditHardeningSubParser.test_clash_proxy_missing_credentials_filtered)
+Clash 节点缺少 uuid/password 等必要鉴权凭证时必须被隔离过滤，绝不能生成空凭证坏节点冲毁整份配置。 ... ok
+test_clash_ss_plugin_and_reality_missing_pbk_filtered (test_sub_parser.TestAuditHardeningSubParser.test_clash_ss_plugin_and_reality_missing_pbk_filtered) ... ok
+test_clash_tuic_anytls_hy2_ports_httpupgrade_and_reject_xhttp (test_sub_parser.TestAuditHardeningSubParser.test_clash_tuic_anytls_hy2_ports_httpupgrade_and_reject_xhttp) ... ok
+test_clash_ws_transport_lowercase_host_header (test_sub_parser.TestAuditHardeningSubParser.test_clash_ws_transport_lowercase_host_header)
+验证 Clash 解析器兼容 ws-opts 下小写 host 或 headers.host。 ... ok
+test_clash_yaml_single_bad_node_isolated (test_sub_parser.TestAuditHardeningSubParser.test_clash_yaml_single_bad_node_isolated) ... ok
+test_decompress_size_limit (test_sub_parser.TestAuditHardeningSubParser.test_decompress_size_limit) ... ok
+test_dict_anchor_not_polluted_by_sibling_list_and_skipped_node_does_not_steal_tag (test_sub_parser.TestAuditHardeningSubParser.test_dict_anchor_not_polluted_by_sibling_list_and_skipped_node_does_not_steal_tag)
+验证字典块级锚点不会吞并同缩进的兄弟列表项、支持 proxies 外的列表项锚点 (- &base)，且 to_dae_nodes 跳过坏节点时不挤占合法节点标签序号。 ... ok
+test_filter_nodes_no_secondary_collision (test_sub_parser.TestAuditHardeningSubParser.test_filter_nodes_no_secondary_collision) ... ok
+test_h2_multi_host_round_trip_in_to_dae_nodes (test_sub_parser.TestAuditHardeningSubParser.test_h2_multi_host_round_trip_in_to_dae_nodes)
+验证 HTTP/H2 传输层多域名列表在导出 dae 节点时完整保留，不丢失第 2 个起的主机名。 ... ok
+test_pure_python_clash_yaml_cross_anchor_order_and_inline_item_anchors (test_sub_parser.TestAuditHardeningSubParser.test_pure_python_clash_yaml_cross_anchor_order_and_inline_item_anchors)
+验证流式锚点与块式锚点跨顺序引用、多锚点优先级及 - &anchor { ... } / - &anchor name: ... 语法。 ... ok
+test_pure_python_clash_yaml_empty_scalar_and_trailing_keys (test_sub_parser.TestAuditHardeningSubParser.test_pure_python_clash_yaml_empty_scalar_and_trailing_keys)
+验证纯 Python YAML 解析器不会吞没空标量键（如 flow: 或末尾孤立键名）。 ... ok
+test_pure_python_clash_yaml_indentless_list_nested_anchor_and_multi_merge (test_sub_parser.TestAuditHardeningSubParser.test_pure_python_clash_yaml_indentless_list_nested_anchor_and_multi_merge)
+验证纯 Python YAML 解析器支持同缩进列表 (indent-less list)、多层嵌套锚点、节点内联锚点及多锚点合并。 ... ok
+test_pure_python_clash_yaml_parser_quoted_keys_and_nested_dict_dedent (test_sub_parser.TestAuditHardeningSubParser.test_pure_python_clash_yaml_parser_quoted_keys_and_nested_dict_dedent)
+验证纯 Python YAML 解析器在嵌套字典 dedent 缩进回退与带冒号/引号键名下的健壮性。 ... ok
+test_pure_python_clash_yaml_parser_with_anchors (test_sub_parser.TestAuditHardeningSubParser.test_pure_python_clash_yaml_parser_with_anchors) ... ok
+test_pure_python_yaml_block_anchors_multi_merge_and_alias_refs (test_sub_parser.TestAuditHardeningSubParser.test_pure_python_yaml_block_anchors_multi_merge_and_alias_refs)
+验证纯 Python YAML 解析器支持多层块级锚点 (&common)、多锚点列表合并 (<<: [*a1, *a2])、属性直接别名 (*ws_common) 及转义引号行内注释。 ... ok
+test_pure_python_yaml_nested_flow_multiline_list_comments_and_b64_yaml (test_sub_parser.TestAuditHardeningSubParser.test_pure_python_yaml_nested_flow_multiline_list_comments_and_b64_yaml) ... ok
+test_ssrf_and_redirect_hop_protection_and_secret_redaction (test_sub_parser.TestAuditHardeningSubParser.test_ssrf_and_redirect_hop_protection_and_secret_redaction)
+验证 v0.7.0 SSRF 防护（拦截 localhost/私网/回环/元数据/CGNAT/IPv4-mapped IPv6/危险重定向跳）与日志凭据脱敏。 ... ok
+test_to_dae_nodes_escapes_special_chars_in_password (test_sub_parser.TestAuditHardeningSubParser.test_to_dae_nodes_escapes_special_chars_in_password) ... ok
+test_to_dae_nodes_nested_none_resilience_and_bool_max_nodes_rejected (test_sub_parser.TestAuditHardeningSubParser.test_to_dae_nodes_nested_none_resilience_and_bool_max_nodes_rejected)
+验证 to_dae_nodes 在 tls/reality/utls/obfs/transport/alter_id 显式为 None 或非字典时零崩溃，且拦截布尔型 max_nodes=True。 ... ok
+test_to_dae_nodes_preserves_alpn_and_hy2_mport (test_sub_parser.TestAuditHardeningSubParser.test_to_dae_nodes_preserves_alpn_and_hy2_mport) ... ok
+test_to_dae_nodes_vmess_ipv6_bare_add_and_sni (test_sub_parser.TestAuditHardeningSubParser.test_to_dae_nodes_vmess_ipv6_bare_add_and_sni)
+to_dae_nodes 导出 vmess:// 时，IPv6 必须通过 _bare_host 剥离方括号，符合 v2rayN JSON 规范与 RFC 6066 SNI 规范。 ... ok
+test_top_level_scalar_and_list_anchors_and_spaced_inline_anchor_indent (test_sub_parser.TestAuditHardeningSubParser.test_top_level_scalar_and_list_anchors_and_spaced_inline_anchor_indent)
+验证顶层单行标量/流列表锚点、多行块列表锚点以及带多空格 -   &p1 节点锚点不会破坏嵌套字典缩进。 ... ok
+test_urlsafe_b64_chinese_subscription_not_corrupted (test_sub_parser.TestAuditHardeningSubParser.test_urlsafe_b64_chinese_subscription_not_corrupted) ... ok
+test_utf8_bom_all_formats_and_seven_protocol_round_trip_and_hy2_edge_cases (test_sub_parser.TestAuditHardeningSubParser.test_utf8_bom_all_formats_and_seven_protocol_round_trip_and_hy2_edge_cases)
+R7-02 & R7-03: 验证 UTF-8 BOM 全形态订阅解析、Hysteria2 列表/反转端口与 auto 带宽校验、以及 7 大协议 Clash->sing-box->dae->sing-box 往返无损。 ... ok
+test_vmess_to_dae_bare_ipv6_host (test_sub_parser.TestAuditHardeningSubParser.test_vmess_to_dae_bare_ipv6_host)
+验证 VMess 节点导出为 dae 节点时，v2rayN base64(JSON) 的 add 字段必须为裸 host（无方括号）。 ... ok
+test_vmess_to_dae_preserves_httpupgrade_host_alpn_and_insecure (test_sub_parser.TestAuditHardeningSubParser.test_vmess_to_dae_preserves_httpupgrade_host_alpn_and_insecure) ... ok
+test_hysteria2_auth_and_obfs (test_sub_parser.TestClashProxy.test_hysteria2_auth_and_obfs) ... ok
+test_trojan_sni_servername_fallback (test_sub_parser.TestClashProxy.test_trojan_sni_servername_fallback) ... ok
+test_trojan_ws_and_grpc (test_sub_parser.TestClashProxy.test_trojan_ws_and_grpc) ... ok
+test_vless_reality (test_sub_parser.TestClashProxy.test_vless_reality) ... ok
+test_vless_reality_sni_from_top_level_servername (test_sub_parser.TestClashProxy.test_vless_reality_sni_from_top_level_servername)
+Reality 的 SNI 在顶层 servername，reality-opts 里只有 key/short-id 时不能回退成 IP。 ... ok
+test_vless_ws_goes_to_transport (test_sub_parser.TestClashProxy.test_vless_ws_goes_to_transport) ... ok
+test_vmess_grpc (test_sub_parser.TestClashProxy.test_vmess_grpc) ... ok
+test_vmess_grpc_keeps_service_name (test_sub_parser.TestClashProxy.test_vmess_grpc_keeps_service_name) ... ok
+test_deflate (test_sub_parser.TestDecompress.test_deflate) ... ok
+test_gzip_by_magic (test_sub_parser.TestDecompress.test_gzip_by_magic) ... ok
+test_plain_passthrough (test_sub_parser.TestDecompress.test_plain_passthrough) ... ok
+test_extract_node_domains (test_sub_parser.TestExtractNodeDomains.test_extract_node_domains) ... ok
+test_dedup_and_quote_sanitize (test_sub_parser.TestFilterNodes.test_dedup_and_quote_sanitize) ... ok
+test_excludes_ad_noise (test_sub_parser.TestFilterNodes.test_excludes_ad_noise) ... ok
+test_max_nodes_cap (test_sub_parser.TestFilterNodes.test_max_nodes_cap) ... ok
+test_file_source (test_sub_parser.TestParseSource.test_file_source) ... ok
+test_base64_wrapped_subscription (test_sub_parser.TestParseSubscriptionText.test_base64_wrapped_subscription) ... ok
+test_multiline_uris_with_comments (test_sub_parser.TestParseSubscriptionText.test_multiline_uris_with_comments) ... ok
+test_padding_and_urlsafe (test_sub_parser.TestSafeB64.test_padding_and_urlsafe) ... ok
+test_clash_proxy_edge_cases_do_not_crash (test_sub_parser.TestSubParserFuzzAndEdgeCases.test_clash_proxy_edge_cases_do_not_crash) ... ok
+test_subscription_text_fuzz_do_not_crash (test_sub_parser.TestSubParserFuzzAndEdgeCases.test_subscription_text_fuzz_do_not_crash) ... ok
+test_to_dae_nodes_skips_broken_nodes (test_sub_parser.TestSubParserFuzzAndEdgeCases.test_to_dae_nodes_skips_broken_nodes) ... ok
+test_hy2_insecure_flag (test_sub_parser.TestToDaeNodes.test_hy2_insecure_flag) ... ok
+test_single_quote_in_password_escaped (test_sub_parser.TestToDaeNodes.test_single_quote_in_password_escaped) ... ok
+test_tags_sanitized_with_bare_keys (test_sub_parser.TestToDaeNodes.test_tags_sanitized_with_bare_keys) ... ok
+test_vless_and_trojan_ws_grpc_preserved_in_dae (test_sub_parser.TestToDaeNodes.test_vless_and_trojan_ws_grpc_preserved_in_dae) ... ok
+test_vless_plaintext_no_tls (test_sub_parser.TestToDaeNodes.test_vless_plaintext_no_tls) ... ok
+test_vless_tls_keeps_sni (test_sub_parser.TestToDaeNodes.test_vless_tls_keeps_sni) ... ok
+test_vmess_is_valid_v2rayn_base64_json (test_sub_parser.TestToDaeNodes.test_vmess_is_valid_v2rayn_base64_json) ... ok
+test_domain_not_bracketed (test_sub_parser.TestToDaeNodesIPv6.test_domain_not_bracketed) ... ok
+test_hysteria2_brackets (test_sub_parser.TestToDaeNodesIPv6.test_hysteria2_brackets) ... ok
+test_shadowsocks_brackets (test_sub_parser.TestToDaeNodesIPv6.test_shadowsocks_brackets) ... ok
+test_trojan_brackets (test_sub_parser.TestToDaeNodesIPv6.test_trojan_brackets) ... ok
+test_vless_brackets (test_sub_parser.TestToDaeNodesIPv6.test_vless_brackets) ... ok
+test_canary_domains_rejected (test_templates.TestAllTemplates.test_canary_domains_rejected) ... ok
+test_dns_ipv4_only (test_templates.TestAllTemplates.test_dns_ipv4_only) ... ok
+test_four_templates_exist_and_parse (test_templates.TestAllTemplates.test_four_templates_exist_and_parse) ... ok
+test_openwrt_hardening_fields (test_templates.TestAllTemplates.test_openwrt_hardening_fields) ... ok
+test_route_rule_order_sniff_then_hijack (test_templates.TestAllTemplates.test_route_rule_order_sniff_then_hijack) ... ok
+test_tun_ipv4_only_and_no_deprecated_stack (test_templates.TestAllTemplates.test_tun_ipv4_only_and_no_deprecated_stack) ... ok
+test_fakeip_structure (test_templates.TestFakeIPVsRealIP.test_fakeip_structure) ... ok
+test_realip_structure (test_templates.TestFakeIPVsRealIP.test_realip_structure) ... ok
+test_all_references_resolve (test_templates.TestNoDanglingReferences.test_all_references_resolve) ... ok
+test_113_fields (test_templates.TestVersionGating.test_113_fields) ... ok
+test_114_fields (test_templates.TestVersionGating.test_114_fields) ... ok
+test_audit_logger_redacts_secrets_and_fails_closed_on_r3_write_error (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_audit_logger_redacts_secrets_and_fails_closed_on_r3_write_error) ... ok
+test_device_lock_concurrency_and_stale_recovery (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_device_lock_concurrency_and_stale_recovery) ... ok
+test_device_lock_context_manager_and_staging_cleanup_on_validator_exception (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_device_lock_context_manager_and_staging_cleanup_on_validator_exception) ... ok
+test_doctor_issues_all_registered_in_repair_registry (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_doctor_issues_all_registered_in_repair_registry) ... ok
+test_fetch_subscription_with_allowed_private_targets_and_line_depth_limits (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_fetch_subscription_with_allowed_private_targets_and_line_depth_limits) ... ok
+test_path_traversal_shell_injection_and_wildcard_allowlist_blocked (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_path_traversal_shell_injection_and_wildcard_allowlist_blocked) ... ok
+test_round3_deep_audit_ipv6_allowlist_ast_l2_and_terminal_rollback (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_round3_deep_audit_ipv6_allowlist_ast_l2_and_terminal_rollback) ... ok
+test_six_layer_validator_and_quality_baseline_docs (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_six_layer_validator_and_quality_baseline_docs) ... ok
+test_state_machine_persistence_and_illegal_transitions (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_state_machine_persistence_and_illegal_transitions) ... ok
+test_transaction_commit_and_rollback_to_rolled_back_vs_needs_human (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_transaction_commit_and_rollback_to_rolled_back_vs_needs_human) ... ok
+test_transaction_crash_recovery_from_manifest_and_corrupted_backup_guard (test_v100_governance.TestDeviceLockAndTransactionRollbackV100.test_transaction_crash_recovery_from_manifest_and_corrupted_backup_guard) ... ok
+test_plan_hash_binding_and_approval_invalidation_on_change (test_v100_governance.TestPolicyEngineAndActionRegistryV100.test_plan_hash_binding_and_approval_invalidation_on_change) ... ok
+test_repair_registry_governance (test_v100_governance.TestPolicyEngineAndActionRegistryV100.test_repair_registry_governance) ... ok
+test_unregistered_action_and_risk_downgrade_blocked (test_v100_governance.TestPolicyEngineAndActionRegistryV100.test_unregistered_action_and_risk_downgrade_blocked) ... ok
+test_granular_private_target_allowlist_and_https_downgrade_block (test_v100_governance.TestSecurityAndAllowlistV100.test_granular_private_target_allowlist_and_https_downgrade_block) ... ok
+test_ssh_policy_strict_defaults_and_file_permission_checks (test_v100_governance.TestSecurityAndAllowlistV100.test_ssh_policy_strict_defaults_and_file_permission_checks) ... ok
+
+----------------------------------------------------------------------
+Ran 348 tests in 63.333s
+
+OK
+TEST_EXIT=0

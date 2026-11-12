@@ -1,0 +1,8 @@
+{
+  "command": "cp /tmp/skills-audit.hmOBIM/check.dae /etc/dae/.hardware-candidate; chmod 600 /etc/dae/.hardware-candidate; mv /etc/dae/.hardware-candidate /etc/dae/config.dae; /etc/init.d/dae reload; sleep 3; pidof dae; dae validate -c /etc/dae/config.dae; dae reload; echo reload_rc=$?",
+  "stdout": "OK\n11836\nOK\nreload_rc=0\n",
+  "stderr": "time=\"2026-11-12T14:46:32Z\" level=info msg=\"pname routing: trim \\\"transmission-daemon\\\" to \\\"transmission-dae\\\" because it is too long.\"\ntime=\"2026-11-12T14:46:41Z\" level=info msg=\"pname routing: trim \\\"transmission-daemon\\\" to \\\"transmission-dae\\\" because it is too long.\"\n",
+  "returncode": 0,
+  "seconds": 17.713,
+  "id": "NATIVE-DAE-DEPLOY"
+}

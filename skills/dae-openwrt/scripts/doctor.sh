@@ -152,7 +152,7 @@ add_issue() {
     i_conf="0.95"
     i_human="false"
     case "$i_id" in
-        oom_killed|ebpf_btf_missing|node_auth_failed|daed_conflict|port_conflict)
+        oom_killed|ebpf_btf_missing|node_auth_failed|node_parse_failed|daed_conflict|port_conflict)
             i_human="true"
             ;;
     esac
@@ -163,7 +163,7 @@ add_issue() {
         ebpf_btf_missing|nfqueue_missing_loop) i_comp="kernel" ;;
         oom_killed|tls_clock_skew|port_conflict) i_comp="system" ;;
         config_syntax_error) i_comp="config" ;;
-        node_auth_failed) i_comp="outbound" ;;
+        node_auth_failed|node_parse_failed) i_comp="outbound" ;;
     esac
     i_repair="repair_${i_id}"
     item="{\"id\":\"$(je "$i_id")\",\"issue_id\":\"$(je "$i_id")\",\"component\":\"$(je "$i_comp")\",\"severity\":\"$(je "$i_sev")\",\"confidence\":${i_conf},\"requires_human\":${i_human},\"repair_id\":\"$(je "$i_repair")\",\"repair_candidates\":[\"$(je "$i_repair")\"],\"title\":\"$(je "$i_title")\",\"description\":\"$(je "$i_desc")\",\"action\":\"$(je "$i_action")\"}"
@@ -244,7 +244,7 @@ fi
 # 日志模式扫描
 if [ -n "$RAW_LOGS" ]; then
     # 特征 1: 时钟偏差与 TLS 证书报错
-    if echo "$RAW_LOGS" | grep -qiE "certificate|x509|expired|validity"; then
+    if echo "$RAW_LOGS" | grep -qiE "(certificate|x509).*(error|expired|invalid|failed|unknown)|(failed|error|invalid|unknown|expired).*(certificate|x509|validity)"; then
         add_issue "tls_clock_skew" "error" "TLS 证书与时间同步异常" "系统时钟未对齐 (如停留在 1970 年)，导致 TLS 握手被拒" "ntpd -q -p ntp.aliyun.com"
     fi
 
@@ -254,13 +254,17 @@ if [ -n "$RAW_LOGS" ]; then
     fi
 
     # 特征 3: 规则集下载被阻断 (冷启动死锁)
-    if echo "$RAW_LOGS" | grep -qiE "download rule-set.*(error|fail|timeout|deadline)|rule.?set.*(download|fetch|error|timeout|deadline|failed|context deadline exceeded)|(raw\.githubusercontent\.com|githubusercontent\.com).*(error|fail|timeout|deadline|refused|reset)"; then
+    if echo "$RAW_LOGS" | grep -qiE "download rule-set.*(error|fail|timeout|deadline)|rule.?set.*(error|timeout|deadline|failed|context deadline exceeded)|(raw\.githubusercontent\.com|githubusercontent\.com).*(error|fail|timeout|deadline|refused|reset)"; then
         add_issue "ruleset_download_blocked" "error" "规则集下载被 GFW 阻断 (冷启动死锁)" "sing-box 启动时拉取 remote .srs 超时导致服务卡死" "重新生成配置并指定国内 CDN 镜像加速 (--mirror jsdelivr)，切勿显式配置 download_detour: direct (启动必崩)"
     fi
 
     # 特征 4: 端口冲突
     if echo "$RAW_LOGS" | grep -qiE "bind: address already in use"; then
         add_issue "port_conflict" "error" "监听端口冲突" "53/9090 端口已被其他服务 (PassWall/OpenClash/AdGuardHome) 占用" "netstat -tulnp | grep -E ':(53|9090)' 查杀冲突进程"
+    fi
+
+    if echo "$RAW_LOGS" | grep -qiE "failed to parse node"; then
+        add_issue "node_parse_failed" "warning" "部分节点解析失败" "原生引擎拒绝了至少一个节点；配置语法检查可能仍通过" "检查对应节点协议和 TLS 参数，不要据此切换整个配置版本"
     fi
 
     # 特征 5: OOM 物理内存耗尽
@@ -274,7 +278,7 @@ if [ -n "$RAW_LOGS" ]; then
     fi
 
     # 特征 7: 配置解析语法错误 (含 dae addQName 与老版本 dae 字段不识别报错)
-    if echo "$RAW_LOGS" | grep -qiE "decode config|parse config|unmarshal.*error|invalid json|configuration file .* error|failed to parse|addQName: unsupported key|unexpected field|unknown field"; then
+    if echo "$RAW_LOGS" | grep -qiE "(decode config|parse config|unmarshal).*(error|invalid|failed|cannot)|(error|failed|fatal).*(decode config|parse config|unmarshal)|invalid json|configuration file .* error|failed to parse[[:space:]:\"]*(config|global|routing)|addQName: unsupported key|unexpected field|unknown field"; then
         if [ "$SERVICE_NAME" = "dae" ] || ( [ "$DAE_RUNNING" -eq 1 ] && [ "$SINGBOX_RUNNING" -eq 0 ] ); then
             add_issue "config_syntax_error" "error" "dae 配置文件语法或版本字段不兼容" "配置文件存在 qname 无前缀裸域名 (addQName: unsupported key) 或老版本 dae (<= v1.0.0) 不识别 v2.x 新增字段" "使用 python scripts/sub_to_dae.py ... --full --dae-version legacy 重新生成并在路由器执行 (dae validate -c /etc/dae/config.dae || dae validate /etc/dae/config.dae)"
         else

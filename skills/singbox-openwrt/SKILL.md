@@ -111,7 +111,7 @@ python scripts/auto_config.py --version 1.14 --dns-mode fakeip --sub ./airport_c
 3. **生成后自动静态审计（“一次成功”保障）**：`auto_config.py` 输出前会内置跑一遍 `check_config` - 存在悬空引用、重复标签、非法字段等阻断错误时**绝不输出文件**，先修再发。
 4. **国内首启动冷启动死锁消除 (`--mirror jsdelivr`)**：自动将 GitHub 原始链接替换为国内直接秒拉的 jsDelivr CDN 镜像，根除“未翻墙无法下载规则，无规则无法翻墙”的死锁问题。
 5. **机场广告过滤与节点上限保护 (`--max-nodes 15`)**：自动剔除垃圾公告节点，去重并限制节点数，防止过多节点耗尽 256MB/512MB 内存。
-6. **强制注入 OpenWrt 物理网关防御**：不论哪个版本，一律强制注入 `/tmp/sing-box-cache.db` 闪存保护、`auto_detect_interface: true` 防环、`default_domain_resolver` 纯 IP 引导防死锁及 `0.0.0.0:9090` Clash API 局域网控制。
+6. **强制注入 OpenWrt 物理网关防御**：不论哪个版本，一律强制注入 `/tmp/sing-box-cache.db` 闪存保护、`auto_detect_interface: true` 防环、`default_domain_resolver` 纯 IP 引导防死锁及 `127.0.0.1:9090` Clash API 本机控制（远程管理使用 SSH 隧道）。
 
 ---
 
@@ -242,3 +242,12 @@ python run_tests.py
 
 覆盖内容：模板不变量（版本门控/悬空引用/IPv4-only）、节点解析（VLESS/VMess/Trojan/HY2/SS）、
 订阅清洗与 dae 导出、生成器自校验与端到端、静态审计器、POSIX shell 语法与 LF 行尾。
+
+
+## 网络事务与恢复边界（R2S 真机复核）
+
+网络脚本要求 root、flock、sha256sum、tar、mktemp 与 UCI。修改前在 `/etc/proxy-skills-network` 的 0700 私有目录保存完整 firewall/dhcp、受影响 sysctl 文件、引擎配置、运行参数与服务状态。自动启动 45 秒恢复计时器；必须通过新 SSH 连接和实际业务检查后执行 `--confirm`。确认只解除自动回滚，完整基线保留供 `--revert` 使用。两套引擎共享设备锁；先回滚当前引擎，才能切换另一套网络配置。
+
+没有完整基线时 `--revert` 不修改现有配置；备份校验失败或恢复失败时返回非零并保留现场。不要使用旧版 `.network_baseline.bak` 与新版混合部署。开机恢复使用持久化的独立 init 脚本，不依赖 /tmp 或已安装的技能脚本。恢复验证覆盖配置、sysctl 与进程状态；完整流量路径和 DNS 泄漏仍需独立实测，不能只凭该脚本成功判断业务正常。
+
+网络接管前，已运行的裸二进制引擎必须先纳入 `/etc/init.d/dae` 或 `/etc/init.d/sing-box` 服务管理；否则脚本会拒绝接管，因为无法可靠恢复服务生命周期。基线原先停止的引擎在回滚后仍有未托管进程时，恢复会返回失败并保留快照，不能把配置文件恢复当作服务恢复。部署后若 firewall/dhcp 或相关 sysctl 文件被其他工具修改，自动/手动恢复均会拒绝覆盖，需根据保留的快照协调差异。

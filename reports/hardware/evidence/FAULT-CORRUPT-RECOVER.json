@@ -1,0 +1,8 @@
+{
+  "command": "cp /tmp/skills-audit.hmOBIM/snapshot.good /etc/proxy-skills-network/dae/snapshot.tar; sh /tmp/skills-audit.hmOBIM/fixed-dae-openwrt.sh --revert",
+  "stdout": "[RECOVERY] files, sysctl and service state verified\n",
+  "stderr": "[I] Section @zone[1] (wan) IPv4 fullcone enabled for zone 'wan'\n",
+  "returncode": 0,
+  "seconds": 4.417,
+  "id": "FAULT-CORRUPT-RECOVER"
+}

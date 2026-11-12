@@ -1,0 +1,8 @@
+{
+  "command": "cp /etc/config/firewall /tmp/skills-audit.hmOBIM/firewall.applied; printf \"\\n# external edit\\n\" >> /etc/config/firewall; sh /tmp/skills-audit.hmOBIM/final-dae-openwrt.sh --revert; rc=$?; tail -1 /etc/config/firewall; test -f /etc/proxy-skills-network/dae/ready && echo snapshot_retained; exit $rc",
+  "stdout": "[RECOVERY FAILED] external configuration changes detected; snapshot retained\n# external edit\nsnapshot_retained\n",
+  "stderr": "",
+  "returncode": 1,
+  "seconds": 0.149,
+  "id": "FINAL-EDIT-dae-openwrt"
+}

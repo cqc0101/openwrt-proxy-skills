@@ -1,0 +1,635 @@
+[
+  {
+    "id": "HW-ENV",
+    "target": "只读环境与备份完整性",
+    "status": "PASS",
+    "evidence": [
+      "ENV-002.json",
+      "BACKUP-001.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "OLD-REVERT",
+    "target": "原版无基线回滚删除已有设置",
+    "status": "FAIL",
+    "evidence": [
+      "REPRO-REVERT-001.json"
+    ],
+    "reason": "基线缺陷；下列修订版复测已通过，保留失败结论"
+  },
+  {
+    "id": "OLD-PID",
+    "target": "原版共享 PID 文件导致误杀",
+    "status": "FAIL",
+    "evidence": [
+      "REPRO-PID-001.json"
+    ],
+    "reason": "基线缺陷；下列修订版复测已通过，保留失败结论"
+  },
+  {
+    "id": "OLD-API",
+    "target": "原版无口令远程控制接口可达",
+    "status": "FAIL",
+    "evidence": [
+      "REPRO-API-001.json"
+    ],
+    "reason": "基线缺陷；下列修订版复测已通过，保留失败结论"
+  },
+  {
+    "id": "singbox-openwrt-APPLY",
+    "target": "实际网络应用",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-APPLY-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "singbox-openwrt-FRESH-SSH",
+    "target": "独立 SSH 连接确认",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-FRESH-SSH-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "singbox-openwrt-EDIT",
+    "target": "外部修改时拒绝覆盖",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-EDIT-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "singbox-openwrt-EDIT-RECOVER",
+    "target": "协调差异后恢复",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-EDIT-RECOVER-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "singbox-openwrt-INVALID",
+    "target": "非法参数拒绝",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-INVALID-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "singbox-openwrt-CONFLICTING",
+    "target": "冲突动作拒绝",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-CONFLICTING-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "singbox-openwrt-FIX-REPEAT-",
+    "target": "重复应用的文件哈希一致",
+    "status": "PASS",
+    "evidence": [
+      "FIX-REPEAT-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "singbox-openwrt-FIX-REVERT2-",
+    "target": "重复回滚不修改配置",
+    "status": "PASS",
+    "evidence": [
+      "FIX-REVERT2-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "singbox-openwrt-FINAL2-SEED-",
+    "target": "完整恢复预先存在的设备、规则与参数文件",
+    "status": "PASS",
+    "evidence": [
+      "FINAL2-SEED-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-APPLY",
+    "target": "实际网络应用",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-APPLY-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-FRESH-SSH",
+    "target": "独立 SSH 连接确认",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-FRESH-SSH-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-EDIT",
+    "target": "外部修改时拒绝覆盖",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-EDIT-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-EDIT-RECOVER",
+    "target": "协调差异后恢复",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-EDIT-RECOVER-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-INVALID",
+    "target": "非法参数拒绝",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-INVALID-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-CONFLICTING",
+    "target": "冲突动作拒绝",
+    "status": "PASS",
+    "evidence": [
+      "FINAL-CONFLICTING-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-FIX-REPEAT-",
+    "target": "重复应用的文件哈希一致",
+    "status": "PASS",
+    "evidence": [
+      "FIX-REPEAT-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-FIX-REVERT2-",
+    "target": "重复回滚不修改配置",
+    "status": "PASS",
+    "evidence": [
+      "FIX-REVERT2-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "dae-openwrt-FINAL2-SEED-",
+    "target": "完整恢复预先存在的设备、规则与参数文件",
+    "status": "PASS",
+    "evidence": [
+      "FINAL2-SEED-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "FIX-PID",
+    "target": "修订版不杀共享 PID 指定的无害进程",
+    "status": "PASS",
+    "evidence": [
+      "FIX-PID-001.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "FIX-OWNER",
+    "target": "跨引擎操作被阻断",
+    "status": "PASS",
+    "evidence": [
+      "FIX-CONFLICT-dae-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SB-fakeip-main",
+    "target": "R2S 原生 sing-box 生成配置校验",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-SING-fakeip-main.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SB-fakeip-bypass",
+    "target": "R2S 原生 sing-box 生成配置校验",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-SING-fakeip-bypass.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SB-realip-main",
+    "target": "R2S 原生 sing-box 生成配置校验",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-SING-realip-main.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SB-realip-bypass",
+    "target": "R2S 原生 sing-box 生成配置校验",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-SING-realip-bypass.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "DAE-main",
+    "target": "R2S 原生 dae 生成配置校验",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-DAE-main.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "DAE-bypass",
+    "target": "R2S 原生 dae 生成配置校验",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-DAE-bypass.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SING-BAD",
+    "target": "原生校验器拒绝损坏配置",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-SING-BAD.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "DAE-BAD",
+    "target": "原生校验器拒绝损坏配置",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-DAE-BAD.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SB-FORWARD",
+    "target": "sing-box HTTP 入站到本机受控目标的实际转发",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-SING-FORWARD.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SB-API-FIX",
+    "target": "回环控制 API 本机可达、局域网不可达",
+    "status": "PASS",
+    "evidence": [
+      "FIX-API-REMOTE.json",
+      "FIX-API-LOCAL.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "DAE-RELOAD",
+    "target": "生成配置真实热重载及恢复原始配置",
+    "status": "PASS",
+    "evidence": [
+      "NATIVE-DAE-DEPLOY.json",
+      "NATIVE-DAE-DEPLOY-RESTORE.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "BACKUP-CORRUPT",
+    "target": "损坏备份被拒绝且现场保留",
+    "status": "PASS",
+    "evidence": [
+      "FAULT-CORRUPT-REVERT.json",
+      "FAULT-CORRUPT-RECOVER.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "RELOAD-FAIL",
+    "target": "防火墙失败不假报成功，修复后可恢复",
+    "status": "PASS",
+    "evidence": [
+      "FAULT-RELOAD-FAIL.json",
+      "FAULT-RELOAD-RECOVER.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "HOOK",
+    "target": "持久化钩子手工触发恢复",
+    "status": "PASS",
+    "evidence": [
+      "FAULT-HOOK-RESTORE.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "LOCK",
+    "target": "并发设备写入被拒绝",
+    "status": "PASS",
+    "evidence": [
+      "FAULT-LOCK-CONFLICT.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "WATCHDOG",
+    "target": "SSH 关闭后超时自动恢复",
+    "status": "PASS",
+    "evidence": [
+      "FAULT-WATCHDOG-START.json",
+      "FAULT-WATCHDOG-RESULT.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "BOOT",
+    "target": "真实重启后恢复配置与服务",
+    "status": "PASS",
+    "evidence": [
+      "BOOT-PREPARE.json",
+      "BOOT-REBOOT.json",
+      "BOOT-RESULT.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "ENOSPC",
+    "target": "32 KiB 专用 tmpfs 内写入失败时阻断修改",
+    "status": "PASS",
+    "evidence": [
+      "FAULT-ENOSPC.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "RESOURCE",
+    "target": "16 MiB 临时文件与限时计算后服务存活",
+    "status": "PASS",
+    "evidence": [
+      "RESOURCE-BOUNDED.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "INTEGRITY",
+    "target": "全部 /etc 普通文件内容恢复一致",
+    "status": "PASS",
+    "evidence": [
+      "INTEGRITY-COMPARE.json",
+      "FINAL2-TMP-CLEAN.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "DOCTOR-0",
+    "target": "成功日志不误报",
+    "status": "PASS",
+    "evidence": [
+      "FINAL2-DOCTOR-0.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "DOCTOR-1",
+    "target": "节点问题与配置错误分离",
+    "status": "PASS",
+    "evidence": [
+      "FINAL2-DOCTOR-1.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "DOCTOR-2",
+    "target": "真实配置错误被识别",
+    "status": "PASS",
+    "evidence": [
+      "FINAL2-DOCTOR-2.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-checkout-entrypoint.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-checkout-entrypoint.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-dae-openwrt-diagnose_dns.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-dae-openwrt-diagnose_dns.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-dae-openwrt-doctor.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-dae-openwrt-doctor.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-dae-openwrt-probe.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-dae-openwrt-probe.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-dae-openwrt-setup_openwrt_network.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-dae-openwrt-setup_openwrt_network.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-singbox-openwrt-diagnose_dns.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-singbox-openwrt-diagnose_dns.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-singbox-openwrt-doctor.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-singbox-openwrt-doctor.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-singbox-openwrt-probe.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-singbox-openwrt-probe.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SH-SYNTAX-singbox-openwrt-setup_openwrt_network.sh",
+    "target": "设备 ash 原生语法检查",
+    "status": "PASS",
+    "evidence": [
+      "SH-SYNTAX-singbox-openwrt-setup_openwrt_network.sh.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "SB-TUN",
+    "target": "sing-box TUN 接管",
+    "status": "BLOCKED",
+    "evidence": [
+      "NATIVE-SING-TUN.json"
+    ],
+    "reason": "设备 /dev/net/tun 缺失，原生启动明确失败；软件源不可用，未强装不匹配内核包"
+  },
+  {
+    "id": "LAN-E2E",
+    "target": "物理 LAN 客户端透明代理",
+    "status": "BLOCKED",
+    "evidence": [],
+    "reason": "eth1/br-lan 无载波，无受控物理 LAN 客户端"
+  },
+  {
+    "id": "IPV6-E2E",
+    "target": "公网 IPv6 双栈路由与防绕过",
+    "status": "BLOCKED",
+    "evidence": [],
+    "reason": "没有公网 IPv6 默认路由"
+  },
+  {
+    "id": "PY-ON-ROUTER",
+    "target": "Python 入口逐一在 R2S 执行",
+    "status": "BLOCKED",
+    "evidence": [],
+    "reason": "设备没有 Python，匹配的 APK 软件源更新超时；Python 在宿主与独立 Linux 运行，不冒充 R2S 真机"
+  },
+  {
+    "id": "FW3",
+    "target": "fw3/iptables 真机路径",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "OTHER-ARCH",
+    "target": "其他固件与架构真机",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "TPROXY",
+    "target": "TProxy 流量接管",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "CRASH-AGENT",
+    "target": "部署进程 SIGKILL 中断",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "UPLOAD-INTERRUPT",
+    "target": "二进制上传中断",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "DNS-FAIL",
+    "target": "主动停止 dnsmasq 后恢复",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "SERVICE-CRASH",
+    "target": "引擎异常崩溃后的完整业务恢复",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "LINK-ROUTE-FAIL",
+    "target": "物理 WAN down/up、默认路由和策略路由故障",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "MEM-EXHAUST",
+    "target": "真实内存耗尽/OOM 故障",
+    "status": "NOT TESTED",
+    "evidence": [],
+    "reason": "本轮未执行；有限压力与局部恢复案例不能替代此项"
+  },
+  {
+    "id": "DNS-LEAK",
+    "target": "DNS 实际上游路径与泄漏证明",
+    "status": "INCONCLUSIVE",
+    "evidence": [
+      "FINAL2-ENV.json"
+    ],
+    "reason": "设备存在独立 dnsmasq nft redirect 表；缺少 TUN 与 LAN 流量观测，解析答案不能证明完整出口路径"
+  },
+  {
+    "id": "RELEASE-singbox-openwrt",
+    "target": "交付版本 SHA 对应脚本的最后真机应用/回滚",
+    "status": "PASS",
+    "evidence": [
+      "RELEASE-SMOKE-singbox-openwrt.json"
+    ],
+    "reason": ""
+  },
+  {
+    "id": "RELEASE-dae-openwrt",
+    "target": "交付版本 SHA 对应脚本的最后真机应用/回滚",
+    "status": "PASS",
+    "evidence": [
+      "RELEASE-SMOKE-dae-openwrt.json"
+    ],
+    "reason": ""
+  }
+]

@@ -63,7 +63,7 @@ class TestNetworkSetupScripts(unittest.TestCase):
         for base in (SINGBOX, DAE):
             text = _read(os.path.join(base, "setup_openwrt_network.sh"))
             self.assertIn("while [ $# -gt 0 ]; do", text, "必须使用参数循环解析避免位置参数错位")
-            self.assertIn("oom_score_adj", text, "必须包含 dropbear/sshd 的 OOM 豁免保护")
+            self.assertNotIn("oom_score_adj", text, "网络部署不得不可逆地更改 SSH 的 OOM 策略")
             self.assertIn("--revert)", text)
             self.assertNotIn('SSH_USER="${2:-root}"', text, "严禁将 $2 直接硬编码作为 SSH_USER")
 
@@ -127,20 +127,20 @@ class TestNetworkSetupScripts(unittest.TestCase):
             text = _read(os.path.join(base, "setup_openwrt_network.sh"))
             self.assertIn("--watchdog", text)
             self.assertIn("--confirm", text)
-            self.assertIn("/tmp/proxy_deploy_confirmed", text)
+            self.assertIn('"$STATE/pending"', text)
             self.assertIn("</dev/null >/dev/null 2>&1 &", text, "后台看门狗必须关闭 stdin 防止阻塞 SSH 会话")
 
     def test_watchdog_uses_in_memory_revert_not_sh_dollar0(self):
         """通过 ssh 'sh -s -- --watchdog' 管道执行时 $0 为 'sh'，回滚必须直接调用内存函数而非 sh "$0" --revert。"""
         sb_txt = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
         dae_txt = _read(os.path.join(DAE, "setup_openwrt_network.sh"))
-        self.assertIn('run_router_hardening "--revert"', sb_txt)
-        self.assertIn('run_dae_hardening "--revert"', dae_txt)
+        self.assertIn('sh "$STATE/recovery.sh"', sb_txt)
+        self.assertIn('sh "$STATE/recovery.sh"', dae_txt)
         self.assertNotIn('sh "$0" --revert', sb_txt)
         self.assertNotIn('sh "$0" --revert', dae_txt)
         for txt in (sb_txt, dae_txt):
             self.assertIn("kill_active_watchdog", txt)
-            self.assertIn("/tmp/proxy_watchdog.pid", txt)
+            self.assertNotIn("/tmp/proxy_watchdog.pid", txt)
 
     def test_non_destructive_baseline_backup_and_ram_adaptive_conntrack(self):
         """首次运行必须备份 ORIG_LAN_MASQ/ORIG_LAN_MTU_FIX/ORIG_FILTER_AAAA，且按物理内存自适应 nf_conntrack_max。"""
@@ -198,17 +198,17 @@ class TestSharedScriptsConsistency(unittest.TestCase):
     def test_watchdog_token_isolation_and_doctor_all_mode(self):
         for base in (SINGBOX, DAE):
             net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
-            self.assertIn("/tmp/proxy_watchdog.token", net_txt, "看门狗必须使用唯一 token 防止并发部署误回滚")
-            self.assertIn("pkill -P", net_txt, "停止看门狗时应清理子进程 sleep")
+            self.assertIn('"$STATE/pending"', net_txt, "看门狗令牌必须放在私有状态目录")
+            self.assertNotIn("pkill -P", net_txt, "不得按共享临时文件中的 PID 杀进程")
             doc_txt = _read(os.path.join(base, "doctor.sh"))
             self.assertIn('if [ "$SINGBOX_RUNNING" -eq 0 ] && [ "$DAE_RUNNING" -eq 0 ]; then', doc_txt, "doctor.sh 默认 all 模式必须检查进程存活")
 
     def test_flash_boot_guard_and_daed_conflict_detection(self):
         for base in (SINGBOX, DAE):
             net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
-            self.assertIn(".boot_guard", net_txt, "setup_openwrt_network.sh 必须写入持久化闪存哨兵以抵御 /tmp 挥发性失效")
-            self.assertIn(".rollback", net_txt, "setup_openwrt_network.sh 必须保留持久化配置快照")
-            self.assertIn("BOOT GUARD", net_txt, "必须包含开机即时自愈恢复逻辑")
+            self.assertIn("/etc/proxy-skills-network", net_txt)
+            self.assertIn("snapshot.sha256", net_txt)
+            self.assertIn("START=99", net_txt)
 
             probe_txt = _read(os.path.join(base, "probe.sh"))
             self.assertIn("daed_conflict", probe_txt, "probe.sh 必须探测 daed 互斥冲突")
@@ -220,9 +220,9 @@ class TestSharedScriptsConsistency(unittest.TestCase):
     def test_boot_guard_does_not_self_rollback_when_watchdog_token_exists(self):
         for base in (SINGBOX, DAE):
             net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
-            self.assertIn("[ ! -f /tmp/proxy_watchdog.token ]", net_txt,
+            self.assertIn('[ -f "$STATE/pending" ]', net_txt,
                           "boot_guard 必须校验 /tmp/proxy_watchdog.token 已挥发丢失，严禁在正常部署期间自杀式回滚")
-            self.assertIn('[ "$ACTION_FLAG" != "--confirm" ]', net_txt,
+            self.assertIn('if [ "$ACTION_FLAG" = "--confirm" ]; then', net_txt,
                           "boot_guard 绝不能拦截 --confirm 分支")
             probe_txt = _read(os.path.join(base, "probe.sh"))
             self.assertNotIn("[ -f /etc/daed/wing.db ]", probe_txt,
@@ -239,7 +239,7 @@ class TestSharedScriptsConsistency(unittest.TestCase):
     def test_setup_network_revert_cleans_tun0(self):
         """setup_openwrt_network.sh --revert 必须从 firewall lan zone 中注销 tun0，彻底杜绝虚拟网卡残留。"""
         net_txt = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
-        self.assertIn("uci del_list firewall.@zone[${LAN_INDEX}].device='tun0'", net_txt)
+        self.assertIn('"$D/extracted/$f"', net_txt, "回滚必须恢复完整配置，保留预先存在的 tun0")
 
     def test_probe_rom_free_fallback(self):
         """probe.sh 在 /overlay 不存在时必须正确回退到 df -m /，不得因 FREE_ROM=0 初始非空而跳过回退导致 rom_free_mb 恒为 0。"""
@@ -259,7 +259,7 @@ class TestSharedScriptsConsistency(unittest.TestCase):
             net_txt = _read(os.path.join(base, "setup_openwrt_network.sh"))
             self.assertIn("elif", net_txt)
             self.assertIn(".network_baseline.bak", net_txt)
-            self.assertIn("setup_openwrt_network.sh --revert", net_txt)
+            self.assertIn('sh "$d/recovery.sh"', net_txt)
 
     def test_confirm_watchdog_and_revert_precede_lan_index_error_gate(self):
         """R7-06: --confirm / --watchdog / --revert 必须位于 LAN_INDEX 为空报错退出门禁之前，防止防火墙异常时无法解除看门狗。"""
@@ -279,7 +279,7 @@ class TestSharedScriptsConsistency(unittest.TestCase):
         net_txt = _read(os.path.join(SINGBOX, "setup_openwrt_network.sh"))
         self.assertIn("command -v fw3 >/dev/null 2>&1 && ! command -v fw4 >/dev/null 2>&1", net_txt)
         self.assertIn("iptables -C forwarding_rule -i tun0 -j ACCEPT", net_txt)
-        self.assertIn("iptables -D forwarding_rule -i tun0 -j ACCEPT", net_txt)
+        self.assertIn("/etc/init.d/firewall reload", net_txt)
 
         data = _run_probe_json()
         self.assertIn("kernel_ge_517", data["kernel"])

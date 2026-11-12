@@ -1,0 +1,8 @@
+{
+  "command": "sh -s",
+  "stdout": "[CONFIRM] no pending deployment\nbenign_target_alive\n",
+  "stderr": "",
+  "returncode": 0,
+  "seconds": 0.07,
+  "id": "FIX-PID-001"
+}

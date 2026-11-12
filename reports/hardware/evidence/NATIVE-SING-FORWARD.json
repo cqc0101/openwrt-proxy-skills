@@ -1,0 +1,8 @@
+{
+  "command": "http_proxy=<REDACTED_URL> wget -O /tmp/skills-audit.hmOBIM/proxy-response <REDACTED_URL> rc=$?; wc -c /tmp/skills-audit.hmOBIM/proxy-response; cat /tmp/skills-audit.hmOBIM/api-fixed.log; exit $rc",
+  "stdout": "664 /tmp/skills-audit.hmOBIM/proxy-response\n\u001b[36mINFO\u001b[0m[0000] inbound/mixed[hw-mixed]: tcp server started at <IP>:18080\n\u001b[36mINFO\u001b[0m[0000] network: updated default interface eth0, index 2\n\u001b[36mINFO\u001b[0m[0000] network: updated network environment: gateway <IP>, gateway_mac <MAC>\n\u001b[36mINFO\u001b[0m[0000] clash-api: restful api listening at <IP>:19090\n\u001b[36mINFO\u001b[0m[0000] sing-box started (0.02s)\n\u001b[36mINFO\u001b[0m[0002] [\u001b[38;5;167m3267378839\u001b[0m 0ms] inbound/mixed[hw-mixed]: inbound connection from <IP>:39304\n\u001b[36mINFO\u001b[0m[0002] [\u001b[38;5;167m3267378839\u001b[0m 1ms] inbound/mixed[hw-mixed]: inbound connection to <IP>:80\n\u001b[36mINFO\u001b[0m[0002] [\u001b[38;5;167m3267378839\u001b[0m 2ms] outbound/direct[direct]: outbound connection to <IP>:80\n",
+  "stderr": "Downloading '<REDACTED_URL>'\nConnecting to <IP>:18080\nWriting to '/tmp/skills-audit.hmOBIM/proxy-response'\n\r/tmp/skills-audit.hm 100% |*******************************|   664   0:00:00 ETA\nDownload completed (664 bytes)\n",
+  "returncode": 0,
+  "seconds": 0.193,
+  "id": "NATIVE-SING-FORWARD"
+}

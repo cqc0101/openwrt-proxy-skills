@@ -185,7 +185,7 @@ if [ -n "$CN_IP" ]; then
             fail "国内域名 baidu.com 解析返回异常私有 IP: ${CN_IP}！"
             ;;
         *)
-            pass "国内域名解析正常 (baidu.com -> ${CN_IP})，命中物理直连通道。"
+            pass "国内域名解析正常 (baidu.com -> ${CN_IP})；本次查询未验证实际流量出口。"
             ;;
     esac
 else
@@ -219,10 +219,10 @@ if [ -n "$OVERSEA_IP" ]; then
     else
         case "$OVERSEA_IP" in
             198.18.*|198.19.*)
-                pass "FakeIP 模式生效 (google.com -> ${OVERSEA_IP})，零公网明文泄漏，GFW 投毒天然免疫！"
+                pass "观察到 FakeIP 范围地址 (google.com -> ${OVERSEA_IP})，返回合成地址；仍需流量观测验证上游加密与 DNS 泄漏。"
                 ;;
             *)
-                pass "RealIP 模式或代理解析生效 (google.com -> ${OVERSEA_IP})，经检验非投毒伪造 IP。"
+                pass "RealIP 模式或代理解析生效 (google.com -> ${OVERSEA_IP})，未命中内置异常地址表，不能据此排除污染。"
                 ;;
         esac
     fi
@@ -266,7 +266,7 @@ elif [ "$RESOLVE_TOOL" = "dig" ]; then
 fi
 
 if [ -z "$AAAA_RESP" ]; then
-    pass "IPv6 AAAA 记录未返回或已静默过滤 (纯净 IPv4-only 模式)，彻底杜绝手机国内 App 打开转圈假死！"
+    warn "本次查询未取得 AAAA 答案，可能为过滤或查询失败；未验证 IPv6 流量出口。"
 else
     AAAA_FLAT=$(printf '%s' "$AAAA_RESP" | tr '\n' ' ')
     case "$AAAA_FLAT" in
@@ -296,7 +296,7 @@ LAN_IP=$(printf '%s\n' "$LAN_IPS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' |
 if [ -n "$LAN_IP" ]; then
     case "$LAN_IP" in
         192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
-            pass "局域网域名解析正常 (router.lan/openwrt.lan -> ${LAN_IP})，内网管理直连未受代理干扰。"
+            pass "局域网域名解析正常 (router.lan/openwrt.lan -> ${LAN_IP})；未验证内网管理连接的实际路径。"
             ;;
         198.18.*|198.19.*)
             warn "局域网域名被 FakeIP 误劫持 (${LAN_IP})！请确认 dns.rules 中 .lan/.local 优先分流至 local-dns。"
@@ -306,7 +306,7 @@ if [ -n "$LAN_IP" ]; then
             ;;
     esac
 else
-    pass "内网专用域名分流保护链路完整 (未产生污染外溢)。"
+    warn "未取得内网域名答案，无法判断内网分流是否正常。"
 fi
 
 # ------------------------------------------------------------------------------
@@ -317,8 +317,10 @@ say "\n${CYAN}[6/7] 审计 DoH Canary 与 Apple Private Relay 阻断状态...${N
 CANARY_IPS=$(query_ips "use-application-dns.net")
 CANARY_IP=$(printf '%s\n' "$CANARY_IPS" | head -n 1)
 
-if [ -z "$CANARY_IP" ] || [ "$CANARY_IP" = "0.0.0.0" ] || [ "$CANARY_IP" = "::" ]; then
-    pass "Firefox DoH Canary 域名已成功阻断 (use-application-dns.net -> REJECT/NXDOMAIN)，强制浏览器遵循网关 DNS 分流！"
+if [ -z "$CANARY_IP" ]; then
+    warn "Canary 查询未取得地址，无法区分 NXDOMAIN、超时或服务故障。"
+elif [ "$CANARY_IP" = "0.0.0.0" ] || [ "$CANARY_IP" = "::" ]; then
+    pass "Canary 域名返回未指定地址 (${CANARY_IP})，本次答案符合阻断预期。"
 else
     case "$CANARY_IP" in
         198.18.*|198.19.*)
@@ -345,7 +347,7 @@ if command -v uci >/dev/null 2>&1; then
             ;;
         *)
             if [ "$DM_FILTER_AAAA" = "1" ]; then
-                pass "Dnsmasq 上游解析配置正常，无回环死锁风险，且已开启 filter_aaaa='1' 纯净返回 IPv4！"
+                pass "Dnsmasq 未配置显式回环上游，尚未验证完整解析链路；已开启 filter_aaaa='1' 纯净返回 IPv4！"
             else
                 warn "Dnsmasq 上游解析配置正常，但未开启 filter_aaaa，若无全局 IPv6 路由，建议运行 setup_openwrt_network.sh 开启以提速。"
             fi
