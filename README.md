@@ -4,7 +4,7 @@
 
 更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
-本包包含 2026-11-12 的本地审计修订，原报告逐项核验、修复和实际验证边界见 [审计复核报告](docs/audit-2026-11-12.md)。该修订没有重新完成真机验证。
+本包包含 2026-11-12 的审计修订，原报告逐项核验、修复和实际验证边界见 [审计复核报告](docs/audit-2026-11-12.md)。后续已在 NanoPi R2S 上验证网络恢复、重启恢复、原生校验与部分运行路径；TUN、物理 LAN 透明转发和完整 IPv6 尚未完成，详见 [硬件审计报告](reports/hardware/FINAL-REPORT.md)。
 
 ## 包含的技能
 
@@ -56,7 +56,8 @@
 │       └── references/       # 5条铁律与语法、故障排查手册（一级深度）
 ├── core/                     # 核心安全策略、Policy Engine、动作注册表与事务状态机（v1.0.0）
 ├── docker/                   # 本地 OpenWrt 自动化测试基座（Docker 容器 & Mock 仿真）
-├── docs/                     # 真机验证报告
+├── docs/                     # 架构、兼容性与历史验证记录
+├── reports/hardware/         # R2S 真机审计、用例台账与脱敏证据
 ├── tests/                    # 回归测试（unittest，无第三方依赖）
 ├── run_tests.py              # 一键回归入口
 ├── HARDENING_REPORT.md       # 稳定性加固与边界异常测试审计报告
@@ -110,11 +111,11 @@ cp -r skills/singbox-openwrt skills/dae-openwrt ~/.claude/skills/
 
 为确保生产环境软路由高可用与网络稳定，请在部署前仔细阅读以下关键边界与安全提示（技术细则见 [docs/warnings-and-limitations.md](docs/warnings-and-limitations.md)）：
 
-1. **GitHub 认证凭据与隐私隔离保证**：用户的 GitHub 访问凭据（Token / SSH Key）由操作系统底层（Windows 凭据管理器 / SSH Agent）加密隔离，Git 机制物理级禁止打包 `.git` 内部配置；个人真实节点与敏感文件受 `.gitignore` 保护，绝无泄露风险。
+1. **GitHub 凭据与发布脱敏**：使用操作系统凭据管理器或 SSH Agent 保存认证凭据。本次发布通过 `git archive` 排除 `.git`，并检查真实节点、私有备份与设备信息。`.gitignore` 无法保护已跟踪或被强制添加的文件，后续发布仍须检查实际文件和提交内容。
 2. **sing-box 版本演进前瞻警告**：基准模板深度稳定覆盖 sing-box 1.13 与 1.14 架构；针对后续可能推出的重大版本（如 1.15+），**现有模板或将重新适配**，切勿盲目跨大版本替换二进制，升级前必须先在沙盒环境验证配置。
 3. **Clash YAML 锚点降级解析边界**：纯 Python 正则降级解析器支持常规单行标量与缩进列表锚点，但面对部分机场深度复合的多重锚点合并（如 `<<: [*a, *b]`）等极端语法可能受限，软路由建议预装 `python3-pyyaml` 获取 100% 完整解析能力。
 4. **daed (Web 面板) 与 原生 dae (CLI) 二选一铁律**：严禁同时使用 Web 面板管理和脚本外部覆写 `/etc/dae/config.dae`，面板 SQLite 托管与外部文本配置会发生竞争覆写，请二选一。
-5. **弱硬件路由性能与闪存寿命保护**：百级订阅默认截断至前 15 个节点以防弱内存路由 OOM；低配设备加载 eBPF 建议配置 Swap 交换空间；全链路在 `/tmp` 内存虚拟盘缓冲以保护 SPI 闪存寿命。
+5. **弱硬件路由性能与闪存写入**：百级订阅默认截断至前 15 个节点以降低内存压力，不能保证避免 OOM；Swap 是否适合需评估介质寿命。运行缓存和临时传输使用 `/tmp`，网络恢复快照及启动恢复钩子写入 `/etc`，以支持重启后的恢复。
 6. **FakeIP 引导与 DNS 循环防环**：严禁将 `domain_resolver` 指向自身为 `fakeip` 的上游服务器；生产部署前务必使用 `check_config.py` 与 `check_dae_syntax.py` 执行静态门禁校验。
 7. **旁路由与 IPv6 假死防护**：旁路由网关模式部署必须携带 `--bypass` 自动注入物理网卡 MASQUERADE 动态伪装；建议开启 Dnsmasq `filter_aaaa=1` 避免国内双栈访问转圈假死。
 
