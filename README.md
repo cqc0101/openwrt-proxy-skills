@@ -1,5 +1,9 @@
 # OpenWrt / ImmortalWrt / iStoreOS 软路由代理配置 Skills
 
+## 联系作者
+
+Bug 反馈或改进建议：**[chengshaozhe1@gmail.com](mailto:chengshaozhe1@gmail.com)**
+
 面向 OpenWrt、ImmortalWrt、iStoreOS 的 Agent Skills，用于 sing-box 与 dae 两种透明代理方案的配置生成、部署与排障。
 
 更新记录见 [CHANGELOG.md](CHANGELOG.md)。
