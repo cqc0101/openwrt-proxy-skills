@@ -360,16 +360,13 @@ CAP_BTF=$([ "$HAS_BTF" -eq 1 ] && echo "verified" || echo "unsupported")
 CAP_TUN=$([ "$HAS_TUN" -eq 1 ] && echo "verified" || echo "unsupported")
 CAP_NFT=$([ "$FW_TYPE" = "fw4" ] && echo "verified" || echo "unsupported")
 CAP_IPT=$([ "$FW_TYPE" = "fw3" ] && echo "verified" || echo "unsupported")
+# Engine prerequisites do not verify configuration, packet forwarding or DNS paths.
 CAP_SINGBOX="unsupported"
-if [ "$HAS_TUN" -eq 1 ] && [ "$SINGBOX_VER" != "none" ]; then
-    CAP_SINGBOX="verified"
-elif [ "$HAS_TUN" -eq 1 ]; then
+if [ "$HAS_TUN" -eq 1 ]; then
     CAP_SINGBOX="supported"
 fi
 CAP_DAE="unsupported"
-if [ "$DAE_CAPABLE" -eq 1 ] && [ "$DAE_VER" != "none" ] && [ "$DAE_GEODATA_OK" -eq 1 ]; then
-    CAP_DAE="verified"
-elif [ "$DAE_CAPABLE" -eq 1 ]; then
+if [ "$DAE_CAPABLE" -eq 1 ]; then
     CAP_DAE="supported"
 fi
 
