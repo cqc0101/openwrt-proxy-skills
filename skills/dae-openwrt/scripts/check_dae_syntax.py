@@ -332,6 +332,18 @@ def check_dae_syntax(filepath):
         defined_nodes = _extract_kv_keys(node_body)
         for uri_m in re.findall(r"'((?:\\.|[^'])*)'|\"((?:\\.|[^\"])*)\"", node_body):
             uri_s = uri_m[0] or uri_m[1]
+            if uri_s.startswith("vless://"):
+                try:
+                    parsed = urllib.parse.urlsplit(uri_s)
+                    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+                    if query.get("security") == ["reality"]:
+                        if not any(value.strip() for value in query.get("fp", [])):
+                            errors.append("[Reality 指纹缺失] 节点 query 必须显式包含非空 fp（例如 fp=chrome），不能追加到 #fragment 后。")
+                        for key in ("pbk", "sni"):
+                            if not any(value.strip() for value in query.get(key, [])):
+                                errors.append("[Reality 参数缺失] 节点缺少 " + key + "；请核对原始链接。")
+                except ValueError:
+                    errors.append("[节点 URL 无效] 无法解析 VLESS 链接；请核对地址格式。")
             if "#" in uri_s:
                 frag = urllib.parse.unquote(uri_s.split("#", 1)[1].strip())
                 if frag:

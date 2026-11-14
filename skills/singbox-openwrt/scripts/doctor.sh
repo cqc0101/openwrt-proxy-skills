@@ -152,7 +152,7 @@ add_issue() {
     i_conf="0.95"
     i_human="false"
     case "$i_id" in
-        oom_killed|ebpf_btf_missing|node_auth_failed|node_parse_failed|daed_conflict|port_conflict)
+        oom_killed|ebpf_btf_missing|node_auth_failed|node_parse_failed|node_fingerprint_invalid|proxy_group_unavailable|daed_conflict|port_conflict)
             i_human="true"
             ;;
     esac
@@ -163,7 +163,7 @@ add_issue() {
         ebpf_btf_missing|nfqueue_missing_loop) i_comp="kernel" ;;
         oom_killed|tls_clock_skew|port_conflict) i_comp="system" ;;
         config_syntax_error) i_comp="config" ;;
-        node_auth_failed|node_parse_failed) i_comp="outbound" ;;
+        node_auth_failed|node_parse_failed|node_fingerprint_invalid|proxy_group_unavailable) i_comp="outbound" ;;
     esac
     i_repair="repair_${i_id}"
     item="{\"id\":\"$(je "$i_id")\",\"issue_id\":\"$(je "$i_id")\",\"component\":\"$(je "$i_comp")\",\"severity\":\"$(je "$i_sev")\",\"confidence\":${i_conf},\"requires_human\":${i_human},\"repair_id\":\"$(je "$i_repair")\",\"repair_candidates\":[\"$(je "$i_repair")\"],\"title\":\"$(je "$i_title")\",\"description\":\"$(je "$i_desc")\",\"action\":\"$(je "$i_action")\"}"
@@ -277,6 +277,14 @@ if [ -n "$RAW_LOGS" ]; then
         add_issue "ebpf_btf_missing" "error" "dae eBPF 加载失败 (缺失 BTF 符号)" "OpenWrt 内核缺少 BTF 调试符号支持" "安装 vmlinux-btf 内核包，或改用 singbox-openwrt (TUN 模式)"
     fi
 
+    # Runtime node admission failures are distinct from configuration syntax.
+    if echo "$RAW_LOGS" | grep -qiE "unknown uTLS Client Hello ID|failed to get fingerprint"; then
+        add_issue "node_fingerprint_invalid" "error" "节点指纹无效" "运行日志显示节点被拒绝；语法校验通过不代表节点已经载入。日志可能属于历史代次，需核对本次重载后的记录。" "检查 Reality 链接 query 中的 fp，参数必须在 #fragment 之前；重新校验并确认目标节点载入"
+    fi
+    if echo "$RAW_LOGS" | grep -qiE "no dialer in this group|Group has no dialer alive|no alive dialer for selection"; then
+        add_issue "proxy_group_unavailable" "error" "代理组无可用节点记录" "最近日志出现空组或没有存活节点；不能据此证明节点永久失效，也不能仅凭进程存活宣布网络正常。" "核对当前代次节点载入和探测日志，并从 LAN 客户端完成 DNS 与 HTTPS 验证"
+    fi
+
     # 特征 7: 配置解析语法错误 (含 dae addQName 与老版本 dae 字段不识别报错)
     if echo "$RAW_LOGS" | grep -qiE "(decode config|parse config|unmarshal).*(error|invalid|failed|cannot)|(error|failed|fatal).*(decode config|parse config|unmarshal)|invalid json|configuration file .* error|failed to parse[[:space:]:\"]*(config|global|routing)|addQName: unsupported key|unexpected field|unknown field"; then
         if [ "$SERVICE_NAME" = "dae" ] || ( [ "$DAE_RUNNING" -eq 1 ] && [ "$SINGBOX_RUNNING" -eq 0 ] ); then
@@ -317,6 +325,10 @@ if [ "$OUTPUT_JSON" -eq 1 ]; then
   "tun_alive": $( [ "$TUN_EXISTS" -eq 1 ] && echo true || echo false ),
   "fw_tun_ok": $( [ "$FW_TUN_OK" -eq 1 ] && echo true || echo false ),
   "port53_open": $( [ "$PORT53_OPEN" -eq 1 ] && echo true || echo false ),
+  "health_scope": "local_process_and_recent_logs",
+  "lan_forwarding_verified": false,
+  "dns_path_verified": false,
+  "outbound_check_scope": "router_http_reachability_only",
   "outbound_ok": $( [ "$OUTBOUND_OK" -eq 1 ] && echo true || echo false ),
   "issue_count": $ISSUE_COUNT,
   "issues": [ $ISSUES_JSON ],
@@ -335,7 +347,7 @@ else
 
     say "${CYAN}[2/2] 智能故障特征深度分析:${NC}"
     if [ "$ISSUE_COUNT" -eq 0 ]; then
-        say "  ${GREEN}[✓] 未发现已知典型严重报错，服务整体运行平稳。${NC}"
+        say "  ${GREEN}[✓] 未发现已知典型报错；尚未验证 LAN 转发、DNS 路径与节点认证。${NC}"
     else
         say "  ${YELLOW}[!] 共检测到 $ISSUE_COUNT 个潜在异常/错误，请执行上方建议的修复指令。${NC}"
     fi

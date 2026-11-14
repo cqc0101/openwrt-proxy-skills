@@ -162,3 +162,7 @@ python docker/stress_test_matrix.py
 ## License
 
 [MIT](LICENSE)
+
+### 节点切换与连通性检查
+
+新增 `node_link.py`（按 URL 结构修改节点参数）和 `check_path.py`（绑定客户端接口的限时 HTTPS 检查）。诊断结果明确区分本地服务状态和实际转发验证。操作步骤见 [dae 检查说明](skills/dae-openwrt/references/runtime-checks.md) 与 [sing-box 检查说明](skills/singbox-openwrt/references/runtime-checks.md)。

@@ -55,3 +55,19 @@ class TestDoctorEvidence(unittest.TestCase):
     def test_real_rule_download_failure_is_detected(self):
         result = self.diagnose('ERROR download rule-set cn: context deadline exceeded')
         self.assertTrue(result['issues'])
+
+    def test_runtime_fingerprint_rejection_is_not_healthy(self):
+        result = self.diagnose('WARN failed to get fingerprint: unknown uTLS Client Hello ID: ; the node is dropped')
+        self.assertIn('node_fingerprint_invalid', [x['id'] for x in result['issues']])
+        self.assertEqual(result['status'], 'error')
+
+    def test_empty_group_is_not_healthy(self):
+        for line in ('no dialer in this group', 'Group has no dialer alive', 'no alive dialer for selection'):
+            result = self.diagnose(line)
+            self.assertIn('proxy_group_unavailable', [x['id'] for x in result['issues']])
+
+    def test_clean_logs_do_not_claim_lan_forwarding(self):
+        result = self.diagnose('INFO service started')
+        self.assertFalse(result['lan_forwarding_verified'])
+        self.assertFalse(result['dns_path_verified'])
+        self.assertEqual(result['outbound_check_scope'], 'router_http_reachability_only')

@@ -472,3 +472,10 @@
 ### 首个公开版本
 
 - 两个技能：`singbox-openwrt`（sing-box 1.13 / 1.14+，TUN + FakeIP/RealIP）与 `dae-openwrt`（dae eBPF）。
+
+## 未发布
+
+- 检查 Reality 指纹 query，识别节点运行时拒绝及空代理组。
+- 增加不覆盖输入文件的节点 URL 参数编辑工具和限时客户端 HTTPS 检查工具。
+- 为网络回退看门狗增加启动确认和 SSH 挂断保护。
+- 补充双网卡 DNS 对照、测速边界及备用节点准入流程。

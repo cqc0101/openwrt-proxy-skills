@@ -226,8 +226,11 @@ start() {
 HOOK_EOF
     chmod 700 "$HOOK"
     "$HOOK" enable
+    rm -f "$STATE/armed"
     (
+        trap '' HUP
         exec 9>&-
+        printf '%s\n' "$_wd_token" > "$STATE/armed"
         sleep 45
         exec 9>"$STATE_ROOT/lock"
         flock 9 || exit 1
@@ -235,6 +238,12 @@ HOOK_EOF
             sh "$STATE/recovery.sh" >"$STATE_ROOT/last-recovery.log" 2>&1
         fi
     ) </dev/null >/dev/null 2>&1 &
+    _wd_wait=0
+    while [ ! -f "$STATE/armed" ] || [ "$(cat "$STATE/armed")" != "$_wd_token" ]; do
+        _wd_wait=$((_wd_wait + 1))
+        [ "$_wd_wait" -lt 5 ] || { say '[ERROR] watchdog did not acknowledge startup; apply blocked'; return 1; }
+        sleep 1
+    done
     say '[WATCHDOG] 45 seconds; confirmation requires a fresh connection and business checks'
 }
 

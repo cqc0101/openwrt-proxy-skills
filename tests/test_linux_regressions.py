@@ -99,3 +99,31 @@ class TestDaeNativeKeyFormat(unittest.TestCase):
         self.assertEqual(len(keys), len(names))
         self.assertEqual(len(keys), len(set(keys)))
         self.assertIn(urllib.parse.quote('中文节点'), text)
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux kernel required')
+class TestWatchdogStartup(unittest.TestCase):
+    def test_acknowledged_watchdog_survives_hangup_and_runs_recovery(self):
+        import signal
+        import shlex
+        repo = Path(__file__).resolve().parents[1]
+        for engine in ('dae-openwrt', 'singbox-openwrt'):
+            text = (repo/'skills'/engine/'scripts/setup_openwrt_network.sh').read_text(encoding='utf8')
+            body = text.split('arm_watchdog() {', 1)[1].split('\nkill_active_watchdog()', 1)[0].rsplit('\n}', 1)[0]
+            body = body.replace('"$HOOK" enable', ':')
+            body = body.replace('sleep 45', 'sleep 2')
+            body = body.replace(') </dev/null >/dev/null 2>&1 &', ') </dev/null >/dev/null 2>&1 &\n    echo $! > "$STATE/watchdog.pid"')
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root/'recovery.sh').write_text('touch ' + shlex.quote(str(root/'recovered')) + '\n')
+                script = ('set -e\nSTATE=' + shlex.quote(directory) + '\nSTATE_ROOT="$STATE"\nHOOK="$STATE/hook"\n'
+                          'snapshot_prepare() { :; }\nsay() { :; }\nexec 9>"$STATE/lock"\nflock 9\n'
+                          'arm_watchdog() {' + body + '\n}\narm_watchdog\n')
+                result = subprocess.run(['sh', '-c', script], capture_output=True, text=True, encoding='utf-8', timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((root/'armed').read_text(), (root/'pending').read_text())
+                os.kill(int((root/'watchdog.pid').read_text()), signal.SIGHUP)
+                end = time.monotonic() + 5
+                while not (root/'recovered').exists() and time.monotonic() < end:
+                    time.sleep(.05)
+                self.assertTrue((root/'recovered').exists())
